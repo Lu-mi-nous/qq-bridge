@@ -1,0 +1,137 @@
+{
+  "com.tencent.tuwen.lua|news": {
+    "app": "com.tencent.tuwen.lua",
+    "bizsrc": "qqconnect.sdkshare",
+    "config": {
+      "ctime": 1791095380,
+      "forward": 1,
+      "token": "00000000000000000000000000000000",
+      "type": "normal"
+    },
+    "extra": {
+      "app_type": 1,
+      "appid": 100000000,
+      "msg_seq": 7000000000000000000,
+      "uin": 100000007
+    },
+    "meta": {
+      "news": {
+        "app_type": 1,
+        "appid": 100000000,
+        "ctime": 1791095380,
+        "desc": "#示例标签 #演示数据 #脱敏夹具 …",
+        "jumpUrl": "https://www.xiaohongshu.com/discovery/item/000000000000000000000000",
+        "preview": "https://qq.ugcimg.cn/v1/placeholder-preview-id",
+        "tag": "小红书",
+        "tagIcon": "https://open.gtimg.cn/open/app_icon/00/00/00/00/100000000_100_m.png?t=1700000000",
+        "title": "示例漫画标题",
+        "uin": 100000007
+      }
+    },
+    "prompt": "[分享]读心术 vs 腹黑女",
+    "ver": "0.0.0.1",
+    "view": "view_00000000000000000000000000000000"
+  },
+  "com.tencent.miniapp_01|detail_1": {
+    "ver": "1.0.0.19",
+    "prompt": "[QQ小程序]根本就没有这样的唱歌小妹",
+    "config": {
+      "type": "normal",
+      "width": 0,
+      "height": 0,
+      "forward": 1,
+      "autoSize": 0,
+      "ctime": 1791211171,
+      "token": "00000000000000000000000000000000"
+    },
+    "needShareCallBack": false,
+    "app": "com.tencent.miniapp_01",
+    "view": "view_00000000000000000000000000000000",
+    "meta": {
+      "detail_1": {
+        "appid": 100000000,
+        "appType": 0,
+        "title": "哔哩哔哩",
+        "desc": "示例视频标题",
+        "icon": "https://miniapp.gtimg.cn/public/appicon/00000000000000000000000000000000_200.jpg",
+        "preview": "https://qq.ugcimg.cn/v1/placeholder-preview-id",
+        "url": "m.q.qq.com/a/s/00000000000000000000000000000000",
+        "scene": 1036,
+        "host": {
+          "uin": 100000007,
+          "nick": "示例昵称"
+        },
+        "shareTemplateId": "00000000000000000000000000000000",
+        "shareTemplateData": {},
+        "qqdocurl": "https://b23.tv/xxxxxxx",
+        "showLittleTail": "",
+        "gamePoints": "",
+        "gamePointsUrl": "",
+        "shareOrigin": 0
+      }
+    }
+  },
+  "com.tencent.feed.lua|feed": {
+    "app": "com.tencent.feed.lua",
+    "prompt": "群相册《示例相册》",
+    "bizsrc": "group_album.upload",
+    "meta": {
+      "feed": {
+        "cover": "https://qungz.photo.store.qq.com/qun-qungz/PLACEHOLDERALBUM/PLACEHOLDERBATCH/800?w5=1080",
+        "title": "群相册《示例相册》",
+        "tagIcon": "https://qzonestyle.gtimg.cn/qzone/client/mqq/photo-album/group_image_samll.png",
+        "tagName": "群相册",
+        "forwardMessage": "上传1张图片",
+        "imageInfo": {
+          "width": 1080,
+          "height": 1932
+        },
+        "jumpUrl": "mqzone://arouse/groupalbum/feeddetail?groupid=100000002&albumid=PLACEHOLDER&batchid=1700000000",
+        "legacyUrl": "https://h5.qzone.qq.com/groupphoto/inqq/detail/placeholder",
+        "legacyVersion": "9.0.8",
+        "pcJumpUrl": "https://h5.qzone.qq.com/groupphoto/inqq/detail/placeholder",
+        "picNum": 1
+      }
+    },
+    "config": {
+      "autosize": 0,
+      "collect": 0,
+      "ctime": 1790228018,
+      "forward": 0,
+      "reply": 1,
+      "round": 1,
+      "token": "00000000000000000000000000000000",
+      "type": "normal"
+    },
+    "view": "view_00000000000000000000000000000000",
+    "ver": "0.0.0.1"
+  },
+  "com.tencent.map|Location.Search": {
+    "app": "com.tencent.map",
+    "config": {
+      "autosize": false,
+      "ctime": 1790937468,
+      "forward": true,
+      "token": "00000000000000000000000000000000",
+      "type": "normal"
+    },
+    "desc": "",
+    "from": 1,
+    "meta": {
+      "Location.Search": {
+        "address": "安徽省芜湖市湾沚区",
+        "enum_relation_type": 1,
+        "from": "plusPanel",
+        "from_account": 100000007,
+        "id": "",
+        "lat": "31.23967",
+        "lng": "118.498925",
+        "name": "示例地点",
+        "uint64_peer_account": 100000001
+      }
+    },
+    "prompt": "[位置]示例地点",
+    "ver": "1.1.2.21",
+    "view": "view_00000000000000000000000000000000"
+  }
+}

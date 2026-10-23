@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800" viewBox="0 0 800 800">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4D6BFE"/>
+      <stop offset="50%" stop-color="#3B82F6"/>
+      <stop offset="100%" stop-color="#22D3EE"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="round">
+      <rect x="0" y="0" width="800" height="800" rx="180" ry="180"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#round)">
+    <rect width="800" height="800" fill="url(#bg)"/>
+    <rect width="800" height="420" fill="url(#glow)"/>
+
+    <!-- 桥拱 -->
+    <path d="M 190 545 C 190 372, 305 285, 400 285 C 495 285, 610 372, 610 545"
+          fill="none" stroke="#FFFFFF" stroke-width="70" stroke-linecap="round"/>
+
+    <!-- 桥面 -->
+    <rect x="150" y="536" width="500" height="72" rx="36" fill="#FFFFFF"/>
+
+    <!-- 桥墩 -->
+    <rect x="277" y="430" width="48" height="106" rx="24" fill="#FFFFFF"/>
+    <rect x="376" y="360" width="48" height="176" rx="24" fill="#FFFFFF"/>
+    <rect x="475" y="430" width="48" height="106" rx="24" fill="#FFFFFF"/>
+
+    <!-- 左气泡（QQ 侧）-->
+    <g>
+      <rect x="96" y="626" width="152" height="84" rx="42" fill="#FFFFFF"/>
+      <path d="M 170 706 L 170 748 L 210 706 Z" fill="#FFFFFF"/>
+      <circle cx="146" cy="668" r="11" fill="#4D6BFE"/>
+      <circle cx="172" cy="668" r="11" fill="#4D6BFE"/>
+      <circle cx="198" cy="668" r="11" fill="#4D6BFE"/>
+    </g>
+
+    <!-- 右气泡（DSH 侧）-->
+    <g>
+      <rect x="552" y="626" width="152" height="84" rx="42" fill="#FFFFFF"/>
+      <path d="M 630 706 L 590 706 L 630 748 Z" fill="#FFFFFF"/>
+      <circle cx="602" cy="668" r="11" fill="#22D3EE"/>
+      <circle cx="628" cy="668" r="11" fill="#22D3EE"/>
+      <circle cx="654" cy="668" r="11" fill="#22D3EE"/>
+    </g>
+  </g>
+</svg>
