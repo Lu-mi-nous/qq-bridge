@@ -80,7 +80,7 @@ QQ 消息 ──► SnowLuma（OneBot v11）──► 桥接进程 ──► DSH
 | 浏览器 | **Chrome 或 Edge** | 功能菜单、Token 报表、GitHub 截图、X 渲染 | ⭐ 截图类功能需要 |
 | 语音 | **Python 3.10+** + GPT-SoVITS | 发语音（TTS） | 可选 |
 | 语音 | **Python 3.10+** + faster-whisper | 语音转文字、B 站字幕兜底 | 可选 |
-| 图像 | **Upscayl**（`upscayl-bin.exe`） | 小图超分 | 可选 |
+| 图像 | **Upscayl**（[官方下载](https://upscayl.pro/cn/download.html)，使用其中的 `upscayl-bin.exe`） | 小图超分 | 可选 |
 | 网络 | HTTP 代理 | pixiv / GitHub / 部分境外站点 | 可选 |
 
 ### 第 1 步 · 安装并启动外部服务
@@ -205,7 +205,7 @@ scripts/stop-all.ps1 -IncludeDsh        # 连 DSH / MCP 一起停
 | 看图 / 发图 / 图库 | 无（SauceNAO key、pixiv Cookie 可选） | `socialV2.images.enabled: true`，见 [docs/CONFIGURATION.md](docs/CONFIGURATION.md) |
 | 语音合成（发语音） | Python 3.10+、GPT-SoVITS 与达妮娅权重 | `node scripts/setup-tts.mjs --check` → `node scripts/setup-tts.mjs`；再设 `socialV2.tts.enabled: true` |
 | 语音转文字 / B 站字幕兜底 | Python 3.10+、faster-whisper 模型 | 配 `socialV2.bili.asr`，模型目录可用 `FASTER_WHISPER_MODEL` 指定 |
-| 小图超分 | Upscayl（`resources/bin/upscayl-bin.exe`） | `socialV2.upscale.enabled: true`，`binDir` 指向 Upscayl 安装目录 |
+| 小图超分 | Upscayl（[官方下载](https://upscayl.pro/cn/download.html)，使用其中的 `resources/bin/upscayl-bin.exe`） | `socialV2.upscale.enabled: true`，`binDir` 指向 Upscayl 安装目录 |
 | 功能菜单 / Token 报表 / GitHub 截图 | Chrome 或 Edge | 默认开启；非标准路径设 `CHROME_PATH` |
 | 联网搜索 / 天气 | 无（天气走 Open-Meteo，免 key） | 默认开启；境外站点可配 `webSearch.proxy` |
 | B 站自主刷 / 看视频 | ffmpeg；登录 Cookie 可选（字幕需要） | `socialV2.bili.enabled: true` |

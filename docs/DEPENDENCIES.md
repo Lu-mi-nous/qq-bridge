@@ -88,7 +88,7 @@ set FASTER_WHISPER_MODEL=D:\models\faster-whisper-large-v3
 
 | 依赖 | 说明 |
 | --- | --- |
-| **Upscayl** | 使用其中的 `resources/bin/upscayl-bin.exe`；`Upscayl.exe` 是 GUI 外壳，不能用于后台调用 |
+| **Upscayl**（[官方下载](https://upscayl.pro/cn/download.html)） | 使用其中的 `resources/bin/upscayl-bin.exe`；`Upscayl.exe` 是 GUI 外壳，不能用于后台调用 |
 | 模型文件 | 默认 `upscayl-standard-4x`，随 Upscayl 安装 |
 
 配置 `socialV2.upscale.enabled: true`，并把 `binDir` / `modelDir` 指向 Upscayl 安装目录。未安装时该工具不注册，图片仍会用 ffmpeg lanczos 放大。

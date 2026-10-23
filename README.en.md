@@ -77,7 +77,7 @@ The goal: from a clean Windows machine to a reply in your QQ group. Full depende
 | Browser | **Chrome or Edge** | feature menu, token report, GitHub screenshots | ⭐ for screenshot features |
 | Voice | **Python 3.10+** + GPT-SoVITS | text-to-speech | optional |
 | Voice | **Python 3.10+** + faster-whisper | speech-to-text / Bilibili subtitle fallback | optional |
-| Image | **Upscayl** (`upscayl-bin.exe`) | super-resolution | optional |
+| Image | **Upscayl** ([download](https://upscayl.pro/cn/download.html), use `upscayl-bin.exe`) | super-resolution | optional |
 | Network | HTTP proxy | pixiv / GitHub / some overseas sites | optional |
 
 ### Step 1 · Install and start the external services
@@ -187,7 +187,7 @@ scripts/stop-all.ps1 -IncludeDsh        # also stop DSH / MCP
 | Images / image library | none (SauceNAO key and pixiv cookie optional) | `socialV2.images.enabled: true` |
 | Text-to-speech | Python 3.10+, GPT-SoVITS + voice weights | `node scripts/setup-tts.mjs --check` then `node scripts/setup-tts.mjs`; set `socialV2.tts.enabled: true` |
 | Speech-to-text / Bilibili subtitles | Python 3.10+, faster-whisper model | configure `socialV2.bili.asr`; set `FASTER_WHISPER_MODEL` |
-| Super-resolution | Upscayl | `socialV2.upscale.enabled: true`, set `binDir` |
+| Super-resolution | Upscayl ([download](https://upscayl.pro/cn/download.html)) | `socialV2.upscale.enabled: true`, set `binDir` |
 | Feature menu / token report / GitHub shots | Chrome or Edge | enabled by default; set `CHROME_PATH` if needed |
 | Web search / weather | none (Open-Meteo needs no key) | enabled by default |
 | Bilibili self-browsing | ffmpeg; optional Bilibili cookie | `socialV2.bili.enabled: true` |
