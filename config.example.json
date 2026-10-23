@@ -1,0 +1,502 @@
+{
+  "dsh": {
+    "baseUrl": "http://127.0.0.1:3080",
+    "provider": "deepseek-official",
+    "model": "deepseek-v4-flash-vision-exp",
+    "reasoningEffort": "max"
+  },
+  "snowluma": {
+    "wsUrl": "ws://127.0.0.1:3001",
+    "httpUrl": "http://127.0.0.1:3000",
+    "accessToken": "",
+    "launcherPath": "C:\\path\\to\\SnowLuma\\launcher.bat",
+    "homeDir": "C:\\path\\to\\SnowLuma",
+    "allowProcessControl": false
+  },
+  "ownerQQ": 123456789,
+  "sessionCwd": "",
+  "agentPreset": "qq-chat",
+  "workspaceTitle": "QQ 聊天",
+  "allow": {
+    "private": [
+      123456789
+    ],
+    "groups": [
+      123456789
+    ],
+    "privateMode": "friends"
+  },
+  "deny": {
+    "private": [],
+    "groups": []
+  },
+  "allowAllWhenEmpty": false,
+  "ackMessage": "",
+  "sendDelayMs": 300,
+  "questionTimeoutMs": 300000,
+  "consolePort": 3100,
+  "consoleToken": "",
+  "security": {
+    "interceptNotify": true
+  },
+  "slang": {
+    "enabled": true,
+    "extractMinMessages": 10,
+    "extractCooldownMs": 300000,
+    "inferenceThresholds": [
+      2,
+      4,
+      8
+    ],
+    "injectMax": 8,
+    "learnerPreset": "qq-chat",
+    "workspaceTitle": "QQ 黑话学习",
+    "autoResearch": true
+  },
+  "social": {
+    "maxReplyChars": 500,
+    "mustReplyKeywords": [
+      "deepseek",
+      "小鲸鱼",
+      "大肥鱼",
+      "鲸鱼",
+      "d指导",
+      "在吗"
+    ],
+    "contextWindow": 20,
+    "triggerProbability": 0.1,
+    "activeCheckMinMs": 8000,
+    "activeCheckMaxMs": 30000,
+    "idleWindowMs": 360000,
+    "idleRetryProbability": 0.4,
+    "proactiveEnabled": true,
+    "proactiveIdleThresholdMs": 1800000,
+    "proactiveCheckMinMs": 2700000,
+    "proactiveCheckMaxMs": 5400000,
+    "proactiveProbability": 0.2,
+    "activeReplyDelayMinMs": 1000,
+    "activeReplyDelayMaxMs": 5000,
+    "activeDurationEnabled": true,
+    "activeDurationMinMs": 1200000,
+    "activeDurationMaxMs": 3000000,
+    "skipProbability": 0.05,
+    "surrenderProbability": 0,
+    "idleRetryWaitMs": 120000,
+    "burstEnabled": true,
+    "burstIntervalMinMs": 1000,
+    "burstIntervalMaxMs": 3000,
+    "longGapProbability": 0.2,
+    "longGapMinMs": 5000,
+    "longGapMaxMs": 10000
+  },
+  "socialV2": {
+    "enabled": true,
+    "autoReplyCheckMs": 30000,
+    "agentPreset": "qq-chat-v2",
+    "provideRecommendations": true,
+    "tools": {
+      "getPrompt": true,
+      "getUnread": true,
+      "getRecent": true,
+      "socialState": true,
+      "sendGroup": true,
+      "sendPrivate": true,
+      "reply": true,
+      "sendBurst": true,
+      "sendMessage": true,
+      "waitMessages": true,
+      "feedback": true,
+      "getMyRecent": true,
+      "getMessageDetail": true,
+      "getActiveMembers": true,
+      "setWakeConfig": true,
+      "markRead": true,
+      "memory": true,
+      "slangQuery": true,
+      "slangSubmit": true,
+      "getImages": true,
+      "getForwardMsg": true,
+      "sendPoke": true,
+      "listStickers": true,
+      "getStickerImage": true,
+      "sendSticker": true,
+      "setStickerRemark": false,
+      "stickerNote": true,
+      "collectSticker": true,
+      "getSelfImage": true,
+      "getFeatureMenu": true,
+      "sendVoice": true,
+      "tokenReport": true,
+      "crawl": true,
+      "refreshImageLib": true,
+      "fetchXPosts": true,
+      "sendImage": true,
+      "deleteSticker": false,
+      "githubShot": true,
+      "reactMessage": true,
+      "checkImage": true,
+      "rejectImage": true,
+      "archiveImage": true,
+      "imageSource": true,
+      "reverseSearch": true,
+      "upscaleImage": true,
+      "groupFiles": true,
+      "sendFeatureMenu": true,
+      "watchBili": true,
+      "biliRecord": true,
+      "biliMemory": true,
+      "biliSearch": true,
+      "qq_status": true,
+      "qq_list_groups": true,
+      "qq_get_group_members": true,
+      "qq_get_group_history": true
+    },
+    "githubShot": {
+      "enabled": true,
+      "sliceHeight": 2400,
+      "maxHeight": 12000,
+      "waitMs": 3500,
+      "timeoutMs": 90000,
+      "proxy": ""
+    },
+    "joinRequest": {
+      "enabled": true,
+      "autoApprove": false,
+      "ttlMs": 300000
+    },
+    "wake": {
+      "defaultMode": "diving",
+      "preSleepWaitEnabled": true,
+      "preSleepWaitMs": 300000,
+      "preSleepReplyGraceMs": 30000,
+      "recommendedDefaultInfinite": true,
+      "sleepMinMs": 60000,
+      "sleepMaxMs": 0,
+      "recommendedSleepMinMs": 300000,
+      "recommendedSleepMaxMs": 7200000,
+      "recommendedProbability": 0.05,
+      "recommendedKeywords": [
+        "小鲸鱼",
+        "DeepSeek",
+        "deepseek",
+        "DS",
+        "D老师",
+        "d老师",
+        "D指导",
+        "d指导",
+        "D师傅",
+        "d师傅",
+        "深度求索",
+        "大肥鱼",
+        "鲸鱼",
+        "DeepSeek V3",
+        "DeepSeek R1",
+        "R1"
+      ],
+      "recommendedAtMention": true,
+      "recommendedNameMention": true,
+      "recommendedQuestion": true,
+      "recommendedPoke": true,
+      "recommendedHint": "如果你要潜水，推荐先调用 qq_wait_for_messages(timeoutMs=300000) 完成一次沉睡前观察：5 分钟内没人说话就可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看 newMessages，判断不需要你参与可直接沉睡，若参与了则下次想睡需再等观察窗口。潜水时长推荐 5~120 分钟，普通消息概率 0.05；@/名字/关键词/提问唤醒建议保持开启。需要等特定某人/某几人时，可额外设置 triggers.speakerIds。",
+      "batchWindowMs": 8000,
+      "maxWakePerMinute": 1,
+      "maxWakePerHour": 12,
+      "noActionLimit": 3,
+      "maxWakeConfigReminders": 2
+    },
+    "send": {
+      "burstEnabled": true,
+      "burstMaxMessages": 8,
+      "burstIntervalMinMs": 1000,
+      "burstIntervalMaxMs": 3000,
+      "longGapProbability": 0.2,
+      "longGapMinMs": 5000,
+      "longGapMaxMs": 10000,
+      "maxSendPerMinute": 8,
+      "maxSendPerHour": 60,
+      "maxMessageChars": 500,
+      "maxGapMs": 10000,
+      "gapBaseMs": 800,
+      "gapPerCharMs": 20,
+      "recommendedHint": "单条消息不要用空格断句，中文短句用逗号/顿号或直接连写；分条时每条都要读起来完整，不要把同一句话拆到两条里；普通闲聊建议一次 1~3 条，条间 1~3 秒；讲故事/回忆可以 5~10 秒间隔；不要连续刷屏。",
+      "autoAt": {
+        "enabled": true,
+        "probability": 0.3,
+        "windowMs": 600000,
+        "cooldownMs": 300000,
+        "maxPerHour": 10
+      }
+    },
+    "wait": {
+      "defaultMs": 30000,
+      "minMs": 5000,
+      "maxMs": 600000,
+      "defaultQuietMs": 8000,
+      "minQuietAfterNewMs": 10000,
+      "maxQuietMs": 15000,
+      "turnMaxCount": 2,
+      "turnMaxMs": 120000
+    },
+    "sticker": {
+      "enabled": true,
+      "syncTtlMs": 60000,
+      "maxListCount": 100,
+      "includeInPrompt": true,
+      "promptMaxStickers": 8,
+      "collect": {
+        "enabled": true,
+        "maxPerMinute": 2,
+        "maxPerHour": 10,
+        "maxRemarkChars": 20
+      },
+      "autoNudge": true,
+      "autoNudgeProbability": 0.33,
+      "autoNudgeMinGapMs": 180000,
+      "autoNudgeMaxPerHour": 6,
+      "autoNudgeCandidates": 3
+    },
+    "images": {
+      "enabled": true,
+      "maxFiles": 300,
+      "maxBytesPerFile": 8388608,
+      "fetchPerRun": 20,
+      "cooldownMs": 1800000,
+      "sendCooldownMs": 5000,
+      "maxSendPerHour": 60,
+      "recentSendBlockMs": 600000,
+      "annotateSource": true,
+      "sources": {
+        "safebooru": {
+          "enabled": true,
+          "tags": [],
+          "limit": 20
+        },
+        "pixiv": {
+          "enabled": true,
+          "limit": 20,
+          "proxy": ""
+        },
+        "yandere": {
+          "enabled": true,
+          "limit": 20,
+          "proxy": ""
+        }
+      },
+      "maxTotalBytes": 268435456,
+      "proxy": "",
+      "sentTtlMs": 600000,
+      "sentSweepMs": 60000
+    },
+    "media": {
+      "maxMessageBytes": 8388608
+    },
+    "comply": {
+      "enabled": true,
+      "probability": 0.7,
+      "ttlMs": 180000,
+      "cooldownMs": 20000,
+      "maxPerHour": 12
+    },
+    "emojiReact": {
+      "enabled": true,
+      "cooldownMs": 60000,
+      "maxPerHour": 15
+    },
+    "gifFrames": {
+      "enabled": true,
+      "maxFrames": 20,
+      "tileWidth": 320,
+      "timeoutMs": 15000
+    },
+    "upscale": {
+      "enabled": true,
+      "model": "upscayl-standard-4x",
+      "binDir": "",
+      "modelDir": "",
+      "timeoutMs": 120000,
+      "cache": {
+        "enabled": true,
+        "dir": "",
+        "maxAgeDays": 3,
+        "maxBytes": 524288000,
+        "sweepEveryHours": 6
+      }
+    },
+    "bili": {
+      "enabled": true,
+      "selfBrowsing": {
+        "enabled": true,
+        "dailyBudgetSec": 7200,
+        "minIntervalMs": 300000,
+        "maxIntervalMs": 600000,
+        "maxSecondsPerVideo": 240,
+        "framesPerSecond": 1,
+        "maxFramesTotal": 120,
+        "tilesPerSheet": 30,
+        "framesDisliked": 8,
+        "framesLiked": 36,
+        "seenCooldownMs": 604800000,
+        "onlyWhenDiving": true,
+        "categoryWeights": {
+          "二次元": 6,
+          "游戏": 5,
+          "科技": 4,
+          "社会热点": 3.5,
+          "知识": 3,
+          "鬼畜": 2,
+          "音乐": 1.5,
+          "生活": 1,
+          "搞笑": 1,
+          "影视": 1
+        },
+        "scanSeconds": 6,
+        "likedSeconds": 120,
+        "judgeTimeoutMs": 150000,
+        "gameBoost": 20,
+        "preferGames": true,
+        "poolPages": 3,
+        "search": {
+          "enabled": true,
+          "maxKeywords": 6,
+          "count": 20,
+          "order": "totalrank",
+          "gamesOnly": false
+        }
+      },
+      "share": {
+        "enabled": true,
+        "minInterest": 65,
+        "probability": 0.3,
+        "minGapMs": 21600000,
+        "askModel": true,
+        "preferActiveGroups": true,
+        "activeWindowHours": 24,
+        "minActivityForShare": 1,
+        "activityWeightCap": 120
+      },
+      "watchShared": {
+        "enabled": true,
+        "seconds": 10,
+        "frames": 12,
+        "cooldownMs": 600000
+      },
+      "memory": {
+        "file": "state/bili-memory.json",
+        "maxItems": 800
+      },
+      "authFile": "state/bili-auth.json"
+    },
+    "proactive": {
+      "enabled": true,
+      "checkIntervalMinMs": 1800000,
+      "checkIntervalMaxMs": 5400000,
+      "idleThresholdMs": 900000,
+      "probability": 0.3
+    },
+    "feedback": {
+      "maxLength": 500,
+      "notifyOwnerOnError": false
+    },
+    "context": {
+      "recentLimit": 100,
+      "unreadLimit": 30,
+      "contextWindow": 20
+    },
+    "contextMemory": {
+      "enabled": true,
+      "episodeEveryMessages": 40,
+      "episodeIdleMs": 1200000,
+      "episodeIdleMinMessages": 15,
+      "episodeInputLimit": 60,
+      "episodeKeep": 300,
+      "compactionKeep": 20,
+      "journalKeep": 3000,
+      "journalCompactBytes": 2097152,
+      "longTermKeepPeople": 30,
+      "longTermKeepFacts": 80,
+      "longTermKeepThreads": 40,
+      "sweepMaxPerRun": 6,
+      "sweepActiveWithinMs": 604800000,
+      "memoryPackChars": 1500,
+      "gatewayUrl": "http://127.0.0.1:7863/v1",
+      "model": "cn:deepseek-v4.1-flash",
+      "apiKey": "",
+      "timeoutMs": 60000
+    },
+    "errorNotice": {
+      "enabled": true,
+      "notifyOwner": true,
+      "inGroup": false,
+      "windowMs": 180000
+    },
+    "tts": {
+      "enabled": false,
+      "dir": "",
+      "probability": 0.15,
+      "maxPerHour": 60,
+      "maxChars": 140,
+      "device": "cuda",
+      "isHalf": true,
+      "voiceName": "",
+      "timeoutMs": 180000,
+      "gptModel": "",
+      "sovitsModel": "",
+      "cpuThreads": 8,
+      "voiceId": "",
+      "weightsId": "proplus",
+      "refMode": "auto",
+      "speed": 1,
+      "fragmentInterval": 0.3,
+      "temperature": 0.8,
+      "topK": 15,
+      "topP": 0.95,
+      "textSplitMethod": "cut5",
+      "volumeGainDb": 0,
+      "punctuate": true
+    }
+  },
+  "webSearch": {
+    "enabled": true,
+    "engines": [
+      "weather",
+      "baidu",
+      "bing-html",
+      "bing-rss",
+      "duckduckgo"
+    ],
+    "maxResults": 8,
+    "timeoutMs": 12000,
+    "totalTimeoutMs": 35000,
+    "proxy": ""
+  },
+  "xMonitor": {
+    "proxy": "",
+    "translate": true,
+    "gatewayUrl": "",
+    "translateModel": "",
+    "maxCount": 5,
+    "scanLimit": 12,
+    "includeMedia": true,
+    "mediaDir": "state/x-monitor-media",
+    "mediaTtlMs": 7200000,
+    "mediaSweepMs": 300000,
+    "mediaMaxBytes": 209715200,
+    "mediaMaxFiles": 400,
+    "ownOnly": true,
+    "includeVideo": true,
+    "maxVideoBytes": 104857600
+  },
+  "errorNotify": {
+    "notifyOwner": true,
+    "windowMs": 180000
+  },
+  "imageReverseSearch": {
+    "enabled": true,
+    "apiKey": "",
+    "db": 999,
+    "minsim": 50,
+    "numres": 5,
+    "proxy": ""
+  },
+  "consoleAuth": true
+}
