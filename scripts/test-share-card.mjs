@@ -1,3 +1,4 @@
+import { extractMediaFromSegments } from '../src/pipeline/segments.js';
 // 回归测试：QQ 分享卡片解析（B 站视频 / 小程序 / 音乐 / 位置）。
 //
 // 背景（2026-10-12 用户要求「群里发送 bilibili 视频链接或者分享的小程序时，
@@ -24,7 +25,7 @@ const root = path.dirname(fileURLToPath(import.meta.url)) + '/..';
 const m = await import(new URL('../src/share-card.js', import.meta.url));
 const { parseShareCard, formatShareCard, coverUrlOf, extractShareCards, isShareCardSegment, parseCardData } = m;
 
-const bridgeSrc = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
+const segmentsSrc = fs.readFileSync(path.join(root, 'src/pipeline/segments.js'), 'utf8');
 
 // 真实卡片夹具
 let fixtures = {};
@@ -35,11 +36,12 @@ const fx = (key) => Object.entries(fixtures).find(([k]) => k.startsWith(key))?.[
 
 console.log('── 1. 接入点（bridge.js 不再只输出 [卡片消息]）──');
 {
-  check('bridge.js 引入了 share-card', /from '\.\/share-card\.js'/.test(bridgeSrc));
-  check('json 段调用 parseShareCard', /case 'json':[\s\S]{0,500}parseShareCard\(/.test(bridgeSrc));
-  check('解析失败仍退回占位符（不编内容）', /card \? formatShareCard\(card\) : '\[卡片消息\]'/.test(bridgeSrc));
-  check('封面进入媒体管线（extractMediaFromSegments）', /coverUrlOf\(card\)/.test(bridgeSrc));
-  check('封面项带 fromCard 标记', /fromCard: true/.test(bridgeSrc));
+  check('pipeline/segments 引入了 share-card', /from '\.\.\/share-card\.js'/.test(segmentsSrc));
+  check('json 段调用 parseShareCard', /case 'json':[\s\S]{0,500}parseShareCard\(/.test(segmentsSrc));
+  check('解析失败仍退回占位符（不编内容）', /card \? formatShareCard\(card\) : '\[卡片消息\]'/.test(segmentsSrc));
+  const cardMedia = Object.values(fixtures).flatMap(card => extractMediaFromSegments([{ type: 'json', data: { data: JSON.stringify(card) } }]));
+  check('卡片封面进入媒体管线且带来源标记', cardMedia.length > 0 && cardMedia.every(m => m.fromCard && m.url));
+
 }
 
 console.log('\n── 2. data 字段两种形态都要吃 ──');

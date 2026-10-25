@@ -39,6 +39,17 @@ function shiftDay(day, delta) {
   return d.toISOString().slice(0, 10);
 }
 
+/** 未命中缓存的输入。 */
+const uncachedOf = (v) => Number(v?.input) || 0;
+/** 总输入 = 未缓存输入 + 缓存读（即 provider 的 prompt_tokens）。 */
+const totalInputOf = (v) => (Number(v?.input) || 0) + (Number(v?.cacheRead) || 0);
+/** 总 token = 总输入 + 输出。 */
+const totalTokensOf = (v) => totalInputOf(v) + (Number(v?.output) || 0);
+const hitRateOf = (v) => {
+  const total = totalInputOf(v);
+  return total > 0 ? Math.round(((Number(v?.cacheRead) || 0) / total) * 1000) / 10 : 0;
+};
+
 /** 把若干天的用量相加。 */
 function sumDays(days, keys) {
   const out = { input: 0, output: 0, cacheRead: 0, reasoning: 0, calls: 0 };
@@ -51,6 +62,9 @@ function sumDays(days, keys) {
     out.reasoning += Number(v.reasoning) || 0;
     out.calls += Number(v.calls) || 0;
   }
+  out.totalInput = out.input + out.cacheRead;
+  out.totalTokens = out.totalInput + out.output;
+  out.cacheHitRate = hitRateOf(out);
   return out;
 }
 
@@ -103,22 +117,22 @@ export function buildTokenReport(usage, opts = {}) {
     recent.push({ day: d, ...sumDays(days, [d]) });
   }
 
-  // 柱状条高度用**总量**（输入+输出），不用 input 单独算：
-  // 群友问"用了多少 token"，直觉上是"输入+输出"这些真的进出的量，
-  // 缓存读虽然数字最大，但它是命中缓存的部分，单独画会把别的柱子压成看不见。
-  const totalOf = (v) => (Number(v?.input) || 0) + (Number(v?.output) || 0);
-  const peak = Math.max(1, ...recent.map((d) => totalOf(d)));
+  // 柱高用**总 token**（未缓存输入 + 缓存读 + 输出），这才是 provider 口径。
+  // 以前只算 input+output（漏掉 cacheRead），会把 4B 的日用量画成 150M 的柱子。
+  const peak = Math.max(1, ...recent.map((d) => totalTokensOf(d)));
   const bars = recent.map((d) => ({
     day: d.day,
     label: d.day.slice(5),           // MM-DD
     input: d.input,
-    output: d.output,
+    uncachedInput: uncachedOf(d),
     cacheRead: d.cacheRead,
+    output: d.output,
     calls: d.calls,
-    total: totalOf(d),
+    totalInput: totalInputOf(d),
+    total: totalTokensOf(d),
     // 相对高度（0~100）。空白天给 0，渲染层画成一条底线而不是齐平的柱子。
-    pct: Math.round((totalOf(d) / peak) * 100),
-    humanTotal: humanTokens(totalOf(d))
+    pct: Math.round((totalTokensOf(d) / peak) * 100),
+    humanTotal: humanTokens(totalTokensOf(d))
   }));
 
   const todaySum = sumDays(days, [today]);
@@ -132,11 +146,13 @@ export function buildTokenReport(usage, opts = {}) {
     raw: name,
     name: prettyModelName(name),
     input: Number(v.input) || 0,
+    uncachedInput: Number(v.input) || 0,
     output: Number(v.output) || 0,
     cacheRead: Number(v.cacheRead) || 0,
     reasoning: Number(v.reasoning) || 0,
     calls: Number(v.calls) || 0,
-    total: totalOf(v)
+    totalInput: totalInputOf(v),
+    total: totalTokensOf(v)
   })).sort((a, b) => b.total - a.total);
 
   const shown = modelList.slice(0, topModels);
@@ -146,10 +162,12 @@ export function buildTokenReport(usage, opts = {}) {
       raw: '(其它)',
       name: `其它 ${rest.length} 个模型`,
       input: rest.reduce((s, x) => s + x.input, 0),
+      uncachedInput: rest.reduce((s, x) => s + x.input, 0),
       output: rest.reduce((s, x) => s + x.output, 0),
       cacheRead: rest.reduce((s, x) => s + x.cacheRead, 0),
       reasoning: rest.reduce((s, x) => s + x.reasoning, 0),
       calls: rest.reduce((s, x) => s + x.calls, 0),
+      totalInput: rest.reduce((s, x) => s + x.totalInput, 0),
       total: rest.reduce((s, x) => s + x.total, 0)
     });
   }
@@ -157,11 +175,12 @@ export function buildTokenReport(usage, opts = {}) {
   const modelRows = shown.map((m) => ({
     ...m,
     pct: Math.round((m.total / modelPeak) * 100),
-    share: allSum.input + allSum.output > 0
-      ? Math.round((m.total / (allSum.input + allSum.output)) * 1000) / 10
+    share: allSum.totalTokens > 0
+      ? Math.round((m.total / allSum.totalTokens) * 1000) / 10
       : 0,
     humanTotal: humanTokens(m.total),
     humanInput: humanTokens(m.input),
+    humanTotalInput: humanTokens(m.totalInput),
     humanOutput: humanTokens(m.output)
   }));
 
@@ -222,10 +241,10 @@ export function summarizeTokenReport(r) {
   if (!r?.hasData) return '还没有任何 Token 用量记录（可能是桥接刚启用，或 DSH 会话目录里没有本项目的记录）。';
   const f = (x) => humanTokens(x);
   return [
-    `今日（${r.today.day}）：输入 ${f(r.today.input)} / 输出 ${f(r.today.output)} / 缓存读 ${f(r.today.cacheRead)}，调用 ${r.today.calls} 次`,
-    `昨日：输入 ${f(r.yesterday.input)} / 输出 ${f(r.yesterday.output)}，调用 ${r.yesterday.calls} 次`,
-    `近 ${r.recent.days} 天：输入 ${f(r.recent.input)} / 输出 ${f(r.recent.output)} / 缓存读 ${f(r.recent.cacheRead)}，调用 ${r.recent.calls} 次`,
-    `累计（${r.daysCovered} 天，截至 ${r.lastDay}）：输入 ${f(r.all.input)} / 输出 ${f(r.all.output)} / 缓存读 ${f(r.all.cacheRead)}，调用 ${r.all.calls} 次`,
+    `今日（${r.today.day}）：总输入 ${f(r.today.totalInput)}（未缓存 ${f(r.today.input)} / 缓存读 ${f(r.today.cacheRead)}，命中 ${r.today.cacheHitRate}%）/ 输出 ${f(r.today.output)}，调用 ${r.today.calls} 次`,
+    `昨日：总输入 ${f(r.yesterday.totalInput)}（未缓存 ${f(r.yesterday.input)} / 缓存读 ${f(r.yesterday.cacheRead)}）/ 输出 ${f(r.yesterday.output)}，调用 ${r.yesterday.calls} 次`,
+    `近 ${r.recent.days} 天：总输入 ${f(r.recent.totalInput)} / 输出 ${f(r.recent.output)}，调用 ${r.recent.calls} 次`,
+    `累计（${r.daysCovered} 天，截至 ${r.lastDay}）：总输入 ${f(r.all.totalInput)}（未缓存 ${f(r.all.input)} / 缓存读 ${f(r.all.cacheRead)}，命中 ${r.all.cacheHitRate}%）/ 输出 ${f(r.all.output)}，调用 ${r.all.calls} 次`,
     `数据更新于 ${r.ageText}${r.stale ? '（已过期，图上的数字不是此刻实时值）' : ''}`
   ].join('\n');
 }

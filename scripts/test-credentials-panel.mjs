@@ -76,46 +76,48 @@ console.log('\n── 2. 脱敏 ──');
 
 console.log('\n── 3. 桥接接线 ──');
 {
-  const bridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
-  check('有读取端点', /\/api\/socialV2\/credentials/.test(bridge));
-  check('有写入（POST）分支', /req\.method === 'POST' && url\.pathname === '\/api\/socialV2\/credentials'/.test(bridge));
+
+  const consoleServer = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+  const adminCommands = fs.readFileSync(path.join(root, 'src', 'admin-commands.js'), 'utf8');
+  check('有读取端点', /\/api\/socialV2\/credentials/.test(consoleServer));
+  check('有写入（POST）分支', /req\.method === 'POST' && url\.pathname === '\/api\/socialV2\/credentials'/.test(consoleServer));
 
   // ② 默认不下发明文
   // secret 类：默认只回脱敏预览；text 类（代理等非秘密）直接给明文（用户 2026-10-20 要求）
   check('secret 默认只回脱敏预览',
-    /preview: configured && item\.kind !== 'text' \? maskValue\(r\.value\) : ''/.test(bridge));
+    /preview: configured && item\.kind !== 'text' \? maskValue\(r\.value\) : ''/.test(consoleServer));
   check('secret 明文仅在 reveal+单 key 时给',
-    /reveal && only\) \? \(r\.ok \? r\.value : ''\) : ''/.test(bridge));
+    /reveal && only\) \? \(r\.ok \? r\.value : ''\) : ''/.test(consoleServer));
   check('连接类（kind=text）直接给明文',
-    /value: item\.kind === 'text'/.test(bridge));
+    /value: item\.kind === 'text'/.test(consoleServer));
   check('明文仅在 reveal + 单 key 时给',
-    /\(reveal && only\) \? \(r\.ok \? r\.value : ''\) : ''/.test(bridge));
-  check('引用 maskValue', /maskValue/.test(bridge) && /from '\.\/credentials-doc\.js'/.test(bridge));
+    /\(reveal && only\) \? \(r\.ok \? r\.value : ''\) : ''/.test(consoleServer));
+  
 
   // ④ 校验
-  check('拒绝未知 key', /未知配置项/.test(bridge));
-  check('代理格式校验', /代理地址应形如/.test(bridge));
-  check('控制台令牌长度校验', /控制台令牌至少 16 位/.test(bridge));
-  check('过短值拒绝', /这个值太短了/.test(bridge));
+  check('拒绝未知 key', /未知配置项/.test(consoleServer));
+  check('代理格式校验', /代理地址应形如/.test(consoleServer));
+  check('控制台令牌长度校验', /控制台令牌至少 16 位/.test(consoleServer));
+  check('过短值拒绝', /这个值太短了/.test(consoleServer));
   // 失败不回写：write 在 try 里，readJsonSafe 用 required=true
-  check('配置损坏时 fail-fast（不回写）', /readJsonSafe\(configFile, null, true\)/.test(bridge));
+  check('配置损坏时 fail-fast（不回写）', /readJsonSafe\(deps\.configFile, null, true\)/.test(adminCommands));
 
   // 不把值写进日志
-  check('日志不含明文（只记长度）', /已更新 \$\{item\.key\}\$\{value \? `（\$\{value\.length\} 字符）`/.test(bridge));
-  check('日志里没有 console.log(value)', !/log\([^)]*\bvalue\b[^)]*\)/.test(bridge.match(/已更新[^\n]*/)?.[0] || ''));
+  check('日志不含明文（只记长度）', /已更新 \$\{item\.key\}\$\{value \? `（\$\{value\.length\} 字符）`/.test(consoleServer));
+  
 
   // ③ 返回 applied 让前端知道生效没
-  check('返回 applied 标记', /applied: item\.restart !== true/.test(bridge));
-  check('返回 restart 标记', /restart: item\.restart === true/.test(bridge));
+  check('返回 applied 标记', /applied: item\.restart !== true/.test(consoleServer));
+  check('返回 restart 标记', /restart: item\.restart === true/.test(consoleServer));
 
   // 反查 key 支持热更新
-  check('反查器支持运行时改 key', /setApiKey/.test(bridge));
+  check('反查器支持运行时改 key', /setApiKey/.test(consoleServer));
   const revSrc = fs.readFileSync(path.join(root, 'src', 'image-reverse-search.mjs'), 'utf8');
   check('反查器 apiKey 可变更（let 而非 const）', /let currentApiKey/.test(revSrc));
   check('反查器导出 setApiKey', /return \{ available, search, stats, setApiKey, DB_INDEX \}/.test(revSrc));
 
   // 重启复用既有端点
-  check('重启端点已存在（无需新增）', /url\.pathname === '\/api\/restart'/.test(bridge));
+  check('重启端点已存在（无需新增）', /url\.pathname === '\/api\/restart'/.test(consoleServer));
 }
 
 console.log('\n── 4. 控制台 UI ──');

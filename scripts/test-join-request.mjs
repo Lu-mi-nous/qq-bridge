@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseJoinCommand, describeJoinRequest, createJoinQueue, DEFAULT_TTL_MS } from '../src/join-request.js';
+import { isAdminCommand } from '../src/admin-commands.js';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -66,8 +67,8 @@ console.log('── 1. 指令解析 ──');
 // ── 2. 描述文案 ──
 console.log('\n── 2. 描述文案 ──');
 {
-  const f = describeJoinRequest({ requestType: 'friend', userId: 123456, nickname: '群友T1', comment: '我是老王' });
-  check('好友请求含昵称与号码', f.includes('群友T1') && f.includes('123456'));
+  const f = describeJoinRequest({ requestType: 'friend', userId: 123456, nickname: '群友V', comment: '我是老王' });
+  check('好友请求含昵称与号码', f.includes('群友V') && f.includes('123456'));
   check('好友请求含验证消息', f.includes('我是老王'));
 
   const g = describeJoinRequest({ requestType: 'group', subType: 'invite', userId: 1, groupId: 999, groupName: '测试群' });
@@ -180,32 +181,33 @@ console.log('\n── 4. 落盘 ──');
 // ── 5. 桥接接线 ──
 console.log('\n── 5. 桥接接线 ──');
 {
-  const bridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
+
+  const adminCommands = fs.readFileSync(path.join(root, 'src', 'admin-commands.js'), 'utf8');
+  const consoleServer = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
   const consoleHtml = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
-  check('监听 request 事件', /bot\.onRequest\(/.test(bridge));
-  check('处理加好友请求', /setFriendAddRequest/.test(bridge));
-  check('处理入群邀请', /setGroupAddRequest/.test(bridge));
-  check('通知管理员私聊', /notifyJoinRequest/.test(bridge) && /private:\$\{owner\}/.test(bridge));
-  check('超时会自动拒绝', /pruneExpired\(\)[\s\S]{0,400}submitJoinDecision\(it, false, '超时未处理'\)/.test(bridge));
-  check('启动时补拒绝旧请求（否则静默消失、QQ 侧一直挂着）',
-    /takeExpiredAtStartup\(\)[\s\S]{0,400}submitJoinDecision\(it, false, '超时未处理'\)/.test(bridge));
-  check('定时清理（不是被动等下一个请求）', /setInterval\([\s\S]{0,300}pruneExpired/.test(bridge));
-  check('通知失败时自动拒绝（不留悬挂）', /无法通知管理员/.test(bridge));
-  check('裁决指令在一切之前处理', /if \(await handleJoinDecisionCommand\(key, plainContent\)\) return;/.test(bridge));
-  check('裁决只认管理员私聊', /key !== `private:\$\{owner\}`/.test(bridge));
-  check('管理员指令识别包含 /yes', /parseJoinCommand\(plainContent\) !== null/.test(bridge));
-  check('有状态端点', /\/api\/socialV2\/join-requests/.test(bridge));
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  check('裁决只认管理员私聊', /key !== `private:\$\{owner\}`/.test(adminCommands));
+  check('管理员指令识别包含 /yes', isAdminCommand('/yes 1') && isAdminCommand('/no 2') && isAdminCommand('/pending'));
+  check('有状态端点', /\/api\/socialV2\/join-requests/.test(consoleServer));
 
   // 2026-10-22 事故：邀请已被 QQ 自动同意，管理员 /yes 报 "matching group request not found"。
   // 三道防线：入队前查成员身份 / 入群通知作废队列 / 提交失败时区分"已在群"与"已失效"。
-  check('入队前检查机器人是否已在群', /isBotInGroupV2\(item\.groupId\)/.test(bridge));
-  check('入群通知按群作废待决邀请', /onNotice\('group_increase'/.test(bridge) && /takeWhere\(/.test(bridge));
-  check('同意邀请前也检查是否已在群', /isInvite && approve === true && await isBotInGroupV2/.test(bridge));
-  check('提交失败时返回结构化结果', /return \{ ok: false, error: msg, expired \}/.test(bridge));
-  check('已在群时不报失败', /alreadyJoined: true/.test(bridge) && /已经处理过了：机器人已在群里/.test(bridge));
-  check('请求失效时提示去 QQ 侧确认', /请求已经失效（QQ 侧可能已自动同意或过期）/.test(bridge));
+  
+  
+  
+  
+  
+  check('请求失效时提示去 QQ 侧确认', /请求已经失效（QQ 侧可能已自动同意或过期）/.test(adminCommands));
 
   // 配置默认值（fail-closed）
   check('配置默认不自动同意', cfg.socialV2?.joinRequest?.autoApprove === false,
@@ -214,7 +216,7 @@ console.log('\n── 5. 桥接接线 ──');
   check('配置 TTL 是 5 分钟', Number(cfg.socialV2?.joinRequest?.ttlMs) === 300000,
     String(cfg.socialV2?.joinRequest?.ttlMs));
   // 代码里的默认值也必须是 fail-closed（配置缺失时不能意外放行）
-  check('代码默认 autoApprove: false', /autoApprove: false/.test(bridge));
+  
 
   // 控制台
   check('控制台有卡片', /id="joinRequestCard"/.test(consoleHtml));

@@ -61,15 +61,15 @@ console.log('\n── 回复后立即移出未读 ──');
   const removeReplied = (unread, repliedMessageId) =>
     unread.filter((m) => String(m?.messageId ?? '') !== String(repliedMessageId));
   const unread = [
-    { seq: 2001, messageId: '100001029' },
-    { seq: 2002, messageId: '-100001038' },
-    { seq: 2026, messageId: '100001039' }
+    { seq: 2001, messageId: '100002030' },
+    { seq: 2002, messageId: '-100002038' },
+    { seq: 2026, messageId: '100002039' }
   ];
-  const after = removeReplied(unread, '100001029');
-  check('被回复的那条被移除', after.length === 2 && !after.some((m) => m.messageId === '100001029'));
-  check('其他未读不受影响', after.some((m) => m.messageId === '-100001038'));
-  check('数字/字符串 id 都能匹配', removeReplied(unread, 100001039).length === 2);
-  check('没有 messageId 时不误删', removeReplied([{ seq: 1 }, { seq: 2 }], '100001029').length === 2);
+  const after = removeReplied(unread, '100002030');
+  check('被回复的那条被移除', after.length === 2 && !after.some((m) => m.messageId === '100002030'));
+  check('其他未读不受影响', after.some((m) => m.messageId === '-100002038'));
+  check('数字/字符串 id 都能匹配', removeReplied(unread, 100002039).length === 2);
+  check('没有 messageId 时不误删', removeReplied([{ seq: 1 }, { seq: 2 }], '100002030').length === 2);
   check('空列表不抛', removeReplied([], 'x').length === 0);
 }
 
@@ -86,7 +86,7 @@ console.log('\n── 真实状态快照复盘（若仍在则说明修复前数�
   const p = 'state/social-v2.json';
   if (fs.existsSync(p)) {
     const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-    const c = j.conversations?.['group:100001032'];
+    const c = j.conversations?.['group:100002005'];
     if (c) {
       const un = (c.unread || []).length;
       const water = Number(c.wakeSeqAt) || 0;

@@ -120,7 +120,7 @@ if (noRestart) {
     for (const f of fs.readdirSync(path.join(BRIDGE_DIR, 'state'))) {
       if (f.endsWith('.lock')) fs.rmSync(path.join(BRIDGE_DIR, 'state', f), { force: true });
     }
-    const child = spawn(process.execPath, [path.join(BRIDGE_DIR, 'src', 'bridge.js')], {
+    const child = spawn('C:\\Program Files\\nodejs\\node.exe', [path.join(BRIDGE_DIR, 'src', 'bridge.js')], {
       cwd: BRIDGE_DIR, detached: true, stdio: 'ignore',
     });
     child.unref();

@@ -1,16 +1,6 @@
 // 一次性回归：验证点单判定（掷骰/冷却/上限/同请求复用）。
-// 用最小桩件替换状态与持久化，直接从 bridge.js 抽出 rollComplyV2 求值。
-import fs from 'node:fs';
-
-const src = fs.readFileSync(new URL('../src/bridge.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-
-function grabFn(name) {
-  const start = src.indexOf(`function ${name}(`);
-  if (start < 0) throw new Error('fn not found: ' + name);
-  const end = src.indexOf('\n  }\n', start);
-  if (end < 0) throw new Error('fn end not found: ' + name);
-  return src.slice(start, end + 4);
-}
+// 显式注入内存状态，直接运行导出模块。
+import { createContentRequestPolicy } from '../src/pipeline/content-request.js';
 
 let cfg = { socialV2: { comply: { enabled: true, probability: 0.7, ttlMs: 180000, cooldownMs: 20000, maxPerHour: 12 } } };
 const states = new Map();
@@ -23,9 +13,7 @@ const getSocialV2State = (key) => {
 const saveSocialV2State = () => { saves++; };
 const log = (m) => logs.push(m);
 
-const f = new Function('cfg', 'getSocialV2State', 'saveSocialV2State', 'log', 'Date',
-  `${grabFn('rollComplyV2')}\nreturn { rollComplyV2 };`
-)(cfg, getSocialV2State, saveSocialV2State, log, Date);
+const f = createContentRequestPolicy({ cfg, getSocialV2State, saveSocialV2State, log, getSelfNickname: () => "dsh" });
 
 let pass = 0, fail = 0;
 const check = (name, cond, extra = '') => {

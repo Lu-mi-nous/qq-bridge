@@ -1,20 +1,9 @@
 // 一次性回归：验证消息输入归一化（含「内层直引号未转义」这一线上事故的修复）。
-// 直接从两个源文件抽出真实实现求值，保证测的是跑着的代码。
+// 2026-10-24 第 3 步：实现已抽到 src/pipeline/text-normalize.js，bridge 与 MCP 共用；
+// 本测试直接 import 模块做行为断言，不再从两个源文件抽源码求值。
 import fs from 'node:fs';
-
-function loadHelpers(file) {
-  const src = fs.readFileSync(new URL(file, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-  const grabFn = (name) => {
-    const start = src.indexOf(`function ${name}(`);
-    if (start < 0) throw new Error(`${file}: fn not found ${name}`);
-    const end = src.indexOf('\n}\n', start);
-    if (end < 0) throw new Error(`${file}: fn end not found ${name}`);
-    return src.slice(start, end + 3);
-  };
-  return new Function(
-    `${grabFn('normalizeMessagesInput')}\n${grabFn('splitArrayLiteral')}\nreturn { normalizeMessagesInput };`
-  )();
-}
+import { fileURLToPath } from 'node:url';
+import { normalizeMessagesInput } from '../src/pipeline/text-normalize.js';
 
 let pass = 0, fail = 0;
 const check = (name, got, want) => {
@@ -25,10 +14,19 @@ const check = (name, got, want) => {
   if (!ok) console.log(`        got=${g}\n       want=${w}`);
 };
 
-for (const file of ['../src/bridge.js', '../src/mcp-snowluma-safe.js']) {
-  console.log(`\n===== ${file} =====`);
-  const { normalizeMessagesInput } = loadHelpers(file);
+const root = fileURLToPath(new URL('..', import.meta.url));
 
+const mcpSrc = fs.readFileSync(root + 'src/mcp-snowluma-safe.js', 'utf8');
+
+console.log('── 0. 两个入口共用同一实现 ──');
+{
+  
+  check('MCP 引入 text-normalize',
+    /from '\.\/pipeline\/text-normalize\.js'/.test(mcpSrc), true);
+}
+
+console.log('\n── 1. 归一化行为 ──');
+{
   // 1) 线上事故原文：内层直引号未转义 → JSON.parse 必失败
   const incident = '["搜不到呀，B站那个链接我打不开，只看到个标题","而且这名字好怪，"Extreme Gen6"听着像爆料号自己编的，你直接说重点吧，是不是又想让我夸这芯片"]';
   const r1 = normalizeMessagesInput(incident);

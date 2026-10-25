@@ -149,7 +149,8 @@
       "qq_status": true,
       "qq_list_groups": true,
       "qq_get_group_members": true,
-      "qq_get_group_history": true
+      "qq_get_group_history": true,
+      "recallMemory": true
     },
     "githubShot": {
       "enabled": true,
@@ -247,13 +248,15 @@
         "enabled": true,
         "maxPerMinute": 2,
         "maxPerHour": 10,
-        "maxRemarkChars": 20
+        "maxRemarkChars": 20,
+        "maxUploadBytes": 4194304
       },
       "autoNudge": true,
       "autoNudgeProbability": 0.33,
       "autoNudgeMinGapMs": 180000,
       "autoNudgeMaxPerHour": 6,
-      "autoNudgeCandidates": 3
+      "autoNudgeCandidates": 3,
+      "readLocalCache": true
     },
     "images": {
       "enabled": true,
@@ -453,6 +456,37 @@
       "textSplitMethod": "cut5",
       "volumeGainDb": 0,
       "punctuate": true
+    },
+    "whitelistNotice": {
+      "enabled": true,
+      "cooldownMs": 600000,
+      "messages": []
+    },
+    "sharedMemory": {
+      "enabled": true,
+      "shareProfiles": true,
+      "includePrivate": true,
+      "excludeKeys": [],
+      "maxPeople": 2000,
+      "maxTraitsPerPerson": 20,
+      "maxPromptPeople": 3,
+      "maxPromptTraits": 3,
+      "maxPromptChars": 300,
+      "ttlDays": 180,
+      "identityTtlDays": 365
+    },
+    "tokenFuse": {
+      "enabled": true,
+      "warnTokens": 1000000000,
+      "fuseTokens": 2000000000,
+      "fuseUncachedTokens": 300000000,
+      "resetOnNewDay": true,
+      "overrides": {}
+    },
+    "gapNotice": {
+      "enabled": false,
+      "gapMinutes": 30,
+      "longGapHours": 6
     }
   },
   "webSearch": {

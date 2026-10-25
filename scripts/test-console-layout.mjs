@@ -15,6 +15,7 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+const consoleServerSrc = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
 
 // 按文档顺序取出所有卡片编号
 // 注意：06（一代仿真模式）是可折叠卡片，sec-no 写在折叠头部而不是 <h2> 里。
@@ -56,7 +57,9 @@ console.log('── 1. 编号连续性 ──');
       const ds = (/data-sec="([^"]+)"/.exec(attrs) || [])[1] || '';
       if (id === 'summaryGrid' || id === 'detailPool') continue;  // 容器，不是卡片
       // 只认"自己的标题里有编号"：<h2 ...><span class="sec-no">NN</span>
-      const no = (/<h2[^>]*>\s*<span class="sec-no">([0-9a-z]+)<\/span>/.exec(html.slice(m.index, m.index + 700)) || [])[1];
+      const secEnd = html.indexOf('</section>', m.index);
+      const head = secEnd > m.index ? html.slice(m.index, secEnd) : '';
+      const no = (/<h2[^>]*>\s*<span class="sec-no">([0-9a-z]+)<\/span>/.exec(head) || [])[1];
       if (!no) continue;
       if (id !== `sec-${no}` && ds !== no) bad.push(`${id || '(no id)'} / no=${no}`);
     }
@@ -189,6 +192,26 @@ console.log('\n── 4b. 摘要卡 + 全页详情外壳（2026-10-22 改版）�
   check('24 长期列可打开详情弹窗', /data-ctx-mem=/.test(html) && /id="ctxMemOverlay"/.test(html));
   check('24 长期详情有重建按钮', /id="ctxMemRebuild"/.test(html));
   check('24 状态行汇总长期记忆', html.includes('长期 ${t.people'));
+  check('24 有记忆检索面板',
+    /id="ctxSearchKey"/.test(html) && /id="ctxSearchInput"/.test(html)
+    && /id="ctxSearchBtn"/.test(html) && /function ctxSearch\(/.test(html));
+  check('24 有积压趋势与覆盖率/召回列',
+    /id="ctxBacklogTrend"/.test(html) && /function renderBacklogTrend\(/.test(html)
+    && html.includes('>覆盖 / 召回</th>'));
+  check('24 有手动追赶按钮', /data-ctx-catchup=/.test(html) && /function ctxCatchup\(/.test(html));
+  check('24 有重建索引入口',
+    /id="ctxRebuildIndex"/.test(html) && /context-rebuild-index/.test(html)
+    && /function ctxRebuildIndex\(/.test(html));
+  check('24 长期详情显示检索命中审计', /最近检索命中/.test(html) && /data\?\.recallAudit/.test(html));
+  check('24 有跨会话人物记忆面板',
+    /id="ctxSharedPanel"/.test(html) && /id="ctxSharedEnabled"/.test(html)
+    && /function loadSharedMemoryPanel\(/.test(html) && /shared-memory-config/.test(html));
+  check('24 共享面板可忘记/清空',
+    /data-shared-forget=/.test(html) && /shared-memory-forget/.test(html)
+    && /shared-memory-clear/.test(html));
+  check('24 有记忆断层提醒面板',
+    /id="ctxGapPanel"/.test(html) && /id="ctxGapEnabled"/.test(html)
+    && /function loadGapPanel\(/.test(html) && /gapNotice/.test(html));
   check('24 刷新后恢复表格滚动位置',
     /const prevTop = prevScroll \? prevScroll\.scrollTop : 0;/.test(html)
     && /nextScroll\.scrollTop = prevTop;/.test(html));
@@ -300,10 +323,11 @@ console.log('\n── 5. 布局类 ──');
   // Token 与凭据卡内容较宽，应跨两列
   check('Token 卡跨整行（表格+柱状需要宽度）', /class="card span-all" id="tokenCard"/.test(html));
   check('凭据卡跨两列', /class="card card-2col" id="credCard"/.test(html));
-  // 02/03/04/05 四张 520px 卡两两成对，避免落单
-  for (const id of ['sec-02', 'sec-03', 'sec-04', 'sec-05']) {
+  // 02/03/04 三张成对布局；05 人格卡改为整行（按群列表需要宽度）
+  for (const id of ['sec-02', 'sec-03', 'sec-04']) {
     check(`${id} 用成对布局`, new RegExp(`id="${id}" class="[^"]*card-half`).test(html));
   }
+  check('05 人格卡改为整行', /id="sec-05" class="[^"]*span-all[^"]*role-card/.test(html));
   // 06/07 这类超大卡必须整行（用户明确要求「一代二代仿真模式这种超大卡片
   // 就用单列布局，不要改」）。取 class 属性判断，不依赖属性书写顺序。
   const classOf = (id) => {
@@ -356,8 +380,12 @@ console.log('\n── 7. 05 人格卡片：两段互斥，不溢出 ──');
   // 2026-10-21 用户反馈：点「新建人格」时元素溢出卡片。
   // 根因是卡片固定高度（.card-h）而新建表单更高，<details> 直接展开会顶出边界。
   // 修法：两段互斥 + grid-template-rows 高度动画，卡片加 overflow:hidden 兜底。
-  check('05 卡有防溢出容器', /id="sec-05" class="[^"]*card-h[^"]*role-card/.test(html));
+  check('05 卡有防溢出容器', /id="sec-05" class="[^"]*span-all[^"]*role-card/.test(html));
   check('.role-card 设 overflow:hidden（最后一道保险）', /\.role-card \{ overflow: hidden; \}/.test(html));
+  check('有默认人格下拉', /id="roleDefaultSelect"/.test(html));
+  check('有群列表容器', /id="roleGroupList"/.test(html));
+  check('有群筛选输入', /id="roleGroupFilter"/.test(html));
+  check('群行有人格下拉', /role-group-select/.test(html));
 
   check('有两段容器', /id="roleMainSeg"/.test(html) && /id="roleCreateSeg"/.test(html));
   check('两段用 grid 行高做动画',
@@ -438,5 +466,65 @@ console.log('\n── 9. 07 二代仿真参数分组与新增等待参数 ──
     /function setV2Tab\(tab\)/.test(html)
     && /panel\.classList\.toggle\('active', panel\.dataset\.v2Panel === tab\)/.test(html));
 }
+console.log('\n── 10. 05 人格卡在线编辑 ──');
+{
+  check('预览标题栏有编辑按钮', /id="roleEditBtn"/.test(html));
+  check('有编辑区容器', /id="roleEditor"/.test(html) && /class="role-editor"/.test(html));
+  check('编辑区是 textarea', /id="roleEditorText"[^>]*class="role-edit-area"/.test(html));
+  check('有保存/取消按钮', /id="roleEditSave"/.test(html) && /id="roleEditCancel"/.test(html));
+  check('编辑区能填满固定高度面板（flex）', /\.role-editor \{[^}]*flex: 1 1 auto/.test(html)
+    && /\.role-edit-area \{[^}]*flex: 1 1 auto/.test(html));
+  check('编辑中不被自动刷新覆盖', /if \(roleEditing\) return;/.test(html));
+  check('切换预览前提示未保存修改', /function confirmDiscardRoleEdit\(\)/.test(html)
+    && /人格卡还有未保存的修改/.test(html));
+  check('超过 12000 字会提示截断', /ROLE_HINT_LIMIT = 12000/.test(html)
+    && /超过 \$\{ROLE_HINT_LIMIT\} 字会被截断/.test(html));
+  check('Ctrl+Enter 保存 / Esc 取消', /e\.key === 'Escape'/.test(html)
+    && /e\.key === 'Enter' && \(e\.ctrlKey \|\| e\.metaKey\)/.test(html));
+  check('保存走 POST /api/role-content', /api\('\/api\/role-content', 'POST', \{ name, content \}\)/.test(html));
+  check('后端有 POST /api/role-content', /req\.method === 'POST' && url\.pathname === '\/api\/role-content'/.test(consoleServerSrc));
+  check('保存前备份到 roles/.backups', /path\.join\(ROOT, 'roles', '\.backups'\)/.test(consoleServerSrc));
+  check('原子写入角色文件', /atomicWriteText\(roleFile, next\)/.test(consoleServerSrc));
+  check('README 不被当角色改', /if \(safe === 'README'\)/.test(consoleServerSrc));
+}
+
+console.log('\n── 11. 02 会话列表名称与 02b 消息填充 ──');
+{
+  check('会话行显示群名/昵称', /class="sess-name"/.test(html)
+    && /x\.name \? \`<span class="sess-name">/.test(html));
+  check('会话行仍保留 key 便于排查', /<code>\$\{esc\(x\.key\)\}<\/code>/.test(html));
+  check('后端 /api/sessions 返回 name', /url\.pathname === '\/api\/sessions'[\s\S]{0,900}?name: contextDisplayName\(key\)/.test(consoleServerSrc));
+  check('后端 /api/sessions 会刷新名称缓存', /url\.pathname === '\/api\/sessions'[\s\S]{0,300}?refreshContextNames\(false\)/.test(consoleServerSrc));
+  check('02b 整页卡片高度撑满视口', /\.detail-page-body > #msgViewerCard \{[\s\S]{0,200}?height: calc\(100vh - 112px\)/.test(html));
+  check('02b 消息列表吃满剩余高度', /\.detail-page-body > #msgViewerCard \.msglist \{[\s\S]{0,160}?flex: 1 1 auto/.test(html)
+    && /\.detail-page-body > #msgViewerCard \.msglist \{[\s\S]{0,160}?max-height: none/.test(html));
+  check('02b 标题/工具行不被压缩', /#msgViewerCard \.expandable-inner > \* \{[^}]*flex: 0 0 auto/.test(html));
+}
+
+console.log('\n── 12. 侧栏分类导航 + 关于页 ──');
+{
+  check('有左侧分类导航', /id="consoleSidebar"/.test(html) && /class="console-sidebar"/.test(html));
+  check('侧栏使用项目 SVG 图标', /<use href="#qq-bridge-mark"/.test(html) && /class="side-ico"[^>]*><use href="#ico-/.test(html));
+  check('关于按钮在侧栏底部（nav 之外）', /<div class="sidebar-bottom">[\s\S]{0,220}?data-group="about"/.test(html));
+  check('侧栏按钮默认有可见样式', /\.side-item \{[\s\S]{0,260}?background: oklch\(100% 0 0 \/ \.34\)/.test(html));
+  check('有总览/运行/内容/社群/能力/系统/关于', ['all','run','content','community','media','system','about'].every(g => new RegExp('data-group="' + g + '"').test(html)));
+  check('摘要卡带分类字段', /btn\.dataset\.group = CARD_GROUPS\[no\]/.test(html));
+  check('分类映射覆盖 24 张卡', (html.match(/'\d\d': '(run|content|community|media|system)'/g) || []).length >= 24);
+  check('有关于页', /id="aboutView"/.test(html) && /id="aboutVersion"/.test(html) && /id="aboutNode"/.test(html));
+  check('关于页版本/环境来自 API', /\/api\/about/.test(consoleServerSrc)
+    && /snowlumaVersion/.test(consoleServerSrc) && /process\.version/.test(consoleServerSrc));
+  check('详情页停在侧栏右侧（不压住侧栏）', /inset: 0 0 0 calc\(var\(--sidebar-w\) \+ 16px\)/.test(html));
+  check('侧栏打开详情时仍可点击（不 inert）', !/consoleSidebar[^\n]*setAttribute\('inert'/.test(html));
+  check('侧栏切换分类会先关闭详情', /if \(DETAIL_PAGE\.openNo\) closeCardPage\(\)/.test(html));
+  check('分类/关于切换函数存在', /function applyConsoleGroup\(group\)/.test(html)
+    && /function loadAboutPage\(\)/.test(html));
+  check('关于页卡片复用入场动画（错峰）', /about-anim/.test(html) && /animation: cardEnter/.test(html) && /animation-delay: calc\(var\(--i/.test(html));
+  check('关于页内容更丰富（能力/技术栈）', /能力概览/.test(html) && /about-feature-grid/.test(html) && /技术栈与链接/.test(html));
+  check('技术栈与链接合并为一张卡片', /class="card about-stack about-anim"/.test(html) && /class="about-link-grid"/.test(html) && /id="aboutRepo"/.test(html));
+  check('包含本项目与各技术官网/仓库', /nodejs\.org/.test(html) && /github\.com\/SnowLuma\/SnowLuma/.test(html) && /deepseek-harness/.test(html) && /onebot-11/.test(html) && /ffmpeg\.org/.test(html) && /GPT-SoVITS/.test(html));
+  check('窄屏侧栏横向导航', /@media \(max-width: 900px\)[\s\S]{0,500}?\.console-sidebar/.test(html));
+}
+
+
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} 通过 / ${fail} 失败`);
 process.exit(fail === 0 ? 0 : 1);

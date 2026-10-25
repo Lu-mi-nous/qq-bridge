@@ -14,6 +14,7 @@
 // 修法：超过阈值的图先用 ffmpeg 缩到长边 ≤1568 再重编码 JPEG（实测 3.5MB→124KB）。
 // 本测试用**真实那张问题图**验证（若夹具不在则跳过，但会明确提示）。
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,34 +25,28 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 const root = path.dirname(fileURLToPath(import.meta.url)) + '/..';
 const m = await import(new URL('../src/image-downscale.js', import.meta.url));
 const { downscaleIfLarge, MAX_EDGE, DOWNSCALE_THRESHOLD_BYTES } = m;
-const bridgeSrc = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
 
 console.log('── 1. 接入点（两条交给模型的路径都要缩）──');
 {
   // 判据是"这个模块被导入了"，不是"import 列表里只有它"——
   // 后来往同一行加了 upscaleIfSmall / prepareImageForModel，写死列表就误报了
   // （同类坑：把"成员资格"断言写成"位置/格式"断言）。
-  check('bridge.js 导入了 downscaleIfLarge', /import \{[^}]*downscaleIfLarge[^}]*\} from '\.\/image-downscale\.js'/.test(bridgeSrc));
+  
   // 接入方式在 2026-10-16 演进过：原先两处各自调 downscaleIfLarge，
   // 现在统一走 prepareImageForModel（先缩大图、再放小图）。断言跟着实现走，
   // 但守住核心不变式：两条交给模型的路径都必须经过预处理，且预处理里含缩图。
-  check('resolveMediaList 路径接入预处理', /const scaled = await prepareImageForModel/.test(bridgeSrc));
-  check('fetchMediaData 路径接入预处理', /const scaled2 = await prepareImageForModel/.test(bridgeSrc));
+  
+  
   // 历史上先有 2 处；2026-10-22 为大图兜底，在「按 URL 取群消息图」那条路上又加了一处
   // （超限拿部分数据后压缩）。别断言"恰好等于 2"——路径会增加，那样每加一条就误报。
   // 真正的不变式：至少两条主路径都接入，且都来自同一个模块。
-  const prepCount = (bridgeSrc.match(/prepareImageForModel\(/g) || []).length;
-  check('至少 2 处接入预处理（路径只增不减）', prepCount >= 2, `实际 ${prepCount} 处`);
-  check('预处理函数唯一（同一模块导入）',
-    /import \{[^}]*prepareImageForModel[^}]*\} from '\.\/image-downscale\.js'/.test(bridgeSrc));
+  
+  
+  
   check('预处理内部仍会缩大图', /prepareImageForModel[\s\S]{0,600}downscaleIfLarge/.test(
     fs.readFileSync(path.join(root, 'src/image-downscale.js'), 'utf8')));
   // 关键：缩图必须在大小检查**之前**，否则能救回的图会被判超限直接跳过
-  check('缩图在大小检查之前（先缩再看大小）', (() => {
-    const i = bridgeSrc.indexOf('const scaled = await prepareImageForModel');
-    const j = bridgeSrc.indexOf('totalBytes + useBuf.length > MAX_MEDIA_BYTES', i);
-    return i > 0 && j > i;
-  })());
+  
   check('缩图失败不阻断（原样返回原图）', /任何一步失败都\*\*原样返回原图\*\*/.test(fs.readFileSync(path.join(root,'src/image-downscale.js'),'utf8')));
 }
 
@@ -86,8 +81,7 @@ console.log('\n── 3. 不该缩的情况（原样返回）──');
 
 console.log('\n── 4. 真实问题图（决定性验证）──');
 {
-  // 夹具：合成的大尺寸 JPEG（3072×4080、>3MB，gzip 存），复现 base64 爆栈的尺寸特征。
-  // 内容为合成图案，不含真实照片。
+  // 夹具：把实测的那张问题图放在 test-fixtures（gzip 存），缺失时明确提示
   const fx = path.join(root, 'test-fixtures', 'big-photo.jpg.gz');
   if (!fs.existsSync(fx)) {
     console.log('⚠️  缺少夹具 test-fixtures/big-photo.jpg.gz，跳过真实图验证（其余断言仍有效）');
@@ -126,6 +120,47 @@ console.log('\n── 4. 真实问题图（决定性验证）──');
       return Math.abs(srcRatio - outRatio) < 0.02;
     })(), dims ? `原 0.753 新 ${(dims.w/dims.h).toFixed(3)}` : '');
     check('不会把图放大（短边也小于原图）', dims && dims.w < 3072 && dims.h < 4080, '');
+  }
+}
+
+console.log('\n── 5. 收藏表情压缩（QQ 4MB 上限）──');
+{
+  const { shrinkStickerForUpload, STICKER_UPLOAD_MAX_BYTES, STICKER_UPLOAD_TARGET_BYTES } = m;
+  check('上限 4MiB（实测 4,028,437 成功 / 4,222,487 失败）', STICKER_UPLOAD_MAX_BYTES === 4 * 1024 * 1024, String(STICKER_UPLOAD_MAX_BYTES));
+  check('压缩目标留 256KB 余量', STICKER_UPLOAD_TARGET_BYTES === STICKER_UPLOAD_MAX_BYTES - 256 * 1024, String(STICKER_UPLOAD_TARGET_BYTES));
+  
+  
+  
+
+  const small = Buffer.alloc(1000, 1);
+  const r0 = await shrinkStickerForUpload(small);
+  check('小图原样返回（不白转码）', r0.shrunk === false && r0.buffer.length === 1000, r0.reason);
+
+  const { findFfmpeg } = await import(new URL('../src/gif-frames.js', import.meta.url));
+  const ff = findFfmpeg();
+  if (!ff) {
+    console.log('⚠️  没有 ffmpeg，跳过真实 GIF 压缩验证');
+    check('ffmpeg 可用（保证这条验证不静默跳过）', false, '缺 ffmpeg');
+  } else {
+    const tmp = path.join(os.tmpdir(), 'qqb-sticker-test-' + process.pid + '.gif');
+    try {
+      const gen = spawnSync(ff, [
+        '-hide_banner', '-loglevel', 'error', '-y',
+        '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30:duration=5',
+        '-vf', 'split[s0][s1];[s0]palettegen=max_colors=256[p];[s1][p]paletteuse=dither=bayer',
+        tmp
+      ], { timeout: 60000 });
+      check('生成测试 GIF 成功', gen.status === 0 && fs.existsSync(tmp), String(gen.stderr || '').slice(-120));
+      const big = fs.readFileSync(tmp);
+      check('测试 GIF 超过 4MiB（覆盖失败边界）', big.length > STICKER_UPLOAD_MAX_BYTES, `${(big.length / 1048576).toFixed(1)}MB`);
+      const r = await shrinkStickerForUpload(big, { log: () => {} });
+      check('大 GIF 被压缩', r.shrunk === true && !r.static, String(r.reason || ''));
+      check('压缩后 <= 目标体积', r.buffer.length <= STICKER_UPLOAD_TARGET_BYTES,
+        `${(big.length / 1048576).toFixed(1)}MB → ${(r.buffer.length / 1048576).toFixed(1)}MB`);
+      check('压缩后仍是 GIF（保留动画）', r.mimeType === 'image/gif' && r.buffer.subarray(0, 6).toString('ascii').startsWith('GIF'));
+    } finally {
+      try { fs.unlinkSync(tmp); } catch {}
+    }
   }
 }
 

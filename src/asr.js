@@ -26,16 +26,15 @@
 //
 // ── 模型来源 ───────────────────────────────────────────────────────────
 //
-// 优先复用本机已存在的 faster-whisper 模型目录（可用 `FASTER_WHISPER_MODEL`
-// 指定，或放在常见的 FasterWhisperGUI / models 目录下），避免重复下载 3GB。
-// 找不到时按配置的模型名让 faster-whisper 自己下载。
+// 优先复用本机已存在的 faster-whisper 模型目录（用户 2026-10-21 指定：
+// `E:\Program Files\FasterWhisperGUI\models\faster-whisper-large-v3`），
+// 避免重复下载 3GB。找不到时按配置的模型名让 faster-whisper 自己下载。
 //
 // 实测质量（同一段音频）：
 //   large-v3 → 「今天天气不错，我们一起去公园散步吧。记得带上那把红色的雨伞。」（完全正确）
 //   base     → 「今天天氣不錯…記得戴上納法紅色的魚閃。」（后半句错）
 // 所以默认 large-v3；要更快可以配 small/base，但中文质量会明显下降。
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -43,22 +42,13 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
-/** 已知的 faster-whisper 模型目录：环境变量优先，其次常见安装位置。 */
-const _modelRoots = [
-  process.env.FASTER_WHISPER_MODEL,
-  path.join(os.homedir(), 'FasterWhisperGUI', 'models'),
-  path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'FasterWhisperGUI', 'models'),
-  path.join(process.env.ProgramFiles || 'C:\\Program Files', 'FasterWhisperGUI', 'models'),
-  // 兼容把软件装在非系统盘的用户（FasterWhisperGUI 的安装器允许改盘符）。
-  'E:\\Program Files\\FasterWhisperGUI\\models',
-  'D:\\Program Files\\FasterWhisperGUI\\models'
-].filter(Boolean);
-export const KNOWN_MODEL_DIRS = [];
-for (const root of _modelRoots) {
-  for (const name of ['faster-whisper-large-v3', 'faster-whisper-large-v2', 'faster-whisper-medium', 'faster-whisper-small']) {
-    KNOWN_MODEL_DIRS.push(root.endsWith(name) ? root : path.join(root, name));
-  }
-}
+/** 本机已知的 faster-whisper 模型目录（用户指定，优先复用，免下载 3GB）。 */
+export const KNOWN_MODEL_DIRS = [
+  'E:\\Program Files\\FasterWhisperGUI\\models\\faster-whisper-large-v3',
+  'E:\\Program Files\\FasterWhisperGUI\\models\\faster-whisper-large-v2',
+  'E:\\Program Files\\FasterWhisperGUI\\models\\faster-whisper-medium',
+  'E:\\Program Files\\FasterWhisperGUI\\models\\faster-whisper-small'
+];
 
 /** 判断参数是"本地模型目录"（含 model.bin）还是 huggingface 的模型名。 */
 export function resolveModelSpec(spec) {

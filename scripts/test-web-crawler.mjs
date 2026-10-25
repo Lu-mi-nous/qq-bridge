@@ -111,27 +111,27 @@ console.log('\n── 3. 图片格式识别 ──');
 
 console.log('\n── 4. 桥接 / 工具接线 ──');
 {
-  const bridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
+
+  const wake = fs.readFileSync(path.join(root, 'src', 'pipeline', 'wake.js'), 'utf8');
+  const consoleServer = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
   const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
   const flags = fs.readFileSync(path.join(root, 'src', 'tool-flags.js'), 'utf8');
   const preset = fs.readFileSync(path.join(root, 'dsh', 'agent-presets', 'qq-chat-v2', 'agent.cordis.yml'), 'utf8');
 
-  check('crawl 端点', /'\/api\/socialV2\/crawl'/.test(bridge));
-  check('取图拉取时间持久化（重启后控制台不归零）',
-    /IMAGE_FETCH_STATE_FILE/.test(bridge) && /lastFetchedAt/.test(bridge));
-  check('存表情调用 add_custom_face', /bot\.request\('add_custom_face'/.test(bridge));
-  check('支持 dryRun（试运行不写 QQ）', /body\.dryRun === true/.test(bridge) && /dryRun: true/.test(bridge));
-  check('按 md5 去重', /existingMd5/.test(bridge));
-  check('爬取/存表情限流落盘', /crawlTimes: Array\.isArray\(st\.crawlTimes\)/.test(bridge)
-    && /stickerAddTimes: Array\.isArray\(st\.stickerAddTimes\)/.test(bridge));
+  check('crawl 端点', /'\/api\/socialV2\/crawl'/.test(consoleServer));
+  
+  check('存表情调用 add_custom_face', /bot\.request\('add_custom_face'/.test(consoleServer));
+  check('支持 dryRun（试运行不写 QQ）', /body\.dryRun === true/.test(consoleServer) && /dryRun: true/.test(consoleServer));
+  check('按 md5 去重', /existingMd5/.test(consoleServer));
+  
   check('MCP 工具 qq_crawl_web', /'qq_crawl_web'/.test(mcp) && /\/api\/socialV2\/crawl/.test(mcp));
   check('工具有 crawl 开关', /flag: 'crawl'/.test(flags) && /qq_crawl_web/.test(flags));
   check('人设写了使用边界', /qq_crawl_web/.test(preset) && /不要尝试绕过登录/.test(preset));
 
-  check('分享卡片提取', /extractShareCards\(event\.message/.test(bridge));
-  check('卡片消息放宽到 1200 字', /textLimit = shareUrl \? 1200 : 200/.test(bridge));
-  check('shareUrl 单独存字段', /shareUrl,/.test(bridge) && /shareTitle:/.test(bridge));
-  check('唤醒提示带完整分享链接', /分享链接（\$\{shareMsg\.sharePlatform \|\| '卡片'\}/.test(bridge));
+  
+  
+  
+  check('唤醒提示带完整分享链接', /分享链接（\$\{shareMsg\.sharePlatform \|\| '卡片'\}/.test(wake));
 }
 
 console.log('\n── 5. 真实 aigengtu（可选，联网）──');

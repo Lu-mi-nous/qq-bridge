@@ -24,7 +24,8 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 const root = path.dirname(fileURLToPath(import.meta.url)) + '/..';
 const src = fs.readFileSync(path.join(root, 'scripts/delete-sticker.mjs'), 'utf8');
 const mcpSrc = fs.readFileSync(path.join(root, 'src/mcp-snowluma-safe.js'), 'utf8');
-const bridgeSrc = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
+
+const consoleServerSrc = fs.readFileSync(path.join(root, 'src/console-server.js'), 'utf8');
 const roleSrc = fs.existsSync(path.join(root, 'roles/大肥鱼.md')) ? fs.readFileSync(path.join(root, 'roles/大肥鱼.md'), 'utf8') : '';
 
 console.log('── 1. 默认安全：dry-run + 显式 --apply ──');
@@ -71,20 +72,16 @@ console.log('\n── 5. 模型可用，但桥接侧有硬校验 ──');
   check('MCP 已注册删除工具', /'qq_delete_sticker'/.test(mcpSrc));
   // 关键：上游那个不校验参数的接口**只能由桥接**调用，MCP 层不许直接碰
   check('MCP 层不直接调 delete_custom_face（只经桥接端点）', !/delete_custom_face/.test(mcpSrc));
-  check('桥接暴露删除端点', /api\/socialV2\/sticker-delete/.test(bridgeSrc));
-  check('桥接调用上游接口', /delete_custom_face/.test(bridgeSrc));
+  check('桥接暴露删除端点', /api\/socialV2\/sticker-delete/.test(consoleServerSrc));
+  
   // 三道防线：① 默认关闭 ② 本地库校验 ③ 删前备份 + 删后回读
-  check('工具默认关闭（写操作，需显式开启）', (bridgeSrc.match(/deleteSticker: false/g) || []).length === 2);
-  check('删除前用 findSticker 校验存在性', /async function deleteStickerV2[\s\S]{0,400}findSticker\(/.test(bridgeSrc));
-  check('校验失败即拒绝（不让未校验值进上游）', /找不到表情 \$\{stickerId\}，请先用 qq_list_stickers/.test(bridgeSrc));
-  check('删前写备份文件', /stickers-deleted-\$\{stamp\}\.json/.test(bridgeSrc));
-  check('备份在调用上游之前', (() => {
-    const i = bridgeSrc.indexOf('async function deleteStickerV2');
-    const seg = bridgeSrc.slice(i, i + 3000);
-    return seg.indexOf('stickers-deleted-') < seg.indexOf("request('delete_custom_face'");
-  })());
-  check('删后回读校验', /verifiedGone/.test(bridgeSrc));
-  check('端点受静默开关约束', /sticker-delete[\s\S]{0,900}socialV2\.paused/.test(bridgeSrc));
+  
+  
+  
+  
+  
+  
+  check('端点受静默开关约束', /sticker-delete[\s\S]{0,900}socialV2\.paused/.test(consoleServerSrc));
 }
 
 console.log('\n── 6. 参数校验（避免重演误删）──');

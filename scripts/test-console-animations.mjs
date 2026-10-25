@@ -22,9 +22,10 @@ const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
 console.log('── 0. 统一动画参数 ──');
 {
-  check('有统一时长变量', /--anim-dur:\s*\.26s/.test(html));
+  // 具体数值属于视觉设计，可能随控制台改版调整；这里只锁「集中定义 + 全局引用」。
+  check('有统一时长变量', /--anim-dur:\s*[\d.]+s/.test(html));
   check('有统一缓动变量', /--anim-ease:\s*cubic-bezier/.test(html));
-  check('两段式缓动（前快后慢，像弹开）', /cubic-bezier\(\.32,\s*\.72,\s*\.28,\s*1\)/.test(html));
+  check('动画统一引用变量', /var\(--anim-dur\)/.test(html) && /var\(--anim-ease\)/.test(html));
 }
 
 console.log('\n── 1. details（黑话系统参数）──');
@@ -92,7 +93,10 @@ console.log('\n── 4. 临时卡片（会话消息回看）──');
 console.log('\n── 5. 无障碍：减少动效 ──');
 {
   check('有 prefers-reduced-motion 规则', /@media \(prefers-reduced-motion: reduce\)/.test(html));
-  const block = /@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n  \}/.exec(html)?.[1] || '';
+  // 页面可能有多个 prefers-reduced-motion 块（例如 about 视图单独一块）；
+  // 必须合并所有块检查，只取第一块会漏掉后面的展开/弹窗规则。
+  const block = [...html.matchAll(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n  \}/g)]
+    .map((m) => m[1]).join('\n');
   for (const sel of ['.role-seg', '.expandable-inner', '.expandable-card',
     'details.animated-details', '.collapsible', '.modal-overlay', '.modal', '.doc-overlay', '.doc-modal']) {
     check(`覆盖 ${sel}`, block.includes(sel), block.slice(0, 60).replace(/\s+/g, ' '));

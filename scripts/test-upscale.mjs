@@ -305,11 +305,12 @@ console.log('\n── 4. 接线检查 ──');
   check('MCP 工具受配置开关控制', /socialV2\?\.upscale\?\.enabled !== false/.test(mcp));
 
   // ── 超分结果要发回会话（2026-10-19 用户反馈「超分完没有把超分后的结果发回」）──
-  const bridge = fs.readFileSync(path.join(srcRoot, 'bridge.js'), 'utf8');
+  const bridge = fs.readFileSync(path.join(srcRoot, 'console-server.js'), 'utf8');
+  const mainBridge = fs.readFileSync(path.join(srcRoot, 'bridge.js'), 'utf8');
   check('桥接有超分回传端点', /url\.pathname === '\/api\/socialV2\/send-upscaled'/.test(bridge));
   check('回传只接受 base64（拒绝 URL/本地路径）', /data 必须是 base64 编码的图片/.test(bridge));
   check('回传校验确实是图片（魔数）', /sniffImageMime\(buf\)/.test(bridge));
-  check('回传受模式/令牌校验', /send-upscaled[\s\S]{0,900}agentTokenOk\(key, token\)/.test(bridge));
+  check('回传受模式/令牌校验', /send-upscaled[\s\S]{0,1800}agentTokenOk\(key, token\)/.test(bridge));
   check('工具默认发布（publish 默认 true）', /publish !== false/.test(mcp));
   check('工具可 publish=false 只看不发', /publish=false 只放大给你自己看/.test(mcp));
   check('发送失败不影响把图交给模型（仍返回 image part）',
@@ -327,10 +328,10 @@ console.log('\n── 4. 接线检查 ──');
   // 所以桥接现在：Buffer ≤1.4MB 走 base64（最简单），超过则起一次性回环 HTTP 服务托管。
   // 这意味着 MCP 侧**不需要压缩**（除极端大图），用户要的"尽量不压缩"得以满足。
   check('桥接对大 Buffer 改用临时 HTTP 托管（绕开 2MB 请求体上限）',
-    /serveTempImage/.test(bridge) && /MAX_INLINE_BYTES = 1_400_000/.test(bridge));
+    /serveTempImage/.test(mainBridge) && /MAX_INLINE_BYTES = 1_400_000/.test(mainBridge));
   check('临时服务只监听回环 + 随机路径 + 只回一张图',
-    /listen\(0, '127\.0\.0\.1'/.test(bridge) && /randomBytes\(16\)/.test(bridge));
-  check('临时服务发完即关（finally 里 close）', /\} finally \{[\s\S]{0,400}tempHost\.close\(\)/.test(bridge));
+    /listen\(0, '127\.0\.0\.1'/.test(mainBridge) && /randomBytes\(16\)/.test(mainBridge));
+  check('临时服务发完即关（finally 里 close）', /\} finally \{[\s\S]{0,400}tempHost\.close\(\)/.test(mainBridge));
   check('MCP 侧不再因 2MB 压缩（只在 6MB 以上兜底）', /HARD_LIMIT = 6 \* 1024 \* 1024/.test(mcp));
   check('压缩实现仍保留（极端大图兜底）', /shrinkForPublish/.test(mcp) && /shrinkForPublish/.test(
     fs.readFileSync(path.join(srcRoot, 'upscale.js'), 'utf8')));
@@ -345,7 +346,7 @@ console.log('\n── 4. 接线检查 ──');
   check('第一跳：其它路由仍受 1MB 限制', /: 1_000_000;/.test(bridge));
   check('第一跳：放宽有硬上限（不得超过 8MB）', /Math\.min\(8_000_000/.test(bridge));
   check('注释记录 2MB 是 SnowLuma 写死的（不是我们能配的）',
-    /2 \* 1024 \* 1024/.test(bridge) && /readRequestBody/.test(bridge));
+    /2 \* 1024 \* 1024/.test(mainBridge) && /readRequestBody/.test(mainBridge));
   // 输入上限必须放得下手机照片（原先 1200 把真实用例全拒了）
   check('输入上限不再卡在 1200（手机照片能超分）', /MAX_INPUT_EDGE = 4000/.test(
     fs.readFileSync(path.join(srcRoot, 'upscale.js'), 'utf8')));

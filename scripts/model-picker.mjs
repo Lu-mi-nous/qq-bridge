@@ -361,7 +361,7 @@ const ps = (cmd) =>
   spawnSync('powershell', ['-NoProfile', '-Command', cmd], { encoding: 'utf8' });
 
 // ① 守护窗口（cmd.exe 跑 start.bat）；② 桥接本体（命令行可能是相对/绝对路径）
-ps(`Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like '*${path.basename(BRIDGE_DIR)}*start.bat*' -and $_.CommandLine -notlike '*stop*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
+ps(`Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like '*qq-bridge-main*start.bat*' -and $_.CommandLine -notlike '*stop*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
 ps(`Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*bridge.js*' -and $_.CommandLine -notlike '*mcp-*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`);
 await new Promise((r) => setTimeout(r, 2500));
 try {
@@ -371,7 +371,7 @@ try {
 spawnSync('powershell', [
   '-NoProfile',
   '-Command',
-  `Start-Process -FilePath '${process.execPath}' -ArgumentList '"${path.join(BRIDGE_DIR, 'src', 'bridge.js')}"' -WorkingDirectory '${BRIDGE_DIR}' -WindowStyle Hidden`
+  `Start-Process -FilePath 'C:\\Program Files\\nodejs\\node.exe' -ArgumentList '"${path.join(BRIDGE_DIR, 'src', 'bridge.js')}"' -WorkingDirectory '${BRIDGE_DIR}' -WindowStyle Hidden`
 ], { encoding: 'utf8' });
 
 // 等启动并确认

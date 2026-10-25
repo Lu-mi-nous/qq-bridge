@@ -46,7 +46,7 @@ const TEST_WORKSPACE_PATTERNS = [
 ];
 
 // ⚠️ 例外：-state-agents-- 是**真实群聊会话**，绝不能按上面的模式删（上面第一条只是为了
-// 让"哪些属于本项目"这一类能整体识别出来，实际删除时要排除它）。
+// 让"哪些属于 qq-bridge-main"这一类能整体识别出来，实际删除时要排除它）。
 const NEVER_DELETE_PATTERNS = [/-state-agents--$/];
 
 function isTestWorkspace(name) {

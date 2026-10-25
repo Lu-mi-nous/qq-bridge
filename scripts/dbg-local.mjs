@@ -1,9 +1,8 @@
 // dbg-local.mjs — 打印本地模型会话的完整事件流，定位 error 原因
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 import { NodeApiClient, unwrap } from '../src/dsh-client.js';
 
 const api = new NodeApiClient('http://127.0.0.1:3080');
-const created = unwrap(await api.sessions.create({ cwd: path.join(ROOT, 'state', 'local-e2e') }), 'session.create');
+const created = unwrap(await api.sessions.create({ cwd: 'E:\\Downloads\\qq-bridge-main\\state\\local-e2e' }), 'session.create');
 const sessionId = created.sessionId;
 console.log('会话:', sessionId);
 const sel = unwrap(await api.sessions.selectModel({ sessionId, provider: 'local', model: 'cn:deepseek-v4.1-flash' }), 'session.selectModel');

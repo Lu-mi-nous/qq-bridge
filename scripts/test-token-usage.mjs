@@ -88,6 +88,8 @@ console.log('\n── 3. 解析 + 去重（坑④）+ 模型归属（问题①�
     p.models['model-B']?.input === 50, JSON.stringify(p.models['model-B']));
   check('没有"未知模型"（说明 request/header 被正确消费）',
     !p.models['(未知模型)'], JSON.stringify(Object.keys(p.models)));
+  check('记录首末 usage 时间（会话级报表用）',
+    p.firstAt === t0 + 1000 && p.lastAt === t0 + 4000, `${p.firstAt}/${p.lastAt}`);
 }
 
 console.log('\n── 4. 按天归档用上海时区 ──');
@@ -110,8 +112,8 @@ console.log('\n── 5. 聚合：扫描范围与增量缓存（问题②）─�
     ]);
     return f;
   };
-  mk('--E-Downloads-qq-bridge-state-agents--', 'keep-A', 100);
-  mk('--E-Downloads-qq-bridge-state-probe-bili--', 'skip-probe', 999);
+  mk('--E-Downloads-qq-bridge-main-state-agents--', 'keep-A', 100);
+  mk('--E-Downloads-qq-bridge-main-state-probe-bili--', 'skip-probe', 999);
   mk('--C-Users-someone-other-project--', 'skip-other', 999);
 
   const r = aggregateTokenUsage([base]);
@@ -125,12 +127,53 @@ console.log('\n── 5. 聚合：扫描范围与增量缓存（问题②）─�
   check('复用后结果一致', r2.days['2026-10-20']?.input === r.days['2026-10-20']?.input);
 
   // 改一个文件 → 只重解那一个
-  const f1 = path.join(base, '--E-Downloads-qq-bridge-state-agents--', 'session-x', 'session.jsonl.zstd');
+  const f1 = path.join(base, '--E-Downloads-qq-bridge-main-state-agents--', 'session-x', 'session.jsonl.zstd');
   const st = fs.statSync(f1);
-  mk('--E-Downloads-qq-bridge-state-agents--', 'keep-A', 100);
+  mk('--E-Downloads-qq-bridge-main-state-agents--', 'keep-A', 100);
   fs.utimesSync(f1, new Date(st.atimeMs + 5000), new Date(st.mtimeMs + 5000));
   const r3 = aggregateTokenUsage([base], { cache: r2.cache });
   check('只有变化的文件被重解', r3.scanned === 1 && r3.reused === 2, `scanned=${r3.scanned} reused=${r3.reused}`);
+}
+
+console.log('\n── 5b. 会话级分桶（2026-10-25 新增）──');
+{
+  const base = path.join(tmp, 'sessions2');
+  const mkS = (sid, file, time, input) => {
+    const f = path.join(base, 'ws', sid, file);
+    writeSession(f, [
+      { type: 'assistant/message', time, data: { turn: 1, step: 1, message: {}, usage: { inputTokens: input, outputTokens: 2, cacheReadTokens: input * 10 } } }
+    ]);
+    return f;
+  };
+  mkS('session-a', 'session.jsonl.zstd', Date.parse('2026-10-20T02:00:00Z'), 100);
+  // 同一 DSH 会话目录下的第二份转录文件必须合并到同一个桶
+  mkS('session-a', 'session.v4.jsonl.zstd', Date.parse('2026-10-21T02:00:00Z'), 50);
+  mkS('session-b', 'session.jsonl.zstd', Date.parse('2026-10-20T03:00:00Z'), 10);
+
+  const r = aggregateTokenUsage([base], {
+    sessionKeys: { 'session-a': 'group:1' },
+    currentSessions: { 'group:1': 'session-a' }
+  });
+  check('同一 sessionId 的两个转录文件合并', r.sessions['session-a']?.input === 150,
+    JSON.stringify(r.sessions['session-a']));
+  check('会话桶按天保留', r.sessions['session-a']?.days?.['2026-10-20']?.input === 100
+    && r.sessions['session-a']?.days?.['2026-10-21']?.input === 50);
+  check('会话桶计算总输入（未缓存+缓存读）',
+    r.sessions['session-a']?.totalInput === 150 + 1500, String(r.sessions['session-a']?.totalInput));
+  check('映射历史给 sessionId 打上 QQ key', r.sessions['session-a']?.key === 'group:1');
+  check('无主 sessionId 保留且 key=null', r.sessions['session-b']?.key === null
+    && r.sessions['session-b']?.input === 10, JSON.stringify(r.sessions['session-b']));
+  check('当前映射优先于历史映射',
+    aggregateTokenUsage([base], {
+      sessionKeys: { 'session-a': 'group:old' },
+      currentSessions: { 'group:new': 'session-a' }
+    }).sessions['session-a']?.key === 'group:new');
+
+  const r2 = aggregateTokenUsage([base], {
+    cache: r.cache, sessionKeys: { 'session-a': 'group:1' }, currentSessions: { 'group:1': 'session-a' }
+  });
+  check('会话分桶不破坏增量缓存', r2.reused === 3 && r2.scanned === 0, `reused=${r2.reused}`);
+  check('复用后会话桶一致', r2.sessions['session-a']?.totalInput === r.sessions['session-a']?.totalInput);
 }
 
 console.log('\n── 6. 健壮性 ──');
@@ -152,28 +195,49 @@ console.log('\n── 6. 健壮性 ──');
 
 console.log('\n── 7. 桥接接线 ──');
 {
-  const bridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
+
+  const consoleServer = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
   const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
-  check('有统计端点', /\/api\/socialV2\/token-usage/.test(bridge));
-  check('有手动重算端点', /token-usage-refresh/.test(bridge));
+  check('有统计端点', /\/api\/socialV2\/token-usage/.test(consoleServer));
+  check('有手动重算端点', /token-usage-refresh/.test(consoleServer));
   check('GET 只读缓存不现算（否则请求卡 15 秒）',
-    /const data = tokenUsage \|\| loadTokenUsage\(\)/.test(bridge));
-  check('结果落盘', /TOKEN_USAGE_FILE/.test(bridge) && /atomicWriteJson\(TOKEN_USAGE_FILE/.test(bridge));
-  check('写日志（用户要求"做成日志"）', /\[Token\] 今日/.test(bridge) && /\[Token\] 累计/.test(bridge));
-  check('定时调度（跨天或超 6 小时才重算）',
-    /startTokenUsageScheduler/.test(bridge) && /ageMs > 6 \* 3600 \* 1000/.test(bridge));
-  check('只扫本项目会话，不扫别的项目/测试工作区',
-    /-state-agents--\$/i.test(bridge) && /includes\(marker\)/.test(bridge));
-  check('启动失败不影响桥接', /\[Token\] 统计失败（不影响桥接）/.test(bridge));
+    /const data = deps\.live\.tokenUsage \|\| loadTokenUsage\(\)/.test(consoleServer));
+  
+  
+  
+  
+  
 
+  check('落盘按 sessionId 的 sessions 桶', /sessions: agg\.sessions/.test(fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8')));
+  check('token-usage.json 保留摘要器桶', /summarizer: latest\?\.summarizer \|\| prev\?\.summarizer/.test(fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8')));
   check('控制台有卡片', /id="tokenCard"/.test(html));
-  check('显示今日四项', /输入 tokens/.test(html) && /输出 tokens/.test(html) && /缓存读/.test(html));
+  check('16 卡有按会话表格容器', /id="tokenSessions"/.test(html));
+  check('16 卡显示当前/累计两个口径', /当前会话总输入/.test(html) && /累计总输入/.test(html));
+  check('16 卡有 Token 熔断面板', /id="tokenFusePanel"/.test(html) && /function loadTokenFusePanel\(/.test(html));
+  check('熔断面板可解除', /token-fuse-reset/.test(html) && /data-token-fuse-reset/.test(html));
+  check('熔断面板显示会话名并支持每会话阈值',
+    /displayName: contextDisplayName\(key\)/.test(consoleServer)
+    && /data-fuse-\$\{kind\}/.test(html) && /data-token-fuse-save=/.test(html)
+    && /token-fuse-override/.test(html));
+  check('每会话阈值有 K/M/B 单位下拉框',
+    /data-fuse-\$\{kind\}-unit/.test(html) && /\[\['1e3', 'K'\], \['1e6', 'M'\], \['1e9', 'B'\]\]/.test(html)
+    && /tokenUnitOptions/.test(html));
+  check('有全局默认阈值（不覆盖自定义）',
+    /id="tokenFuseWarn"/.test(html) && /id="tokenFuseWarnUnit"/.test(html)
+    && /保存全局/.test(html) && /data-token-fuse-clear/.test(html));
+  check('24 卡有今日 Token 列', /今日 Token/.test(html));
+  check('API 返回派生总输入字段', /totalInput/.test(consoleServer) && /cacheHitRate/.test(consoleServer));
+  check('显示今日总输入/未缓存/输出/调用', /总输入（含缓存）/.test(html) && /其中未缓存/.test(html) && /输出 tokens/.test(html) && /缓存读/.test(html));
   check('显示按日趋势', /按日（最近/.test(html));
   check('显示按模型', /按模型/.test(html));
   check('有手动重算按钮', /id="tokenRefresh"/.test(html));
   check('挂进轮询（60 秒，不必 3 秒）', /setInterval\(\(\) => \{ refreshTokenUsage\(\); \}, 60000\)/.test(html));
-  check('首屏加载一次', /loadCredentialItems\(\); refreshTokenUsage\(\);/.test(html));
+  const initAt = html.indexOf('initConsoleShell();');
+  const initialRefreshAt = html.indexOf('refreshTokenUsage();', initAt);
+  const scheduledRefreshAt = html.indexOf('setInterval(() => { refreshTokenUsage(); }, 60000)', initAt);
+  check('首屏加载一次', initAt >= 0 && initialRefreshAt > initAt
+    && scheduledRefreshAt > initialRefreshAt);
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

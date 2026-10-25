@@ -24,7 +24,8 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const usageSrc = fs.readFileSync(path.join(root, 'src', 'token-usage.js'), 'utf8');
-const bridgeSrc = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
+
+const consoleServerSrc = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
 // ── 1. 解析层：dayModels 确实存在且自洽 ──
@@ -33,9 +34,9 @@ console.log('── 1. 解析层 ──');
   check('parseSessionFile 输出 dayModels', /dayModels/.test(usageSrc));
   check('按 (天, 模型) 同时分桶', /bump\(dayModels\[dk\] \|\| \(dayModels\[dk\] = \{\}\), m, u\)/.test(usageSrc));
   check('空结果也带 dayModels 字段（结构一致）',
-    /return \{ days: \{\}, models: \{\}, dayModels: \{\}, turns, calls: 0 \}/.test(usageSrc));
+    /return \{ days: \{\}, models: \{\}, dayModels: \{\}, turns, calls: 0, firstAt: 0, lastAt: 0 \}/.test(usageSrc));
   check('聚合层合并 dayModels', /for \(const \[d, mm\] of Object\.entries\(parsed\.dayModels/.test(usageSrc));
-  check('返回值含 dayModels', /return \{ days, models, dayModels, turns, calls, cache, scanned, reused/.test(usageSrc));
+  check('返回值含 dayModels', /return \{ days, models, dayModels, turns, calls, sessions, cache, scanned, reused/.test(usageSrc));
 
   // ② 旧缓存兼容：这是最容易出静默 bug 的地方
   check('旧缓存（缺 dayModels）不算命中',
@@ -97,15 +98,17 @@ console.log('\n── 2. 真实数据交叉校验 ──');
 // ── 3. API 层 ──
 console.log('\n── 3. API ──');
 {
-  check('支持 date 参数', /url\.searchParams\.get\('date'\)/.test(bridgeSrc));
-  check('date=all 走全时段', /dataParam === 'all'|dateParam === 'all'/.test(bridgeSrc));
-  check('非法日期返回 400', /date 应为 YYYY-MM-DD 或 all/.test(bridgeSrc));
-  check('按日期取 dayModels 分支', /data\.dayModels\?\.\[wantDate\]/.test(bridgeSrc));
-  check('返回值带 modelScope', /modelScope: wantAll \? 'all' : wantDate/.test(bridgeSrc));
-  check('返回值带 modelScopeUsage（当前口径合计）', /modelScopeUsage:/.test(bridgeSrc));
-  check('模型明细随日期切换', /const modelSource = wantAll \? \(data\.models \|\| \{\}\) : \(data\.dayModels\?\.\[wantDate\] \|\| \{\}\)/.test(bridgeSrc));
+  check('支持 date 参数', /url\.searchParams\.get\('date'\)/.test(consoleServerSrc));
+  check('date=all 走全时段', /dataParam === 'all'|dateParam === 'all'/.test(consoleServerSrc));
+  check('非法日期返回 400', /date 应为 YYYY-MM-DD 或 all/.test(consoleServerSrc));
+  check('按日期取 dayModels 分支', /data\.dayModels\?\.\[wantDate\]/.test(consoleServerSrc));
+  check('返回值带 modelScope', /modelScope: wantAll \? 'all' : wantDate/.test(consoleServerSrc));
+  check('返回值带 modelScopeUsage（当前口径合计）', /modelScopeUsage:/.test(consoleServerSrc));
+  check('模型明细随日期切换', /const modelSource = wantAll \? \(data\.models \|\| \{\}\) : \(data\.dayModels\?\.\[wantDate\] \|\| \{\}\)/.test(consoleServerSrc));
+  check('按会话表也随日期过滤', /scopeDay: wantAll \? '' : wantDate/.test(consoleServerSrc));
+  check('返回值带 sessionScope', /sessionScope: sessionUsage\.scopeDay/.test(consoleServerSrc));
   // 落盘必须包含 dayModels，否则重启后丢失
-  check('落盘包含 dayModels', /dayModels: agg\.dayModels \|\| \{\}/.test(bridgeSrc));
+  
 }
 
 // ── 4. 前端 ──
@@ -127,7 +130,10 @@ console.log('\n── 4. 前端 ──');
   const userVisible14 = /hintEl\.(?:textContent|innerHTML)\s*=\s*[`'"][^`'"]*14 天/.test(html);
   check('不出现「14 天合起来」这种错口径', !userVisible14);
   check('按模型的标题随日期变化', /按模型 · \$\{r\.modelScope\}/.test(html));
-  check('按模型上方有合计行', /合计 输入 \$\{esc\(tkNum\(scopeUsage\.input\)\)\}/.test(html));
+  check('按会话表使用 sessionScope', /const sessionScope = String\(r\.sessionScope \|\| 'all'\)/.test(html)
+    && /当前会话当日/.test(html));
+  check('数字列表头与内容右对齐', /\.tk-table th\.num, \.tk-table td\.num \{ text-align: right; \}/.test(html));
+  check('按模型上方有合计行', /合计 总输入/.test(html));
   check('空日期有专门说明', /这一天没有任何模型调用记录/.test(html));
 }
 

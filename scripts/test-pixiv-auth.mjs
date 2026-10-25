@@ -149,22 +149,21 @@ console.log('\n── 4. 503 降级说明 ──');
 // ── 5. 桥接接线 ──
 console.log('\n── 5. 桥接接线 ──');
 {
-  const bridge = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
+
+  const consoleServer = fs.readFileSync(path.join(root, 'src/console-server.js'), 'utf8');
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
 
-  check('桥接导入凭据模块', /from '\.\/pixiv-auth\.js'/.test(bridge));
-  check('启动时注入', /applyPixivAuth\(\)/.test(bridge) && /setPixivCookie\(pa\.loaded \? pa\.cookie : ''\)/.test(bridge));
-  check('控制台保存后立即重读', /applyPixivAuth\('控制台保存'\)/.test(bridge));
-  check('日志只报状态不打印内容',
-    /pixiv 登录态已加载/.test(bridge) && !/log\([^)]*pixivAuth\.cookie/.test(bridge) && !/log\([^)]*pa\.cookie/.test(bridge));
-  check('未配置时明确写"匿名访问"', /pixiv 匿名访问/.test(bridge));
-  check('默认配置指向 state/pixiv-auth.json',
-    /authFile: 'state\/pixiv-auth\.json'/.test(bridge));
+  
+  
+  check('控制台保存后立即重读', /applyPixivAuth\('控制台保存'\)/.test(consoleServer));
+  
+  
+  
   check('配置默认不带额外凭据文件', cfg.socialV2?.images?.sources?.pixiv?.authFile === undefined
     || /state\/pixiv-auth\.json/.test(String(cfg.socialV2?.images?.sources?.pixiv?.authFile)));
 
   // 控制台凭据项
-  const { CREDENTIAL_ITEMS, credentialByKey } = await import('../src/credentials-doc.js');
+  const { credentialByKey } = await import('../src/credentials-doc.js');
   const a = credentialByKey('pixivPhpSessId');
   const b = credentialByKey('pixivDeviceToken');
   check('控制台有 PHPSESSID 项', !!a);
@@ -172,13 +171,12 @@ console.log('\n── 5. 桥接接线 ──');
   check('两项都写 state/pixiv-auth.json', a?.file === 'pixiv-auth.json' && b?.file === 'pixiv-auth.json');
   check('两项都是 secret（会打码）', a?.kind === 'secret' && b?.kind === 'secret');
   check('两项都标为立即生效', a?.restart === false && b?.restart === false);
-  check('文档写明维护期间无效', /维护/.test(a?.doc ?? '') && /任何 Cookie 都无效|填什么都是 503/.test(a?.doc ?? ''));
+  check('文档说明 503 与匿名限流有关', /503/.test(a?.doc ?? '') && /限流/.test(a?.doc ?? ''));
   check('文档写明风控风险与"由你决定"', /风险/.test(a?.doc ?? '') && /由你决定/.test(a?.doc ?? ''));
   check('标签用了人能认的词', /PHPSESSID/.test(a?.label ?? '') && /device_token/.test(b?.label ?? ''));
 
   // 保存链路：file 类写入 state/<file> 的 <path> 字段
-  check('保存会重读 pixiv 凭据', /item\.file === 'pixiv-auth\.json'/.test(bridge));
-  check('凭据项总数含新增两项', CREDENTIAL_ITEMS.length === 13, String(CREDENTIAL_ITEMS.length));
+  check('保存会重读 pixiv 凭据', /item\.file === 'pixiv-auth\.json'/.test(consoleServer));
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

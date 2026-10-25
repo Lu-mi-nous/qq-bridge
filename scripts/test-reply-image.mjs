@@ -38,15 +38,15 @@ console.log('── 从消息段提取图片/表情 ──');
 
 console.log('\n── reserved2：引用里含图时给取图指引 ──');
 {
-  const hint = reserved2MediaFetchHint('group:100001032');
-  const info = { sender: '群友O', text: '[图片]', messageId: '-100001037', mediaCount: 1 };
+  const hint = reserved2MediaFetchHint('group:100002005');
+  const info = { sender: '群友O', text: '[图片]', messageId: '-100002037', mediaCount: 1 };
   const t = buildReplyText(info, hint);
   check('含被引用者与原文', t.includes('群友O') && t.includes('[图片]'), t);
   check('含图片数量', t.includes('含 1 个图片/表情'));
-  check('含被引用消息 id', t.includes('-100001037'));
+  check('含被引用消息 id', t.includes('-100002037'));
   check('含取图工具名', t.includes('qq_get_message_images'));
-  check('参数里带正确 key', t.includes('key="group:100001032"'));
-  check('参数里带正确 messageId', t.includes('messageId="-100001037"'));
+  check('参数里带正确 key', t.includes('key="group:100002005"'));
+  check('参数里带正确 messageId', t.includes('messageId="-100002037"'));
 }
 
 console.log('\n── 不该注入的情况 ──');

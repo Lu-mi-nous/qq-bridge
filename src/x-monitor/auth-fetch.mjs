@@ -79,7 +79,6 @@ export function loadAuth({ root }) {
     const auth_token = String(j.auth_token ?? '').trim();
     const ct0 = String(j.ct0 ?? '').trim();
     if (!auth_token || !ct0) return null;
-    // Twitter 网页版公开的 client bearer（不是个人凭据）；可在 state/x-auth.json 的 bearer 字段覆盖。
     const bearer = String(j.bearer ?? '').trim() || 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
     return { auth_token, ct0, bearer: /^Bearer\s/i.test(bearer) ? bearer : `Bearer ${bearer}`, file };
   } catch {

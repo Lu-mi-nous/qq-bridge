@@ -15,7 +15,7 @@
 //    而「被问长相时」正是"别编造外貌"的唯一约束——丢了不报错，只在群里表现为瞎编长相。
 //    这里锁住：长度上限足够装下现有全部角色卡；若未来再超，必须留日志。
 //
-// 角色卡是 Markdown、注入逻辑在 bridge.js 内（无法单独 import），所以这里做静态断言 + 行为复刻。
+// 角色卡内容检查 + 真实注入读取行为。
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,7 +25,9 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const roleDir = path.join(root, 'roles');
-const bridgeSrc = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
+
+import { createRoleHintReader, ROLE_HINT_MAX } from '../src/pipeline/role-hint.js';
+const hintFor = createRoleHintReader({ ROOT: root, roleFor: key => key, roleHintCache: new Map(), log: () => {} });
 
 const cards = fs.readdirSync(roleDir)
   .filter((f) => f.endsWith('.md') && f !== 'README.md')
@@ -71,19 +73,22 @@ console.log('\n── 2. 回复示例：教的是"应下"而不是"纠正" ─�
     check(`[${c.name}] 该场景有"直接应下"的正面示范`,
       /你可以：.*(在呢|应了|随你叫|行吧)/.test(block), block.replace(/\n/g, ' ⏎ ').slice(0, 90));
   }
+
+  const main = cards.find((c) => c.name === '大肥鱼');
+  const positiveLines = main.text.split('\n').filter((l) => /^(你可以|或者)：/.test(l.trim()));
+  check('[大肥鱼] 正面示例没有确认收到/记录完成腔',
+    positiveLines.every((l) => !/(认下了|我记下了|已记住|这张我收下了|哈哈哈，应了)/.test(l)));
+  check('[大肥鱼] 明确禁止任务受理腔和记忆汇报',
+    /任务受理腔/.test(main.text) && /记忆工具静默调用/.test(main.text));
 }
 
 console.log('\n── 3. 注入完整性：6000 字硬截断已取消 ──');
 {
-  check('bridge.js 不再按 6000 硬切', !/hint\.length\s*>\s*6000/.test(bridgeSrc));
-  check('bridge.js 有更宽的上限常量', /ROLE_HINT_MAX\s*=\s*12000/.test(bridgeSrc));
-  check('超限时会写日志（不再静默丢内容）', /角色卡.*超长/.test(bridgeSrc));
-
   const maxLen = Math.max(...cards.map((c) => c.text.length));
-  check(`现有最长的角色卡（${maxLen} 字）能整份装进上限`, maxLen <= 12000);
+  check(`现有最长的角色卡（${maxLen} 字）能整份装进上限`, maxLen <= ROLE_HINT_MAX);
 
-  // 复刻截断行为，确认末尾节确实保住了
-  const truncate = (s) => (s.length > 12000 ? s.slice(0, 12000) : s);
+  // 实际读取人格卡，确认注入末尾完整。
+  const truncate = text => hintFor(cards.find(c => c.text === text).name);
   for (const c of cards) {
     const kept = truncate(c.text);
     check(`[${c.name}] 注入内容未被截断`, kept.length === c.text.length, `${kept.length}/${c.text.length}`);

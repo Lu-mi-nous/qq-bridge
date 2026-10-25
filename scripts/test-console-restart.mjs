@@ -29,7 +29,8 @@ let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
-const bridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
+const bridge = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+const mainBridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
 // 取出 /api/restart 的实现块（到下一个 404 分支为止）
@@ -55,16 +56,16 @@ console.log('── 1. 服务端：必须自重启，不能只 exit ──');
 
 console.log('\n── 2. 子进程：等待父进程释放锁 ──');
 {
-  check('启动时识别自重启环境', /if \(process\.env\.QQB_RESTARTED_BY\)/.test(bridge));
-  check('等锁文件消失再 acquireLock', /QQB_RESTARTED_BY[\s\S]{0,600}?existsSync\(LOCK_FILE\)[\s\S]{0,200}?acquireLock\(\)/.test(bridge));
-  check('有等待上限（不能死等）', /deadline\s*=\s*Date\.now\(\)\s*\+\s*\d+/.test(bridge));
-  check('日志写明由谁拉起', /由\$\{process\.env\.QQB_RESTARTED_BY === 'console' \? '控制台重启'/.test(bridge));
-  check('就绪时再打一次带 PID 的标记', /桥接已就绪（控制台自重启，PID \$\{process\.pid\}）/.test(bridge));
+  check('启动时识别自重启环境', /if \(process\.env\.QQB_RESTARTED_BY\)/.test(mainBridge));
+  check('等锁文件消失再 acquireLock', /QQB_RESTARTED_BY[\s\S]{0,600}?existsSync\(LOCK_FILE\)[\s\S]{0,200}?acquireLock\(\)/.test(mainBridge));
+  check('有等待上限（不能死等）', /deadline\s*=\s*Date\.now\(\)\s*\+\s*\d+/.test(mainBridge));
+  check('日志写明由谁拉起', /由\$\{process\.env\.QQB_RESTARTED_BY === 'console' \? '控制台重启'/.test(mainBridge));
+  check('就绪时再打一次带 PID 的标记', /桥接已就绪（控制台自重启，PID \$\{process\.pid\}）/.test(mainBridge));
   // 锁释放 ≠ 端口释放：父进程 exit 收尾时 :3100 可能还挂着几十毫秒，
   // 子进程直接 bind 会 EADDRINUSE → exit(2)，服务就彻底停了。
-  check('有 waitForPortFree 且被自重启路径调用', /async function waitForPortFree/.test(bridge)
-    && /QQB_RESTARTED_BY[\s\S]{0,900}?await waitForPortFree\(/.test(bridge));
-  check('端口等待有超时上限（不死等）', /deadline = Date\.now\(\) \+ Math\.max\(0, timeoutMs\)/.test(bridge));
+  check('有 waitForPortFree 且被自重启路径调用', /async function waitForPortFree/.test(mainBridge)
+    && /QQB_RESTARTED_BY[\s\S]{0,900}?await waitForPortFree\(/.test(mainBridge));
+  check('端口等待有超时上限（不死等）', /deadline = Date\.now\(\) \+ Math\.max\(0, timeoutMs\)/.test(mainBridge));
 }
 
 console.log('\n── 3. 前端：轮询时间够长、有进度 ──');

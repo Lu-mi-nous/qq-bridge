@@ -7,7 +7,6 @@
 //   allow.groups / allow.private，否则拒绝 —— agent 只能往被允许的地方发消息。
 // - 所有调用走 OneBot HTTP API（httpUrl + accessToken）。
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -16,6 +15,7 @@ import { z } from 'zod';
 import { SENSITIVE_RE } from './sensitive.js';
 import { gifFramesHint } from './gif-frames.js';
 import { emojiMenuText } from './emoji-react.js';
+import { normalizeMessagesInput } from './pipeline/text-normalize.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -45,7 +45,7 @@ const cfg = loadConfig();
 function sovitsAvailable() {
   try {
     const c = cfg.socialV2?.tts ?? {};
-    const dir = String(c.dir || process.env.GPT_SOVITS_DIR || path.join(os.homedir(), 'GPT-SoVITS'));
+    const dir = String(c.dir || 'E:\\Downloads\\GPT-SoVITS');
     const p = (rel) => (path.isAbsolute(rel) ? rel : path.join(dir, rel));
     const need = [
       p(c.gptModel || 'GPT_SoVITS/dania-e15.ckpt'),
@@ -107,64 +107,6 @@ function unquoteJsonString(value) {
     } catch {}
   }
   return value;
-}
-
-// 把模型可能传成「JSON 数组字符串」的消息归一化成字符串数组。
-// 为什么不只用 JSON.parse：模型经常在数组元素里写未转义的直引号
-// （例如 ["他说"你好"就走了","第二条"]），JSON.parse 必然失败；若把
-// 异常吞掉，整串 JSON 会被当成一条消息原样发到群里（线上事故）。
-// 因此解析失败时按引号/逗号手工切分，至少保住分条语义。
-function normalizeMessagesInput(value) {
-  if (Array.isArray(value)) return value.map((m) => String(m ?? '')).filter((s) => s.trim() !== '');
-  if (typeof value !== 'string') return [];
-
-  const trimmed = value.trim();
-  // 单条 JSON 字符串："\"你好\"" → 你好
-  if (trimmed.startsWith('"') && !trimmed.startsWith('["')) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (typeof parsed === 'string') return [parsed].filter((s) => s.trim() !== '');
-      if (Array.isArray(parsed)) return parsed.map((m) => String(m ?? '')).filter((s) => s.trim() !== '');
-    } catch {}
-  }
-
-  // JSON 数组字符串（含内层直引号未转义的容错）
-  //
-  // 判据必须包含「有引号」：模型真正会踩的是 `["a","b"]` 这种**元素带引号**的序列化形式，
-  // 此时引号一定存在。若不加这个前提，容错分支会把任何以 `[` 开头的正文都当数组字面量：
-  //   实测（2026-10-09 真实端点验证）`[图片]` → `图片`、`[doge]这个梗我熟` → `doge]这个梗我熟`。
-  // 注意 bridge.js 里有同名实现，改这里时两边都要改（回归测试会同时加载两个文件）。
-  if (trimmed.startsWith('[') && /["']/.test(trimmed)) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      // 只有「字符串数组」才算消息列表；`[1]` 这种不应被当成分条内容。
-      if (Array.isArray(parsed) && parsed.every((m) => typeof m === 'string')) {
-        const out = parsed.map((m) => String(m ?? '')).filter((s) => s.trim() !== '');
-        if (out.length) return out;
-      }
-    } catch {
-      const salvaged = splitArrayLiteral(trimmed);
-      if (salvaged.length) return salvaged;
-    }
-  }
-  return trimmed ? [trimmed] : [];
-}
-
-// 手工切分形如 ["a","b"] 的数组字面量：以「引号 + 逗号 + 引号」为分隔，
-// 剥掉首尾的 [ ] 与每个元素两侧的引号。仅供 JSON.parse 失败时兜底。
-function splitArrayLiteral(text) {
-  let s = String(text ?? '').trim();
-  if (s.startsWith('[')) s = s.slice(1);
-  if (s.endsWith(']')) s = s.slice(0, -1);
-  return s
-    .split(/"?\s*,\s*"?/)
-    .map((part) => {
-      let t = part.trim();
-      if (t.startsWith('"')) t = t.slice(1);
-      if (t.endsWith('"')) t = t.slice(0, -1);
-      return t.trim();
-    })
-    .filter((t) => t !== '');
 }
 
 // 构造可选的“引用/回复”消息段：
@@ -247,7 +189,7 @@ async function authorizeRead(key, token) {
   await agentApi('/api/authorize/read', { method: 'POST', body: JSON.stringify({ key, token: token || undefined }) });
 }
 
-const server = new McpServer({ name: 'snowluma-safe', version: '0.1.0' });
+const server = new McpServer({ name: 'snowluma-safe', version: '0.4.0' });
 
 server.tool(
   'qq_status',
@@ -354,6 +296,7 @@ server.tool(
       const cleanMessage = unquoteJsonString(message);
       const data = await agentApi('/api/send/group', {
         method: 'POST',
+        headers: token ? { 'x-agent-token': token } : {},
         body: JSON.stringify({ groupId: String(groupId), message: cleanMessage, replyToMessageId, token: token || undefined })
       });
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
@@ -377,6 +320,7 @@ server.tool(
       const cleanMessage = unquoteJsonString(message);
       const data = await agentApi('/api/send/reply', {
         method: 'POST',
+        headers: token ? { 'x-agent-token': token } : {},
         body: JSON.stringify({ groupId: String(groupId), replyToMessageId, message: cleanMessage, token: token || undefined })
       });
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
@@ -400,6 +344,7 @@ server.tool(
       const cleanMessage = unquoteJsonString(message);
       const data = await agentApi('/api/send/private', {
         method: 'POST',
+        headers: token ? { 'x-agent-token': token } : {},
         body: JSON.stringify({ userId: String(userId), message: cleanMessage, replyToMessageId, token: token || undefined })
       });
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
@@ -412,7 +357,7 @@ server.tool(
 // ── 二代仿真模式（reserved2）工具 ─────────────────────────────────────────
 server.tool(
   'qq_get_prompt',
-  '查看当前二代仿真模式的提示词/角色/推荐值/可用工具/当前唤醒配置（只读）。',
+  '查看当前二代仿真模式的提示词/角色/管理员QQ/推荐值/可用工具/当前唤醒配置（只读）。',
   { key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'), token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）') },
   async ({ key, token }) => {
     try {
@@ -1158,6 +1103,32 @@ server.tool(
 );
 
 server.tool(
+  'qq_recall_memory',
+  '按当前话题检索历史记忆（journal 消息 + episode 摘要），返回带时间/发送者/seq 的证据。群友问“之前/上次/那天说过什么”、需要回忆旧约定或人物关系时调用；比 qq_memory_query 的轻量记忆更完整。',
+  {
+    key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+    token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+    query: z.string().describe('检索关键词或自然语言问题，例如“上次说的拔牙低烧”“谁喜欢原神”'),
+    limit: z.number().optional().describe('返回条数，默认 6，最多 20'),
+    from: z.string().optional().describe('可选起始时间：毫秒时间戳或 ISO 日期'),
+    to: z.string().optional().describe('可选结束时间：毫秒时间戳或 ISO 日期')
+  },
+  async ({ key, token, query, limit, from, to }) => {
+    try {
+      const q = new URLSearchParams({ key, q: query, limit: String(limit ?? 6) });
+      if (from) q.set('from', String(from));
+      if (to) q.set('to', String(to));
+      const data = await agentApi(`/api/socialV2/recall?${q.toString()}`, {
+        headers: { 'x-agent-token': token }
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `记忆检索失败：${error?.message ?? error}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
   'qq_memory_remove',
   '删除一条轻量记忆：activeTopic/pendingThought 用 content 匹配原文删除；memberImpression 用 target 参数指定群友名字删除。',
   {
@@ -1666,9 +1637,11 @@ if (cfg.socialV2?.tools?.getSelfImage !== false) {
     },
     async ({ key, token, publish }) => {
       try {
-        const send = publish === false ? '0' : '1';
-        const q = new URLSearchParams({ key, publish: send });
-        const data = await agentApi(`/api/socialV2/self-image?${q.toString()}`, { headers: { 'x-agent-token': token } });
+        const data = await agentApi('/api/socialV2/self-image', {
+          method: 'POST',
+          headers: { 'x-agent-token': token },
+          body: JSON.stringify({ key, publish: publish !== false })
+        });
         if (!data?.image?.data || !data?.image?.mimeType) {
           return { content: [{ type: 'text', text: `没有可返回的形象图片：${data?.error || '未知'}` }], isError: true };
         }

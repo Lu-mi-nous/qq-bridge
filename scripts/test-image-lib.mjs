@@ -368,13 +368,7 @@ console.log('\n── 跨站标签写法（宽松匹配）──');
 // "都发过了、再等等"——把"防重复"变成了"不许换"。所以换图路径要显式关掉这层。
 {
   const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
-  const bridgeSrc = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
-  check('换图路径关掉 10 分钟过滤',
-    /_fromFeedback === true \? \{ blockRecentMs: 0 \}/.test(bridgeSrc));
-  check('两次挑选都用 recentOpt',
-    (bridgeSrc.match(/\.\.\.recentOpt/g) || []).length >= 2);
-  check('"都发过了"的提示在换图路径下不触发',
-    /options\._fromFeedback !== true && Array\.isArray\(wantTags\)/.test(bridgeSrc));
+  // 换图两次挑选的行为在 test-image-send.mjs 直接执行模块验证。
   // 配置项
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
   check('配置：每小时上限提到 60', Number(cfg.socialV2?.images?.maxSendPerHour) === 60,

@@ -11,9 +11,9 @@
 //   模型侧仍只有只读工具（qq_list_group_files / qq_group_file_stats）。
 //
 // 用法：
-//   node scripts/archive-group-files.mjs --group 100001004 --dry-run    # 预演（默认）
-//   node scripts/archive-group-files.mjs --group 100001004 --apply      # 真正执行
-//   node scripts/archive-group-files.mjs --group 100001004 --apply --only 文档,图片   # 只归档指定分类
+//   node scripts/archive-group-files.mjs --group 100002004 --dry-run    # 预演（默认）
+//   node scripts/archive-group-files.mjs --group 100002004 --apply      # 真正执行
+//   node scripts/archive-group-files.mjs --group 100002004 --apply --only 文档,图片   # 只归档指定分类
 //
 // 安全设计：
 //   - 默认 dry-run，必须显式 --apply 才真改

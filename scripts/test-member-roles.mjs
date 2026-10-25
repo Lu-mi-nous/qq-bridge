@@ -12,40 +12,30 @@
 //
 // 数据来源实测（SnowLuma 的 sender 里带 role 字段，messages.db 三值分布：
 // member 23395 / admin 21937 / owner 9414）；群成员 API 复核：
-// 群 100001004 有 owner×1 + admin×5；群 100001005 有 owner×1 + admin×10。
+// 群 100002004 有 owner×1 + admin×5；群 100002007 有 owner×1 + admin×10。
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { identityTagOf, groupRoleOf, isOwnerSender, isOwnerTurn } from '../src/pipeline/message-format.js';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.dirname(fileURLToPath(import.meta.url)) + '/..';
-const src = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
+const pipelineSrc = fs.readFileSync(path.join(root, 'src/pipeline/message-format.js'), 'utf8');
+const consoleServer = fs.readFileSync(path.join(root, 'src/console-server.js'), 'utf8');
 const roleSrc = fs.readFileSync(path.join(root, 'roles/大肥鱼.md'), 'utf8');
 
-console.log('── 1. 群角色进入消息数据 ──');
-{
-  check('读取 sender.role', /event\.sender\?\.role/.test(src));
-  check('归一化为小写', /String\(event\.sender\?\.role \?\? ''\)\.trim\(\)\.toLowerCase\(\)/.test(src));
-  check('两条消息路径都取了 role（reserved2 + reserved）',
-    (src.match(/const groupRole = kind === 'group'/g) || []).length === 2);
-  check('appendSocialV2Message 接收 groupRole',
-    /function appendSocialV2Message\([^)]*groupRole = ''(?:,|\))/.test(src));
-  // 签名后面可能继续追加参数（如 share 上下文），不要要求 groupRole 必须是最后一个
-  check('appendRecentMessage 接收 groupRole',
-    /function appendRecentMessage\([^)]*groupRole = ''(?:,|\))/.test(src));
-  check('消息对象存 groupRole', /groupRole: groupRole \|\| ''/.test(src));
-  check('并存 isGroupOwner / isGroupAdmin 布尔量',
-    /isGroupOwner: groupRole === 'owner'/.test(src) && /isGroupAdmin: groupRole === 'admin'/.test(src));
-}
+check('群主角色归一化', groupRoleOf({ sender: { role: 'OWNER' } }, 'group') === 'owner');
+check('私聊没有群身份', groupRoleOf({ sender: { role: 'owner' } }, 'private') === '');
+check('群主不是后台管理员', !isOwnerSender({ user_id: 7, sender: { role: 'owner' } }, '42'));
+check('后台管理员身份独立', isOwnerSender({ user_id: 42, sender: { role: 'member' } }, '42'));
 
 console.log('\n── 2. 三个身份必须分离（本需求的核心）──');
 {
-  // identityTagOf 是唯一渲染身份的地方；抽出它验证语义
-  const fn = /function identityTagOf\(m\) \{[\s\S]*?\n\}/.exec(src)?.[0];
-  check('identityTagOf 已定义', !!fn);
-  const identityTagOf = new Function(`${fn}; return identityTagOf;`)();
+  // identityTagOf 是唯一渲染身份的地方；直接从 pipeline 模块 import 验证语义
+  check('identityTagOf 已从 pipeline 模块导出', typeof identityTagOf === 'function');
+
 
   check('后台管理员 → 【管理员】', identityTagOf({ isOwner: true }) === '【管理员】');
   check('群主 → 【群主】', identityTagOf({ isGroupOwner: true }) === '【群主】');
@@ -69,22 +59,7 @@ console.log('\n── 2. 三个身份必须分离（本需求的核心）──'
     identityTagOf({ isGroupOwner: true, isGroupAdmin: true }) === '【群主】');
 }
 
-console.log('\n── 3. 所有标记点都用统一 helper（防漏改）──');
-{
-  const oldStyle = (src.match(/isOwner \? '【管理员】' : ''/g) || []).length;
-  check('没有残留的手写【管理员】三元式', oldStyle === 0, String(oldStyle));
-  check('helper 被多处复用（>=6 处）', (src.match(/identityTagOf\(/g) || []).length >= 6,
-    String((src.match(/identityTagOf\(/g) || []).length));
-}
-
-console.log('\n── 4. 序列化白名单（踩过的坑）──');
-{
-  // saveSocialV2State 是白名单式序列化，新字段不补进去就静默丢失
-  check('lastRequesterId 在白名单里', /lastRequesterId: st\.lastRequesterId/.test(src));
-  check('lastRequesterRole 在白名单里', /lastRequesterRole: st\.lastRequesterRole/.test(src));
-  check('requester 角色与实际角色同源', /st\.lastRequesterRole = groupRole/.test(src));
-}
-
+// 身份来源接线见 test-bridge-wiring，序列化见 test-social-state。
 console.log('\n── 5. 人格卡必须讲清三者区别 ──');
 {
   check('提到【群主】', /【群主】/.test(roleSrc));
@@ -102,9 +77,8 @@ console.log('\n── 5. 人格卡必须讲清三者区别 ──');
 console.log('\n── 6. 管理权限不受群身份影响（安全边界）──');
 {
   // 群主/群管理员**不**能执行写操作：判据只认 ownerQQ
-  check('isOwnerTurn 只比 ownerQQ', /const owner = String\(cfg\.ownerQQ \?\? ''\)\.trim\(\);[\s\S]{0,200}requester === owner/.test(src));
-  check('isOwnerTurn 不看群角色', !/isOwnerTurn[\s\S]{0,300}isGroupOwner/.test(src));
-  check('删除端点用 isOwnerTurn 判定', /sticker-delete[\s\S]{0,1200}isOwnerTurn\(key\)/.test(src));
+  check('群身份不能授权管理工具', !isOwnerTurn({ ownerQQ: '42', state: { lastRequesterId: '7', lastRequesterRole: 'owner' } }));
+  check('删除端点用 isOwnerTurn 判定', /sticker-delete[\s\S]{0,1200}isOwnerTurn\(key\)/.test(consoleServer));
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} 通过 / ${fail} 失败`);

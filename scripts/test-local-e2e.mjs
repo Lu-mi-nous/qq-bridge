@@ -1,6 +1,5 @@
 // test-local-e2e.mjs — 验证 DSH 用本地 provider 建会话并完成一次对话
 // 复用桥接自带的 NodeApiClient（含 events.mux 事件流）
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 import { NodeApiClient, unwrap, createTurnCollector } from '../src/dsh-client.js';
 
 const PROVIDER = process.argv[2] ?? 'local';
@@ -11,7 +10,7 @@ const api = new NodeApiClient('http://127.0.0.1:3080');
 const desc = unwrap(await api.host.describe({}), 'host.describe');
 console.log('DSH 已连接, 默认模型:', desc.provider, '/', desc.model);
 
-const cwd = path.join(ROOT, 'state', 'local-e2e');
+const cwd = 'E:\\Downloads\\qq-bridge-main\\state\\local-e2e';
 const created = unwrap(await api.sessions.create({ cwd }), 'session.create');
 const sessionId = created.sessionId;
 console.log('测试会话:', sessionId);

@@ -9,23 +9,15 @@
 #   1) 监听端口（config.json 的 consolePort，默认 3100）——最可靠；
 #   2) state\bridge.lock 里记的 PID（桥接自己写的）；
 #   3) 命令行绝对路径（兼容正/反斜杠）。
-#
-# 本脚本按自身所在目录定位项目，可放在任意路径/任意克隆名（不再写死克隆目录）。
 param(
   [switch]$IncludeSnowLuma,
   [switch]$IncludeDsh
 )
 
 $BridgeDir     = Split-Path -Parent $PSScriptRoot
-$BridgeName    = Split-Path -Leaf $BridgeDir
-$BridgeEsc     = [regex]::Escape($BridgeName)
-$SnowLumaDir   = if ($env:SNOWLUMA_DIR) { $env:SNOWLUMA_DIR } else { Join-Path $env:USERPROFILE 'SnowLuma' }
-$SnowLumaName  = Split-Path -Leaf $SnowLumaDir
-$SnowLumaEsc   = [regex]::Escape($SnowLumaName)
 $BridgePort    = 3100
 $SnowLumaPort  = 5099
 $OneBotWsPort  = 3001
-$OneBotHttpPort = 3000
 $DshPort       = 3080
 
 # 端口可能被改过：以 config.json 为准
@@ -34,27 +26,15 @@ try {
   if (Test-Path $cfgPath) {
     $cfg = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($cfg.consolePort) { $BridgePort = [int]$cfg.consolePort }
-    if ($cfg.dsh.baseUrl) {
-      $u = [uri]$cfg.dsh.baseUrl
-      if ($u.Port -gt 0) { $DshPort = $u.Port }
-    }
-    if ($cfg.snowluma.wsUrl) {
-      $u = [uri]$cfg.snowluma.wsUrl
-      if ($u.Port -gt 0) { $OneBotWsPort = $u.Port }
-    }
-    if ($cfg.snowluma.httpUrl) {
-      $u = [uri]$cfg.snowluma.httpUrl
-      if ($u.Port -gt 0) { $OneBotHttpPort = $u.Port }
-    }
   }
 } catch {}
 
 # 命令行匹配（用正则而非 -like：-like 里 `\` 是字面量，正斜杠路径匹配不到）
-$BridgeCmdRe   = "(?i)$BridgeEsc[\\/]+src[\\/]+bridge\.js"
+$BridgeCmdRe   = '(?i)qq-bridge-main[\\/]+src[\\/]+bridge\.js'
 $BridgeRelRe   = '(?i)(^|\s)src[\\/]+bridge\.js(\s|$)'
-$SnowLumaCmdRe = "(?i)$SnowLumaEsc[\\/]+index\.mjs"
+$SnowLumaCmdRe = '(?i)SnowLuma[\\/]+index\.mjs'
 $DshCmdRe      = '(?i)@deepseek-ai[\\/]+dsh[\\/].*bin\.js'
-$McpAbsRe      = "(?i)$BridgeEsc[\\/]+src[\\/]+mcp-"
+$McpAbsRe      = '(?i)qq-bridge-main[\\/]+src[\\/]+mcp-'
 $McpRelRe      = '(?i)(^|\s)src[\\/]+mcp-'
 
 function Write-Ok($t)    { Write-Host "  [已停止] $t" -ForegroundColor Green }
@@ -90,7 +70,7 @@ function Test-Alive([int]$ProcId) {
 function Test-InBridgeDir([int]$ProcId) {
   try {
     $p = Get-Process -Id $ProcId -ErrorAction Stop
-    return [bool]($p.Modules | Where-Object { $_.FileName -match $BridgeEsc } | Select-Object -First 1)
+    return [bool]($p.Modules | Where-Object { $_.FileName -match '(?i)qq-bridge-main' } | Select-Object -First 1)
   } catch { return $false }
 }
 
@@ -197,7 +177,7 @@ if ($IncludeDsh) {
 $stoppedSnowLuma = $false
 if ($IncludeSnowLuma) {
   $snowPids = @()
-  foreach ($id in (@(Get-PortOwnerPids $SnowLumaPort) + @(Get-PortOwnerPids $OneBotWsPort) + @(Get-PortOwnerPids $OneBotHttpPort))) {
+  foreach ($id in (@(Get-PortOwnerPids $SnowLumaPort) + @(Get-PortOwnerPids $OneBotWsPort))) {
     if ($id -gt 0) { $snowPids += $id }
   }
   foreach ($p in $procs) {

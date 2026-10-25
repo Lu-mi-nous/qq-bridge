@@ -3,6 +3,7 @@
 // 2) 配置项与 MCP 工具描述存在性
 // 3) 可选 live 模式：QQ_BRIDGE_TEST_LIVE=1 时调用 SnowLuma 拉取收藏表情并验证 safeFetchBuffer 可抓图
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -13,7 +14,11 @@ import {
   buildStickerContext,
   buildStickerStrategyHint,
   applyStickerNote,
-  markStickerUsed
+  markStickerUsed,
+  writeStickerCacheRecord,
+  readStickerCacheRecord,
+  syncStickerCache,
+  writeStickerCacheImage
 } from '../src/sticker-lib.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -135,9 +140,11 @@ console.log('## MCP 工具描述存在性');
 
 console.log('## bridge 路由/函数存在性');
 {
-  const bridge = fs.readFileSync(path.join(ROOT, 'src', 'bridge.js'), 'utf8');
+  const qqSend = fs.readFileSync(path.join(ROOT, 'src/pipeline/qq-send.js'), 'utf8');
+  const consoleServer = fs.readFileSync(path.join(ROOT, 'src', 'console-server.js'), 'utf8');
   for (const s of ['/api/socialV2/sticker-list', '/api/socialV2/sticker-image', '/api/socialV2/sticker-note', '/api/socialV2/send-sticker', '/api/socialV2/sticker-remark', '/api/stickers', 'syncStickerLibrary', 'sendStickerV2']) {
-    ok(bridge.includes(s), `bridge 包含 ${s}`);
+    const source = s.startsWith('/api/') ? consoleServer : qqSend;
+    ok(source.includes(s), `bridge 包含 ${s}`);
   }
 }
 
@@ -169,6 +176,44 @@ if (process.env.QQ_BRIDGE_TEST_LIVE === '1') {
   } catch (e) {
     ok(false, `live 链路异常: ${e.message}`);
   }
+}
+
+console.log('\n## 本地表情缓存标注');
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qqb-sticker-cache-'));
+  const entry = normalizeStickerEntry({ emoji_id: 'cache-a', resId: 'cache-a', url: 'https://x/a', md5: 'ABCDEF0123456789', desc: 'QQ备注很短' });
+  const written = writeStickerCacheRecord(dir, entry, { preserveLocal: false });
+  ok(!!written && written.md5 === 'ABCDEF0123456789', '写入 <md5>.json 标注');
+  const file = path.join(dir, 'abcdef0123456789.json');
+  ok(fs.existsSync(file), '缓存文件名使用 md5');
+  ok(readStickerCacheRecord(dir, entry)?.desc === 'QQ备注很短', '读回标注 desc');
+
+  // 用户手改的详细标注：localNote/tags/usage/extra 要能读到；同步不应覆盖已有本地字段
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  raw.localNote = '蓝发女仆鲸鱼娘，适合无语/敷衍场景';
+  raw.tags = ['无语', '敷衍', '鲸鱼娘'];
+  raw.usage = '群友说离谱话时发';
+  raw.extra = { emotion: 'speechless', scene: '群聊吐槽' };
+  fs.writeFileSync(file, JSON.stringify(raw, null, 2));
+  syncStickerCache([entry], dir);
+  const kept = readStickerCacheRecord(dir, entry);
+  ok(kept.localNote.includes('蓝发女仆'), '同步保留手改 localNote');
+  ok(kept.tags.includes('无语'), '同步保留手改 tags');
+  ok(kept.extra?.scene === '群聊吐槽', '同步保留自定义 extra');
+
+  const withCache = formatStickerList([entry], '', 10, { cacheDir: dir, readLocalCache: true });
+  ok(withCache.stickers[0].cache?.localNote.includes('蓝发女仆'), '开关开启时列表带本地缓存');
+  const withoutCache = formatStickerList([entry], '', 10, { cacheDir: dir, readLocalCache: false });
+  ok(!withoutCache.stickers[0].cache, '开关关闭时不读本地缓存');
+  const ctx = buildStickerContext([entry], 8, { cacheDir: dir, readLocalCache: true });
+  ok(ctx.includes('蓝发女仆') && ctx.includes('无语'), '唤醒摘要使用本地缓存标注');
+
+  // 图片缓存：写入图片文件并回填 image 元信息
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0, 0, 0, 0, 0]);
+  const img = writeStickerCacheImage(dir, entry, png, { mimeType: 'image/png', width: 10, height: 12 });
+  ok(!!img?.image?.file && fs.existsSync(path.join(dir, img.image.file)), '图片写入缓存目录');
+  ok(img.image.width === 10 && img.image.height === 12, '图片元信息写入标注');
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`);

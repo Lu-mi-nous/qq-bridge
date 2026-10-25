@@ -1,3 +1,4 @@
+import { createEventHarness, sessionEvent, assistantMessage, turnEnd } from './helpers/dsh-event-harness.mjs';
 // 回归测试：B 站「自己刷」与全局观看记忆。
 //
 // 需求（2026-10-19 用户）：
@@ -645,17 +646,20 @@ console.log('\n── 8. 接线 ──');
   const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
   const srcRoot = path.join(root, 'src');
   const bridge = fs.readFileSync(path.join(srcRoot, 'bridge.js'), 'utf8');
+  const consoleServer = fs.readFileSync(path.join(srcRoot, 'console-server.js'), 'utf8');
+  const biliRuntime=fs.readFileSync(path.join(srcRoot,'pipeline/bili-runtime.js'),'utf8');
+  const biliSharing=fs.readFileSync(path.join(srcRoot,'pipeline/bili-sharing.js'),'utf8');
   const mcp = fs.readFileSync(path.join(srcRoot, 'mcp-snowluma-safe.js'), 'utf8');
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
 
-  check('桥接有记录端点', /api\/socialV2\/bili-record/.test(bridge));
-  check('桥接有记忆查询端点', /api\/socialV2\/bili-memory/.test(bridge));
-  check('桥接有观看端点', /api\/socialV2\/bili-watch/.test(bridge));
-  check('桥接有状态端点', /api\/socialV2\/bili-status/.test(bridge));
+  check('桥接有记录端点', /api\/socialV2\/bili-record/.test(consoleServer));
+  check('桥接有记忆查询端点', /api\/socialV2\/bili-memory/.test(consoleServer));
+  check('桥接有观看端点', /api\/socialV2\/bili-watch/.test(consoleServer));
+  check('桥接有状态端点', /api\/socialV2\/bili-status/.test(consoleServer));
   check('桥接有"自己刷"调度器', /function scheduleBiliBrowse/.test(bridge));
   check('调度器有防重入', /biliBrowsing/.test(bridge));
-  check('只在潜水时刷（可配置）', /onlyWhenDiving/.test(bridge));
-  check('挑空闲会话落脚', /function pickBiliSessionKey/.test(bridge));
+  check('只在潜水时刷（可配置）', /onlyWhenDiving/.test(biliRuntime));
+  check('挑空闲会话落脚', /function pickBiliSessionKey/.test(biliSharing));
   check('记忆是全局变量（不在 conversations 里）', /let biliMem = null/.test(bridge));
   check('启动时初始化并调度', /scheduleBiliBrowse\(\)/.test(bridge));
   check('初始化失败不影响桥接', /\[B站\] 初始化失败（不影响桥接）/.test(bridge));
@@ -686,35 +690,35 @@ console.log('\n── 8. 接线 ──');
   check('按钮文案跟着状态切换', /恢复自主刷/.test(consoleHtml) && /暂停自主刷/.test(consoleHtml));
   check('按钮调暂停端点', /api\/socialV2\/bili-pause/.test(consoleHtml));
   check('暂停后状态行显示"已暂停"', /⏸ 自主刷已暂停/.test(consoleHtml));
-  check('暂停端点存在', /api\/socialV2\/bili-pause/.test(bridge));
+  check('暂停端点存在', /api\/socialV2\/bili-pause/.test(consoleServer));
   // 必须落盘：只改内存的话重启后又自己开始刷，用户会以为按钮没生效
   check('暂停状态写入 config.json（重启后仍保持）',
-    /bili-pause[\s\S]{0,900}atomicWriteJson\(configFile, file\)/.test(bridge));
+    /bili-pause[\s\S]{0,900}atomicWriteJson\(configFile, file\)/.test(consoleServer));
   check('暂停只改 selfBrowsing.enabled（不另开真相源）',
-    /selfBrowsing\.enabled = !paused/.test(bridge));
-  check('暂停时清掉已排的定时器', /bili-pause[\s\S]{0,2000}clearTimeout\(biliTimer\)/.test(bridge));
-  check('恢复时重新排期', /bili-pause[\s\S]{0,2400}scheduleBiliBrowse\(\)/.test(bridge));
+    /selfBrowsing\.enabled = !paused/.test(consoleServer));
+  check('暂停时清掉已排的定时器', /bili-pause[\s\S]{0,2000}clearTimeout\(deps\.live\.biliTimer\)/.test(consoleServer));
+  check('恢复时重新排期', /bili-pause[\s\S]{0,2400}scheduleBiliBrowse\(\)/.test(consoleServer));
   check('暂停不拦群友发链接（只看 b.enabled）',
-    /if \(b\.enabled === false \|\| !biliMem\) return \{ ok: false, reason: 'B 站功能未启用' \}/.test(bridge));
-  check('手动触发在暂停时标 manualWhilePaused', /manualWhilePaused/.test(bridge));
+    /if \(b\.enabled === false \|\| !live\.biliMem\) return \{ ok: false, reason: 'B 站功能未启用' \}/.test(biliRuntime));
+  check('手动触发在暂停时标 manualWhilePaused', /manualWhilePaused/.test(biliRuntime));
   check('控制台提示"暂停中本次为手动触发"', /暂停中，本次为手动触发/.test(consoleHtml));
-  check('桥接状态端点返回 browsing 实时状态', /browsing,/.test(bridge));
-  check('桥接状态端点返回 lastVideo', /lastVideo: lastBiliWatch/.test(bridge));
-  check('桥接状态端点返回 recent', /recent: biliMem \? biliMem\.recent\(6\)/.test(bridge));
-  check('有手动触发端点（控制台按钮）', /api\/socialV2\/bili-browse-now/.test(bridge));
-  check('手动触发也受额度约束（复用 runBiliBrowse）', /runBiliBrowse\(\{ manual: true \}\)/.test(bridge));
+  check('桥接状态端点返回 browsing 实时状态', /browsing,/.test(consoleServer));
+  check('桥接状态端点返回 lastVideo', /lastVideo: deps\.live\.lastBiliWatch/.test(consoleServer));
+  check('桥接状态端点返回 recent', /recent: deps\.live\.biliMem \? deps\.live\.biliMem\.recent\(6\)/.test(consoleServer));
+  check('有手动触发端点（控制台按钮）', /api\/socialV2\/bili-browse-now/.test(consoleServer));
+  check('手动触发也受额度约束（复用 runBiliBrowse）', /runBiliBrowse\(\{ manual: true \}\)/.test(consoleServer));
   // 2026-10-19 用户报障「点了只显示已触发，状态里没显示刷了什么」的两个根因：
   //   ① 手动触发被"距上次太近"的间隔限制拦掉（点了等于没点）
   //   ② 端点先 sendJson 再异步跑，then 里又 sendJson → Cannot write headers after sent
-  check('手动触发跳过间隔限制', /lastAt: manual \? 0 : lastBiliBrowseAt/.test(bridge)
-    && /minIntervalMs: manual \? 0 : sb\.minIntervalMs/.test(bridge));
+  check('手动触发跳过间隔限制', /lastAt: manual \? 0 : live\.lastBiliBrowseAt/.test(biliRuntime)
+    && /minIntervalMs: manual \? 0 : sb\.minIntervalMs/.test(biliRuntime));
   check('手动触发等结果再返回（不先回 ok 再跑）',
-    /const r = await runBiliBrowse\(\{ manual: true \}\);\s*\n\s*sendJson\(r\)/.test(bridge));
+    /const r = await runBiliBrowse\(\{ manual: true \}\);\s*\n\s*sendJson\(r\)/.test(consoleServer));
   check('runBiliBrowse 返回具体结果（视频/秒数/帧数）',
-    /return \{\s*\n\s*ok: true,\s*\n\s*video:/.test(bridge));
+    /return \{\s*\n\s*ok: true,\s*\n\s*video:/.test(biliRuntime));
   check('被跳过时也返回可读原因',
-    /return \{ ok: false, reason: '候选都在冷却期内/.test(bridge)
-    && /return \{ ok: false, reason: gate\.reason \}/.test(bridge));
+    /return \{ ok: false, reason: '候选都在冷却期内/.test(biliRuntime)
+    && /return \{ ok: false, reason: gate\.reason \}/.test(biliRuntime));
   check('控制台按钮显示刷了什么（不是"已触发"）',
     /刷完了：《/.test(consoleHtml) && /没刷：/.test(consoleHtml));
 
@@ -722,43 +726,59 @@ console.log('\n── 8. 接线 ──');
   // 原实现先定深度再去看，而喜不喜欢要看完才知道 → 永远走 liked=null 的中庸分支，
   // framesLiked/framesDisliked 从未生效。现在改成两段式：浅看→初判→喜欢则追加。
   check('桥接用两段式（浅看后按初判追加）',
-    /biliBrowseState\.phase = 'scanning'/.test(bridge)
-    && /biliBrowseState\.phase = 'extending'/.test(bridge));
+    /biliBrowseState\.phase = 'scanning'/.test(biliRuntime)
+    && /biliBrowseState\.phase = 'extending'/.test(biliRuntime));
   check('不再固定传 liked=null 定深度',
-    !/const depth = watchDepth\(null/.test(bridge));
+    !/const depth = watchDepth\(null/.test(biliRuntime));
   check('浅看用不喜欢档、喜欢用喜欢档',
-    /Number\(sb\.scanSeconds\)/.test(bridge)
-    && /Number\(sb\.likedSeconds\)/.test(bridge));
+    /Number\(sb\.scanSeconds\)/.test(biliRuntime)
+    && /Number\(sb\.likedSeconds\)/.test(biliRuntime));
   // 采样密度（用户要求「帧间隔缩短一些，最好一秒取样一次」）：
   // 帧数不再由 framesLiked 写死，而是 秒数 × framesPerSecond。
   check('帧数按密度算（秒数 × framesPerSecond）',
-    /framesPerSecond/.test(bridge) && /sec \* density/.test(fs.readFileSync(path.join(srcRoot, 'bili-browse.js'), 'utf8')));
-  check('帧数有硬上限（maxFramesTotal）', /maxFramesTotal/.test(bridge));
-  check('分页格数可配（tilesPerSheet）', /tilesPerSheet/.test(bridge));
+    /framesPerSecond/.test(biliRuntime) && /sec \* density/.test(fs.readFileSync(path.join(srcRoot, 'bili-browse.js'), 'utf8')));
+  check('帧数有硬上限（maxFramesTotal）', /maxFramesTotal/.test(biliRuntime));
+  check('分页格数可配（tilesPerSheet）', /tilesPerSheet/.test(biliRuntime));
   // 口味信号必须真的接到选片上（2026-10-20：原先只在 title+category 里找标签，
   // 实测 50 条只有 10 条命中，其中 4 条还是"只靠分区名"命中=重复计分）
-  check('选片传入口味标签', /likedTags: taste\.totalTags/.test(bridge));
-  check('选片传入喜欢的 UP 主', /likedOwners: taste\.owners/.test(bridge));
+  check('选片传入口味标签', /likedTags: taste\.totalTags/.test(biliRuntime));
+  check('选片传入喜欢的 UP 主', /likedOwners: taste\.owners/.test(biliRuntime));
   check('taste() 统计 UP 主', /ownerCount/.test(fs.readFileSync(path.join(srcRoot, 'bili.js'), 'utf8')));
   check('投递时把每一张都发给模型',
     /Array\.isArray\(imageBuffer\?\.sheets\)/.test(bridge)
     && /for \(let i = 0; i < parts\.length; i \+= 1\)/.test(bridge));
   check('初判也把每一张都发给模型',
     /scanimgs/.test(bridge) && /scan\.grid\.sheets/.test(bridge));
-  check('观看端点返回全部分页', /images: sheets\.map/.test(bridge));
+  check('观看端点返回全部分页', /images: sheets\.map/.test(consoleServer));
   check('MCP 把全部分页交给模型', /Array\.isArray\(data\.images\)/.test(mcp));
-  check('追加只在 liked===true 时发生', /if \(verdict\.liked === true && likeSeconds > scanSeconds\)/.test(bridge));
+  check('追加只在 liked===true 时发生', /if \(verdict\.liked === true && likeSeconds > scanSeconds\)/.test(biliRuntime));
   check('初判是一次独立的 prompt（只回 JSON）', /buildScanPrompt/.test(bridge) && /buildScanPrompt/.test(
     fs.readFileSync(path.join(srcRoot, 'bili-browse.js'), 'utf8')));
   check('初判解析容错（代码块/自然语言）', /parseScanVerdict/.test(bridge));
-  check('初判 waiter 只在有文本时回填（工具调用回合不算）',
-    /if \(text\.trim\(\)\) \{[\s\S]{0,80}waiter\.resolve/.test(bridge));
   check('初判超时可配、默认 150s', /judgeTimeoutMs\) \|\| 150000/.test(bridge));
-  // 2026-10-19 的根因：初判 prompt 是直接投递的，不走 v2TurnStartAt，
-  // 而复用 collectors 会导致拿不到 turn/end → waiter 永远等不到 → liked=null。
-  check('初判有独立 collector（不复用 collectors）',
-    /biliJudgeCollectors/.test(bridge) && /if \(!judgeCollector && biliJudgeWaiters\.has/.test(bridge));
-  // 黑屏：抽帧要支持跳过片头并检测亮度
+  const h = createEventHarness({ mode: 'reserved2' });
+  const sid = 'session-fixture';
+  const results = [];
+  await h.handle(sessionEvent('turn/start', 1));
+  const waiter = { turn: null, turnId: null, resolve: text => {
+    results.push(text); h.deps.biliJudgeWaiters.delete(sid);
+  } };
+  h.deps.biliJudgeWaiters.set(sid, waiter);
+  await h.handle(assistantMessage(1, '登记前已开始的群聊回复'));
+  await h.handle(turnEnd(1));
+  check('登记前的旧回合不能回填初判', results.length === 0 && waiter.turn === null);
+  await h.handle(sessionEvent('turn/start', 2));
+  check('初判有独立 collector 并绑定明确 turnId', h.deps.biliJudgeCollectors.has(sid)
+    && h.deps.biliJudgeCollectors.get(sid) !== h.deps.collectors.get(sid) && waiter.turnId === sid + '#2');
+  await h.handle(assistantMessage(1, '迟到的群聊回复')); await h.handle(turnEnd(1));
+  check('初判忽略别的回合的文本与结束', results.length === 0 && waiter.turn === 2);
+  await h.handle(turnEnd(2));
+  check('初判纯工具回合不回填空串，解除绑定等待下一轮', results.length === 0 && waiter.turn === null && waiter.turnId === null);
+  await h.handle(sessionEvent('turn/start', 3));
+  await h.handle(assistantMessage(3, '{"liked":true}')); await h.handle(turnEnd(3));
+  check('真正初判文本恰好回填一次', results.length === 1 && results[0] === '{"liked":true}');
+  check('初判结束清理专用 collector', !h.deps.biliJudgeCollectors.has(sid));
+
   const biliSrc = fs.readFileSync(path.join(srcRoot, 'bili.js'), 'utf8');
   check('抽帧支持 skipSeconds（跳过片头黑场）', /skipSeconds/.test(biliSrc));
   check('抽帧会测亮度', /YAVG/.test(biliSrc) && /measureBrightness/.test(biliSrc));
@@ -767,7 +787,7 @@ console.log('\n── 8. 接线 ──');
     fs.readFileSync(path.join(srcRoot, 'bili-browse.js'), 'utf8')));
   check('初判提示词提醒"暗不等于黑屏"', /不要一句"黑屏/.test(
     fs.readFileSync(path.join(srcRoot, 'bili-browse.js'), 'utf8')));
-  check('返回里带 extended 标记', /extended,/.test(bridge) && /liked: verdict\.liked,/.test(bridge));
+  check('返回里带 extended 标记', /extended,/.test(biliRuntime) && /liked: verdict\.liked,/.test(biliRuntime));
   check('配置：gameBoost = 20（用户指定）', cfgGameBoost === 20, String(cfgGameBoost));
   check('配置：候选池 3 页', Number(cfgBili.selfBrowsing?.poolPages) === 3, String(cfgBili.selfBrowsing?.poolPages));
   check('配置：preferGames 开启', cfgBili.selfBrowsing?.preferGames !== false);
@@ -776,7 +796,7 @@ console.log('\n── 8. 接线 ──');
   check('配置：分享门槛降到 65（否则几乎不触发）',
     Number(cfgBili.share?.minInterest) > 0 && Number(cfgBili.share?.minInterest) <= 65,
     String(cfgBili.share?.minInterest));
-  check('桥接默认门槛与配置一致（65）', /Number\(share\.minInterest\) \|\| 65/.test(bridge));
+  check('桥接默认门槛与配置一致（65）', /Number\(share\.minInterest\) \|\| 65/.test(biliSharing));
   check('配置：浅看不超过 10 秒（只为判断要不要继续）',
     Number(cfgBili.selfBrowsing?.scanSeconds) <= 10, String(cfgBili.selfBrowsing?.scanSeconds));
   // 喜欢要"真的多看"：12s → 30s → 120s 逐步放宽。

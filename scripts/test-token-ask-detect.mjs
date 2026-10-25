@@ -1,6 +1,6 @@
 // 回归测试：群友问 token 用量时，桥接必须能认出来并要求调工具。
 //
-// 事故（2026-10-21，group:100001004）：
+// 事故（2026-10-21，group:100002004）：
 //   问「你用了多少token」→ 调了 qq_token_report（历史上成功 6 次）
 //   问「看看你吃了多少token」→ **没调**
 //   问「你怎么这么能吃白饭」→ **没调**，还编出「35.27B里prompt占35.25B」
@@ -21,27 +21,13 @@ let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const bridgeSrc = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
+import { createContentRequestPolicy } from '../src/pipeline/content-request.js';
+const cfg = { socialV2: { tools: {} } };
+const { buildTokenAskLineV2 } = createContentRequestPolicy({ cfg });
+const wakeSrc = fs.readFileSync(path.join(root, 'src/pipeline/wake.js'), 'utf8');
 const mcpSrc = fs.readFileSync(path.join(root, 'src/mcp-snowluma-safe.js'), 'utf8');
 
-// 从 bridge.js 抽出真实正则（测的是跑着的那份，不是复制品）
-const subjectRe = /const TOKEN_ASK_SUBJECT_RE = (\/.*?\/i);/.exec(bridgeSrc)?.[1];
-const quantityRe = /const TOKEN_ASK_QUANTITY_RE = (\/.*?\/);/.exec(bridgeSrc)?.[1];
-const notRe = /const TOKEN_ASK_NOT_RE = (\/.*?\/);/.exec(bridgeSrc)?.[1];
-
-check('能抽出三条判据正则', !!subjectRe && !!quantityRe && !!notRe);
-
-const RE_SUBJECT = new Function(`return ${subjectRe}`)();
-const RE_QUANTITY = new Function(`return ${quantityRe}`)();
-const RE_NOT = new Function(`return ${notRe}`)();
-
-/** 复刻 buildTokenAskLineV2 的判定（与 bridge.js 同一套正则、同一顺序） */
-const isTokenAsk = (text) => {
-  const t = String(text ?? '').trim();
-  if (!t) return false;
-  if (RE_NOT.test(t)) return false;
-  return RE_SUBJECT.test(t) && RE_QUANTITY.test(t);
-};
+const isTokenAsk = text => !!buildTokenAskLineV2({ unread: [{ plain: text }] });
 
 console.log('── 1. 事故里的说法必须全部认得 ──');
 {
@@ -71,14 +57,14 @@ console.log('\n── 2. 不该误判的（两段判据要同时命中）──'
 
 console.log('\n── 3. 桥接判定函数接进了唤醒提示 ──');
 {
-  check('存在 buildTokenAskLineV2', /function buildTokenAskLineV2/.test(bridgeSrc));
-  check('prompt 里有 tokenAskLine', /const tokenAskLine = buildTokenAskLineV2\(st\)/.test(bridgeSrc));
-  check('tokenAskLine 拼进 base（在 complyLine 之后）',
-    /complyLine \+ tokenAskLine \+/.test(bridgeSrc));
-  check('只扫最近 8 条未读（防止旧提问每轮都催）', /reverse\(\)\.slice\(0, 8\)/.test(bridgeSrc));
-  check('指令里点名要求调 qq_token_report', /本轮必须调 qq_token_report/.test(bridgeSrc));
-  check('明确禁止估算/谎称没能力', /不许自己估算数字、不许说"我没有查用量的口子"/.test(bridgeSrc));
-  check('工具关闭时不注入', /if \(cfg\.socialV2\?\.tools\?\.tokenReport === false\) return ''/.test(bridgeSrc));
+  check('真实函数返回工具提示', buildTokenAskLineV2({ unread: [{ text: '你用了多少token' }] }).includes('本轮必须调 qq_token_report'));
+  check('旧提问超过最近 8 条不再催', !buildTokenAskLineV2({ unread: [{ text: '你用了多少token' }, ...Array.from({ length: 8 }, () => ({ text: '闲聊' }))] }));
+  check('自己的消息不触发', !buildTokenAskLineV2({ unread: [{ text: '你用了多少token', isSelf: true }] }));
+  cfg.socialV2.tools.tokenReport = false;
+  check('工具关闭时不注入', !isTokenAsk('用了多少token'));
+  cfg.socialV2.tools.tokenReport = true;
+  check('唤醒模块接入 token 提示', /deps\.buildTokenAskLine\(st\)/.test(wakeSrc));
+
 }
 
 console.log('\n── 4. MCP 工具描述也补齐了（模型看到的第二份说明）──');
@@ -87,7 +73,7 @@ console.log('\n── 4. MCP 工具描述也补齐了（模型看到的第二份
   check('描述里含"这么能吃"', /这么能吃/.test(mcpSrc));
   check('描述里明确"不要自己估算"', /不要自己估算/.test(mcpSrc));
   check('描述里明确"不要说没有查用量的口子"', /没有查用量的口子/.test(mcpSrc));
-  check('提示词也含同类禁止措辞', /我没有查用量的口子/.test(bridgeSrc));
+  check('提示词也含同类禁止措辞', /我没有查用量的口子/.test(buildTokenAskLineV2({ unread: [{ text: '用了多少token' }] })));
 }
 
 console.log('\n── 5. 渲染链路可用的前提 ──');

@@ -119,7 +119,16 @@ export function parseSessionFile(file) {
     }
   }
 
-  if (!seen.size) return { days: {}, models: {}, dayModels: {}, turns, calls: 0 };
+  if (!seen.size) return { days: {}, models: {}, dayModels: {}, turns, calls: 0, firstAt: 0, lastAt: 0 };
+
+  let firstAt = 0;
+  let lastAt = 0;
+  for (const { time } of seen.values()) {
+    const t = Number(time) || 0;
+    if (!t) continue;
+    if (!firstAt || t < firstAt) firstAt = t;
+    if (t > lastAt) lastAt = t;
+  }
 
   const days = {};
   const models = {};
@@ -150,7 +159,7 @@ export function parseSessionFile(file) {
     }
     bump(models, m, u);
   }
-  return { days, models, dayModels, turns, calls: seen.size };
+  return { days, models, dayModels, turns, calls: seen.size, firstAt, lastAt };
 }
 
 /**
@@ -192,10 +201,62 @@ export function aggregateTokenUsage(roots, opts = {}) {
   const models = {};
   const dayModels = {};
   const cache = {};
+  const sessions = {};
   let turns = 0;
   let calls = 0;
   let scanned = 0;
   let reused = 0;
+
+  // sessionId → QQ 会话 key：当前映射优先，其次历史映射。
+  const keyMap = new Map();
+  if (opts.sessionKeys instanceof Map) {
+    for (const [sid, key] of opts.sessionKeys) if (key) keyMap.set(String(sid), String(key));
+  } else if (opts.sessionKeys && typeof opts.sessionKeys === 'object') {
+    for (const [sid, key] of Object.entries(opts.sessionKeys)) if (key) keyMap.set(String(sid), String(key));
+  }
+  if (opts.currentSessions && typeof opts.currentSessions === 'object') {
+    for (const [key, sid] of Object.entries(opts.currentSessions)) {
+      if (sid) keyMap.set(String(sid), String(key));
+    }
+  }
+
+  const bumpSessionDay = (bucket, day, value) => {
+    const target = bucket.days[day] || (bucket.days[day] = {
+      input: 0, output: 0, cacheRead: 0, reasoning: 0, calls: 0
+    });
+    target.input += Number(value.input) || 0;
+    target.output += Number(value.output) || 0;
+    target.cacheRead += Number(value.cacheRead) || 0;
+    target.reasoning += Number(value.reasoning) || 0;
+    target.calls += Number(value.calls) || 0;
+  };
+
+  const bumpSession = (sid, parsed) => {
+    // DSH 会话目录名就是 sessionId；同一目录下可能有 session.jsonl.zstd
+    // 与 session.v4.jsonl.zstd 两个文件，按 sessionId 合并。
+    const bucket = sessions[sid] || (sessions[sid] = {
+      sessionId: sid,
+      key: keyMap.get(sid) || '',
+      input: 0,
+      cacheRead: 0,
+      output: 0,
+      reasoning: 0,
+      calls: 0,
+      firstAt: 0,
+      lastAt: 0,
+      days: {}
+    });
+    if (parsed.firstAt && (!bucket.firstAt || parsed.firstAt < bucket.firstAt)) bucket.firstAt = parsed.firstAt;
+    if (parsed.lastAt && parsed.lastAt > bucket.lastAt) bucket.lastAt = parsed.lastAt;
+    for (const [day, value] of Object.entries(parsed.days || {})) {
+      bumpSessionDay(bucket, day, value);
+      bucket.input += Number(value.input) || 0;
+      bucket.cacheRead += Number(value.cacheRead) || 0;
+      bucket.output += Number(value.output) || 0;
+      bucket.reasoning += Number(value.reasoning) || 0;
+      bucket.calls += Number(value.calls) || 0;
+    }
+  };
 
   const bump = (obj, key, u) => {
     const c = obj[key] || (obj[key] = { input: 0, output: 0, cacheRead: 0, reasoning: 0, calls: 0 });
@@ -216,21 +277,27 @@ export function aggregateTokenUsage(roots, opts = {}) {
     // 若只按 mtime/size 复用，升级后第一次统计会拿到 `undefined`，
     // 「按日看模型」就会静默显示空表（文件没变、数字却是 0，最难查的一类 bug）。
     // 要求缓存里确实有这个维度才算命中，否则重解该文件。
-    const cacheComplete = hit && hit.dayModels !== undefined;
+    // firstAt/lastAt 是 2026-10-25 为会话级报表新增的字段：老缓存没有，
+    // 升级后首次会重解一遍（只发生一次），之后继续按 mtime+size 复用。
+    const cacheComplete = hit && hit.dayModels !== undefined && hit.firstAt !== undefined;
     if (cacheComplete && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
       parsed = {
         days: hit.days || {}, models: hit.models || {}, dayModels: hit.dayModels || {},
-        turns: hit.turns || 0, calls: hit.calls || 0
+        turns: hit.turns || 0, calls: hit.calls || 0,
+        firstAt: hit.firstAt || 0, lastAt: hit.lastAt || 0
       };
       reused += 1;
     } else {
-      parsed = parseSessionFile(f) || { days: {}, models: {}, dayModels: {}, turns: 0, calls: 0 };
+      parsed = parseSessionFile(f) || {
+        days: {}, models: {}, dayModels: {}, turns: 0, calls: 0, firstAt: 0, lastAt: 0
+      };
       scanned += 1;
     }
     cache[key] = {
       mtimeMs: st.mtimeMs, size: st.size,
       days: parsed.days, models: parsed.models, dayModels: parsed.dayModels,
-      turns: parsed.turns, calls: parsed.calls
+      turns: parsed.turns, calls: parsed.calls,
+      firstAt: parsed.firstAt || 0, lastAt: parsed.lastAt || 0
     };
     turns += parsed.turns;
     calls += parsed.calls;
@@ -240,9 +307,17 @@ export function aggregateTokenUsage(roots, opts = {}) {
       const target = dayModels[d] || (dayModels[d] = {});
       for (const [m, v] of Object.entries(mm || {})) bump(target, m, v);
     }
+    // 同一 session 可能对应多个文件（session.jsonl.zstd / session.v4.jsonl.zstd），
+    // 按目录名合并；key 由调用方传入的当前映射 + 历史映射解析。
+    bumpSession(path.basename(path.dirname(f)), parsed);
   }
 
-  return { days, models, dayModels, turns, calls, cache, scanned, reused, files: withFilesCount(withStat.length) };
+  for (const bucket of Object.values(sessions)) {
+    bucket.totalInput = (Number(bucket.input) || 0) + (Number(bucket.cacheRead) || 0);
+    if (!bucket.key) bucket.key = null;
+  }
+
+  return { days, models, dayModels, turns, calls, sessions, cache, scanned, reused, files: withFilesCount(withStat.length) };
 }
 
 function withFilesCount(n) { return n; }

@@ -25,7 +25,11 @@ const skipped = (n, why) => { skip++; console.log(`SKIP  ${n}  （${why}）`); }
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const ttsSrc = fs.readFileSync(path.join(root, 'src', 'tts.js'), 'utf8');
+const incomingSrc=fs.readFileSync(path.join(root,'src/pipeline/incoming.js'),'utf8');
 const bridgeSrc = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
+const qqSendSrc = fs.readFileSync(path.join(root, 'src', 'pipeline', 'qq-send.js'), 'utf8');
+const wakeSrc = fs.readFileSync(path.join(root, 'src', 'pipeline', 'wake.js'), 'utf8');
+const consoleServerSrc = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 const pySrc = fs.readFileSync(path.join(root, 'scripts', 'sovits-server.py'), 'utf8');
 
@@ -106,14 +110,15 @@ console.log('\n── 4. 掷骰与回退 ──');
     (bridgeSrc.match(/const TTS_DEFAULT_PROBABILITY = ([\d.]+)/) || [])[1]);
   const literal08 = (bridgeSrc.match(/probability \?\? 0\.08/g) || []).length;
   check('没有残留写死的 8% 默认值', literal08 === 0, `${literal08} 处`);
-  const constRefs = (bridgeSrc.match(/probability \?\? TTS_DEFAULT_PROBABILITY/g) || []).length;
+  const constRefs = (bridgeSrc.match(/probability \?\? TTS_DEFAULT_PROBABILITY/g) || []).length
+    + (consoleServerSrc.match(/probability \?\? TTS_DEFAULT_PROBABILITY/g) || []).length;
   check('默认值统一走常量（≥3 处引用）', constRefs >= 3, `${constRefs} 处`);
   // 模型主动发语音**不受概率限制**：群友明确要听，就该发。
   check('主动发不检查概率（只受每小时上限）',
-    /send-voice[\s\S]{0,2500}?maxPerHour/.test(bridgeSrc)
-    && !/send-voice[\s\S]{0,1200}?Math\.random\(\)/.test(bridgeSrc));
+    /send-voice[\s\S]{0,2500}?maxPerHour/.test(consoleServerSrc)
+    && !/send-voice[\s\S]{0,1200}?Math\.random\(\)/.test(consoleServerSrc));
 
-  check('过长不发（默认 140 字）', /maxChars\) \|\| 140/.test(bridgeSrc));
+  check('过长不发（默认 140 字）', /maxChars\) \|\| 140/.test(consoleServerSrc));
   // 用字面量 includes 而不是正则：源码那行本身含大量转义，
   // 再用正则去匹配它极易写错（这条断言就因此假失败过一次）。
   check('含链接/代码不发',
@@ -121,12 +126,12 @@ console.log('\n── 4. 掷骰与回退 ──');
     '查找 planTtsV2 里的链接/代码过滤');
   check('纯数字不发', /\^\[\\d\\s\.,%\+-\]\+\$/.test(bridgeSrc));
   check('每小时上限（防连发）', /ttsTimes/.test(bridgeSrc) && /maxPerHour/.test(bridgeSrc));
-  check('不与 @ 同时生效（引用可以带进语音）', /\(autoAt \|\| atUserId\) \? null : planTtsV2/.test(bridgeSrc));
-  check('语音不拼 reply 段（QQ 不支持同气泡）', !/type: 'reply', data: \{ id: String\(info\.replyToMessageId\) \}/.test(bridgeSrc));
-  check('语音失败回退文字时保留引用', /onebotSend\(kind, id, ttsPlan\.text, replyToMessageId, null\)/.test(bridgeSrc));
+  check('不与 @ 同时生效（引用可以带进语音）', /\(autoAt \|\| atUserId\) \? null : planTtsV2/.test(qqSendSrc));
+  check('语音不拼 reply 段（QQ 不支持同气泡）', !/type: 'reply', data: \{ id: String\(info\.replyToMessageId\) \}/.test(qqSendSrc));
+  check('语音失败回退文字时保留引用', /onebotSend\(kind, id, ttsPlan\.text, replyToMessageId, null\)/.test(qqSendSrc));
   // 最关键的一条：语音失败必须回退文字
-  check('合成失败回退成文字（绝不吞消息）', /语音没发成，退回普通文字发送/.test(bridgeSrc));
-  check('发送失败也回退', /await sendAsVoice\([\s\S]{0,300}?if \(r\.ok\)/.test(bridgeSrc));
+  check('合成失败回退成文字（绝不吞消息）', /语音没发成，退回普通文字发送/.test(qqSendSrc));
+  check('发送失败也回退', /await sendAsVoice\([\s\S]{0,300}?if \(r\.ok\)/.test(qqSendSrc));
 }
 
 // ── 5. 发送链路 ──
@@ -135,19 +140,19 @@ console.log('\n── 5. 发送链路 ──');
   check('有 onebotSendVoiceFile', /async function onebotSendVoiceFile/.test(bridgeSrc));
   check('用 OneBot record 段', /type: 'record', data: \{ file: `file:\/\/\$\{abs\}` \}/.test(bridgeSrc));
   check('调用后记录已发消息', /recordSentMessage\(key, body\.data, `［语音］/.test(bridgeSrc));
-  check('概率语音在发送列表标 isVoice', /sent\.push\(\{ text: ttsPlan\.text, isVoice: true \}\)/.test(bridgeSrc));
+  check('概率语音在发送列表标 isVoice', /sent\.push\(\{ text: ttsPlan\.text, isVoice: true \}\)/.test(qqSendSrc));
   check('发送记录保留 [语音] 标记', /isVoice \? '\[语音\] ' : ''/.test(bridgeSrc) && /isVoice,/.test(bridgeSrc));
-  check('主动语音写回 recentMessages', /recordSentMessagesV2\(key, \[\{ text, isVoice: true \}\]\)/.test(bridgeSrc));
+  check('主动语音写回 recentMessages', /recordSentMessagesV2\(key, \[\{ text, isVoice: true \}\]\)/.test(consoleServerSrc));
   {
-    const i = bridgeSrc.indexOf("url.pathname === '/api/socialV2/send-voice'");
-    const block = bridgeSrc.slice(i, i + 3200);
+    const i = consoleServerSrc.indexOf("url.pathname === '/api/socialV2/send-voice'");
+    const block = consoleServerSrc.slice(i, i + 3200);
     check('主动语音更新 lastAiReplyAt', i > 0 && /lastAiReplyAt/.test(block));
   }
   check('失败时报出 retcode', /发语音失败: \$\{body\.wording \|\| body\.retcode/.test(bridgeSrc));
   check('入站语音走本地 ASR', /async function transcribeIncomingVoice/.test(bridgeSrc) && /asrEngine\.transcribe/.test(bridgeSrc));
   check('SnowLuma 语音转 wav', /out_format: 'wav'/.test(bridgeSrc));
-  check('转写文本注入消息', /语音转文字：\$\{voiceTranscript\}/.test(bridgeSrc));
-  check('转写失败保留 [语音] 占位', /保留 \[语音\] 占位/.test(bridgeSrc));
+  check('转写文本注入消息', /语音转文字：\$\{voiceTranscript\}/.test(incomingSrc));
+  check('转写失败保留 [语音] 占位', /保留 \[语音\] 占位/.test(incomingSrc));
 }
 
 // ── 6. 控制台 ──
@@ -159,10 +164,10 @@ console.log('\n── 6. 控制台 ──');
   check('显示三种状态', /未启用|不可用/.test(html) && /pill g">可用/.test(html));
   check('说明可插拔语义', /未启用时不加载任何模型、不占显存/.test(html));
   check('有试听按钮', /id="ttsTest"/.test(html));
-  check('状态端点', /pathname === '\/api\/socialV2\/tts-status'/.test(bridgeSrc));
-  check('试听端点返回 wav', /pathname === '\/api\/socialV2\/tts-say'/.test(bridgeSrc) && /'content-type': 'audio\/wav'/.test(bridgeSrc));
+  check('状态端点', /pathname === '\/api\/socialV2\/tts-status'/.test(consoleServerSrc));
+  check('试听端点返回 wav', /pathname === '\/api\/socialV2\/tts-say'/.test(consoleServerSrc) && /'content-type': 'audio\/wav'/.test(consoleServerSrc));
   // 状态端点不能在 TTS 不可用时抛错
-  check('不可用时状态端点仍返回 200', /usable: !!\(st && st\.available && st\.enabled\)/.test(bridgeSrc));
+  check('不可用时状态端点仍返回 200', /usable: !!\(st && st\.available && st\.enabled\)/.test(consoleServerSrc));
 }
 
 // ── 6b. 主动发语音：工具 + 端点 + 提示词 ──
@@ -180,19 +185,19 @@ console.log('\n── 6b. 主动发语音 ──');
   check('工具受 sendVoice 开关控制', /tools\?\.sendVoice !== false/.test(mcpSrc));
   check('探测只看文件不启动进程', /function sovitsAvailable/.test(mcpSrc) && /existsSync/.test(mcpSrc));
 
-  check('桥接有 send-voice 端点', /pathname === '\/api\/socialV2\/send-voice'/.test(bridgeSrc));
-  check('端点要求 agent token', /发送语音必须携带 agent token/.test(bridgeSrc));
-  check('端点检查 sendVoice 开关', /v2ToolEnabled\('sendVoice'\)/.test(bridgeSrc));
-  check('端点检查 TTS 可用性', /语音合成不可用/.test(bridgeSrc));
-  check('端点限制字数', /语音最多 \$\{limitChars\} 字/.test(bridgeSrc));
-  check('端点限制每小时条数', /一小时最多 \$\{maxPerHour\} 条语音/.test(bridgeSrc));
-  check('端点拦链接/代码', /含链接或代码，念出来没用/.test(bridgeSrc));
+  check('桥接有 send-voice 端点', /pathname === '\/api\/socialV2\/send-voice'/.test(consoleServerSrc));
+  check('端点要求 agent token', /发送语音必须携带 agent token/.test(consoleServerSrc));
+  check('端点检查 sendVoice 开关', /v2ToolEnabled\('sendVoice'\)/.test(consoleServerSrc));
+  check('端点检查 TTS 可用性', /语音合成不可用/.test(consoleServerSrc));
+  check('端点限制字数', /语音最多 \$\{limitChars\} 字/.test(consoleServerSrc));
+  check('端点限制每小时条数', /一小时最多 \$\{maxPerHour\} 条语音/.test(consoleServerSrc));
+  check('端点拦链接/代码', /含链接或代码，念出来没用/.test(consoleServerSrc));
 
   // 提示词：能力必须写进去，否则模型不知道（就是这次的根因）
-  check('唤醒提示词写了语音能力', /【语音】你能发语音/.test(bridgeSrc));
-  check('提示词说明何时该用', /群友明确要听声音时/.test(bridgeSrc));
-  check('提示词禁止日常主动发', /日常聊天不要主动发/.test(bridgeSrc));
-  check('提示词要求失败时如实说', /如实说，改发文字/.test(bridgeSrc));
+  check('唤醒提示词写了语音能力', /【语音】你能发语音/.test(wakeSrc));
+  check('提示词说明何时该用', /群友明确要听声音时/.test(wakeSrc));
+  check('提示词禁止日常主动发', /日常聊天不要主动发/.test(wakeSrc));
+  check('提示词要求失败时如实说', /如实说，改发文字/.test(wakeSrc));
 
   // ── 作用域陷阱（2026-10-22 实际踩到，导致私聊完全不理人）──
   //
@@ -202,11 +207,11 @@ console.log('\n── 6b. 主动发语音 ──');
   // 表现为"发私聊完全不理人"。用静态断言挡住：voiceLine 那一行
   // 只能读 cfg，不许调 v2ToolEnabled。
   {
-    const i = bridgeSrc.indexOf('const voiceLine = ');
-    const line = i >= 0 ? bridgeSrc.slice(i, bridgeSrc.indexOf('\n', i)) : '';
+    const i = wakeSrc.indexOf('const voiceLine = ');
+    const line = i >= 0 ? wakeSrc.slice(i, wakeSrc.indexOf('\n', i)) : '';
     check('voiceLine 不调用 v2ToolEnabled（跨作用域会抛错）',
       line.length > 0 && !/v2ToolEnabled/.test(line), line.slice(0, 80));
-    check('voiceLine 直接读 cfg 配置', /cfg\.socialV2\?\.tools\?\.sendVoice !== false/.test(line));
+    check('voiceLine 直接读 cfg 配置', /deps\.cfg\.socialV2\?\.tools\?\.sendVoice !== false/.test(line));
   }
 
   const { TOOL_FLAGS, toolNamesOf } = await import('../src/tool-flags.js');
@@ -260,9 +265,9 @@ console.log('\n── 6c. 编码与依赖 ──');
 
   // 试听用的 <audio src=blob:> 与页面内 fetch(blob:) 需要 CSP 放行，
   // 否则表现为「按钮点了没反应」——实测两次都被 CSP 静默拦掉。
-  check('CSP 放行 media-src blob:（否则试听都是静音）', /media-src 'self' blob:/.test(bridgeSrc));
-  check('CSP 放行 connect-src blob:（页面内读回音频）', /connect-src 'self' blob:/.test(bridgeSrc));
-  check('CSP 仍限制 script-src 为 self', /script-src 'self'/.test(bridgeSrc));
+  check('CSP 放行 media-src blob:（否则试听都是静音）', /media-src 'self' blob:/.test(consoleServerSrc));
+  check('CSP 放行 connect-src blob:（页面内读回音频）', /connect-src 'self' blob:/.test(consoleServerSrc));
+  check('CSP 仍限制 script-src 为 self', /script-src 'self'/.test(consoleServerSrc));
 
   // 诊断默认可关，免得刷日志
   check('编码诊断默认关闭（QQB_TTS_DEBUG 才开）', /QQB_TTS_DEBUG/.test(py));
@@ -274,14 +279,14 @@ console.log('\n── 6d. 参数可编辑 ──');
   const setup = fs.readFileSync(path.join(root, 'scripts', 'setup-tts.mjs'), 'utf8');
 
   // 后端：保存 tts 子对象并逐项 clamp
-  check('config 接口接受 tts 子对象', /body\.tts && typeof body\.tts === 'object'/.test(bridgeSrc));
-  check('概率支持百分数写法（>1 折算）', /if \(p > 1\) p = p \/ 100/.test(bridgeSrc));
-  check('概率 clamp 到 0~1', /Math\.min\(1, Math\.max\(0, Math\.round\(p \* 1000\) \/ 1000\)\)/.test(bridgeSrc));
-  check('上限 clamp 到 0~60', /Math\.min\(60, Math\.max\(0, Math\.round\(n\)\)\)/.test(bridgeSrc));
-  check('字数 clamp 到 10~300', /Math\.min\(300, Math\.max\(10, Math\.round\(n\)\)\)/.test(bridgeSrc));
-  check('enabled 只接受布尔', /t\.enabled = t\.enabled === true/.test(bridgeSrc));
+  check('config 接口接受 tts 子对象', /body\.tts && typeof body\.tts === 'object'/.test(consoleServerSrc));
+  check('概率支持百分数写法（>1 折算）', /if \(p > 1\) p = p \/ 100/.test(consoleServerSrc));
+  check('概率 clamp 到 0~1', /Math\.min\(1, Math\.max\(0, Math\.round\(p \* 1000\) \/ 1000\)\)/.test(consoleServerSrc));
+  check('上限 clamp 到 0~60', /Math\.min\(60, Math\.max\(0, Math\.round\(n\)\)\)/.test(consoleServerSrc));
+  check('字数 clamp 到 10~300', /Math\.min\(300, Math\.max\(10, Math\.round\(n\)\)\)/.test(consoleServerSrc));
+  check('enabled 只接受布尔', /t\.enabled = t\.enabled === true/.test(consoleServerSrc));
   check('模型路径/音色预设只做字符串化（不校验存在性）',
-    /for \(const k of \['dir'[\s\S]{0,300}'voiceId', 'weightsId', 'refMode'\]\)/.test(bridgeSrc));
+    /for \(const k of \['dir'[\s\S]{0,300}'voiceId', 'weightsId', 'refMode'\]\)/.test(consoleServerSrc));
 
   // **0 是合法值**：maxPerHour=0 表示"不自动发"，不能被 || 回落成默认 3
   // （实测踩到：设成 0 后状态接口显示 3，看着像保存失败）
@@ -290,9 +295,9 @@ console.log('\n── 6d. 参数可编辑 ──');
   check('不再用 `Number(x) || 默认值` 读字数', !/Number\(t\.maxChars\) \|\| 140/.test(bridgeSrc));
 
   // 状态接口下发可编辑字段
-  check('状态接口返回 editable', /editable: \{/.test(bridgeSrc));
+  check('状态接口返回 editable', /editable: \{/.test(consoleServerSrc));
   check('editable 含全部 9 项',
-    /probab|maxPerHour/.test(bridgeSrc) && /cpuThreads/.test(bridgeSrc) && /voiceName/.test(bridgeSrc));
+    /probab|maxPerHour/.test(consoleServerSrc) && /cpuThreads/.test(consoleServerSrc) && /voiceName/.test(consoleServerSrc));
 
   // 前端：表单 + 两个保存按钮
   check('有参数表单', /id="ttsPProbability"/.test(html) && /id="ttsPMaxPerHour"/.test(html)
@@ -313,16 +318,16 @@ console.log('\n── 6d. 参数可编辑 ──');
     /data-tts-pick="dir" data-tts-target="ttsPDir"/.test(html)
     && /data-tts-pick="file" data-tts-target="ttsPGptModel"/.test(html)
     && /data-tts-pick="file" data-tts-target="ttsPSovitsModel"/.test(html));
-  check('有原生选择端点', /'\/api\/socialV2\/tts\/pick-path'/.test(bridgeSrc));
+  check('有原生选择端点', /'\/api\/socialV2\/tts\/pick-path'/.test(consoleServerSrc));
   check('用 PowerShell -STA 弹 WinForms 对话框',
-    /'-STA'/.test(bridgeSrc)
-    && /System\.Windows\.Forms\.OpenFileDialog/.test(bridgeSrc)
-    && /System\.Windows\.Forms\.FolderBrowserDialog/.test(bridgeSrc));
+    /'-STA'/.test(consoleServerSrc)
+    && /System\.Windows\.Forms\.OpenFileDialog/.test(consoleServerSrc)
+    && /System\.Windows\.Forms\.FolderBrowserDialog/.test(consoleServerSrc));
   check('路径经 UTF-8 无 BOM 临时文件回传（避免中文被 GBK 解码）',
-    /UTF8Encoding\(\$false\)/.test(bridgeSrc));
+    /UTF8Encoding\(\$false\)/.test(consoleServerSrc));
   check('只接受 file/dir 两种模式（不拼接用户输入）',
-    /body\.kind === 'dir' \? 'dir' : 'file'/.test(bridgeSrc));
-  check('同时只允许一个选择窗口', /pickPathBusy/.test(bridgeSrc));
+    /body\.kind === 'dir' \? 'dir' : 'file'/.test(consoleServerSrc));
+  check('同时只允许一个选择窗口', /deps\.live\.pickPathBusy/.test(consoleServerSrc));
   check('选中后标记 edited（不被 60 秒轮询冲掉）', /input\.dataset\.edited = '1'/.test(html));
 
   // 2026-10-22 已知问题：控制台的权重只参与探测、不参与加载——
@@ -339,7 +344,7 @@ console.log('\n── 6d. 参数可编辑 ──');
     /"t2s": os\.path\.basename/.test(pySrc)
     && /"version": str\(getattr\(cfg, "version"/.test(pySrc));
   check('状态接口下发实际权重与版本',
-    /gptModel: st\?\.gptModel/.test(bridgeSrc) && /modelVersion: st\?\.version/.test(bridgeSrc));
+    /gptModel: st\?\.gptModel/.test(consoleServerSrc) && /modelVersion: st\?\.version/.test(consoleServerSrc));
   check('控制台显示"实际权重"', /实际权重/.test(html));
 }
 
@@ -374,8 +379,8 @@ console.log('\n── 6b. 韵律参数与标点规范化 ──');
     /target_rms = 10 \*\* \(-20\.0 \/ 20\.0\)/.test(py)
     && /peak_limit = 10 \*\* \(-1\.5 \/ 20\.0\)/.test(py));
   check('bridge 每次现读韵律参数',
-    /function ttsSpeechParams\(\)/.test(bridge) && /params: ttsSpeechParams\(\)/.test(bridge));
-  check('配置 clamp 用小数（不会取整）', /clampDec\('speed', 0\.8, 1\.2, 1\.0\)/.test(bridge));
+    /function ttsSpeechParams\(\)/.test(bridge) && /params: ttsSpeechParams\(\)/.test(qqSendSrc));
+  check('配置 clamp 用小数（不会取整）', /clampDec\('speed', 0\.8, 1\.2, 1\.0\)/.test(consoleServerSrc));
   check('控制台有语速/停顿/温度/音量和标点开关',
     /id="ttsPSpeed"/.test(html) && /id="ttsPFragment"/.test(html)
     && /id="ttsPTemperature"/.test(html) && /id="ttsPVolume"/.test(html)

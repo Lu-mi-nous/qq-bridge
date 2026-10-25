@@ -19,6 +19,93 @@ export function nowIso() {
   return new Date().toISOString();
 }
 
+/** 本地缓存文件名：优先 md5，没有 md5 时用 id 的 sha1 前缀。 */
+export function stickerCacheBase(entry) {
+  const md5 = String(entry?.md5 || '').trim().toLowerCase();
+  if (/^[a-f0-9]{16,64}$/.test(md5)) return md5;
+  return crypto.createHash('sha1').update(String(entry?.id || entry?.url || '')).digest('hex').slice(0, 20);
+}
+
+export function stickerCacheJsonPath(dir, entry) {
+  return path.join(dir, stickerCacheBase(entry) + '.json');
+}
+
+export function readStickerCacheRecord(dir, entry) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(stickerCacheJsonPath(dir, entry), 'utf8'));
+    return raw && typeof raw === 'object' ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 写本地缓存标注（sticker-cache/<md5>.json）。
+ * preserveLocal=true 时保留已有 localNote/tags/usage/extra（用户手改的标注不被同步覆盖）；
+ * AI 通过 qq_sticker_note 更新时传 false，以 state 里的最新值为准。
+ */
+export function writeStickerCacheRecord(dir, entry, opts = {}) {
+  const e = normalizeStickerEntry(entry);
+  if (!e) return null;
+  const file = stickerCacheJsonPath(dir, e);
+  const old = readStickerCacheRecord(dir, e) || {};
+  const preserveLocal = opts.preserveLocal !== false;
+  const record = {
+    ...old,
+    version: 1,
+    id: e.id,
+    md5: e.md5,
+    url: e.url,
+    desc: e.desc,
+    source: e.source,
+    useCount: e.useCount,
+    lastUsedAt: e.lastUsedAt,
+    lastContext: e.lastContext,
+    localNote: preserveLocal ? (old.localNote || e.localNote) : e.localNote,
+    tags: preserveLocal ? (Array.isArray(old.tags) ? old.tags : e.tags) : e.tags,
+    usage: preserveLocal ? (old.usage || e.usage) : e.usage,
+    cachedAt: old.cachedAt || nowIso(),
+    updatedAt: nowIso(),
+    image: opts.image || old.image || null,
+    extra: old.extra && typeof old.extra === 'object' ? old.extra : {},
+  };
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = file + '.' + process.pid + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(record, null, 2), { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(tmp, file);
+    return record;
+  } catch {
+    return null;
+  }
+}
+
+/** 为所有表情生成/更新本地缓存标注；单个失败不影响其它。 */
+export function syncStickerCache(entries, dir) {
+  let written = 0;
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (writeStickerCacheRecord(dir, entry)) written++;
+  }
+  return written;
+}
+
+/** 把表情图片写入缓存目录，并把图片元信息写进同名的 .json 标注。 */
+export function writeStickerCacheImage(dir, entry, buffer, meta = {}) {
+  const mime = String(meta.mimeType || '').toLowerCase();
+  const ext = mime.includes('png') ? 'png' : mime.includes('gif') ? 'gif' : mime.includes('webp') ? 'webp' : 'jpg';
+  const base = stickerCacheBase(entry);
+  const file = path.join(dir, base + '.' + ext);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, buffer);
+  } catch {
+    return null;
+  }
+  return writeStickerCacheRecord(dir, entry, {
+    preserveLocal: true,
+    image: { file: path.basename(file), mimeType: mime || 'image/jpeg', bytes: buffer.length, width: Number(meta.width) || 0, height: Number(meta.height) || 0 }
+  });
+}
 export function normalizeStickerEntry(raw) {
   const entry = raw && typeof raw === 'object' ? raw : {};
   const id = String(entry.id || entry.emoji_id || entry.resId || '').trim();
@@ -127,7 +214,8 @@ export function findSticker(entries, ref) {
 }
 
 // 格式化给 AI 看的表情列表；query 会匹配 desc/localNote/tags/usage/id/md5。
-export function formatStickerList(entries, query = '', limit = 48) {
+export function formatStickerList(entries, query = '', limit = 48, opts = {}) {
+  const { cacheDir = '', readLocalCache = false } = opts;
   const list = (Array.isArray(entries) ? entries : []).map(normalizeStickerEntry).filter(Boolean);
   const q = String(query ?? '').trim().toLowerCase();
   const filtered = q
@@ -137,19 +225,26 @@ export function formatStickerList(entries, query = '', limit = 48) {
       })
     : list;
   const max = Math.max(1, Math.min(500, Number(limit) || 48));
-  const items = filtered.slice(0, max).map((e) => ({
-    id: e.id,
-    resId: e.resId,
-    md5: e.md5,
-    url: e.url,
-    desc: e.desc || '',
-    localNote: e.localNote || '',
-    tags: e.tags || [],
-    usage: e.usage || '',
-    useCount: e.useCount || 0,
-    lastUsedAt: e.lastUsedAt || 0,
-    source: e.source || 'qq'
-  }));
+  const items = filtered.slice(0, max).map((e) => {
+    const item = {
+      id: e.id,
+      resId: e.resId,
+      md5: e.md5,
+      url: e.url,
+      desc: e.desc || '',
+      localNote: e.localNote || '',
+      tags: e.tags || [],
+      usage: e.usage || '',
+      useCount: e.useCount || 0,
+      lastUsedAt: e.lastUsedAt || 0,
+      source: e.source || 'qq'
+    };
+    if (readLocalCache && cacheDir) {
+      const cache = readStickerCacheRecord(cacheDir, e);
+      if (cache) item.cache = cache;
+    }
+    return item;
+  });
   return {
     total: list.length,
     matched: filtered.length,
@@ -165,19 +260,26 @@ export function formatStickerList(entries, query = '', limit = 48) {
 // （10/16~10/20 连续 5 天 send_sticker=0，同期 send_poke 每天 10 次，说明不是能力问题）。
 // 现在每条直接带一个可复制的 md5（比整条 emoji_id 短、且 send_sticker 接受），
 // 让"想发"到"发出"之间不再有额外往返。URL 仍不暴露（那是长串，会撑爆上下文）。
-export function buildStickerContext(entries, max = 8) {
+export function buildStickerContext(entries, max = 8, opts = {}) {
+  const { cacheDir = '', readLocalCache = false } = opts;
   const list = (Array.isArray(entries) ? entries : []).map(normalizeStickerEntry).filter(Boolean);
   if (!list.length) return '';
   const top = [...list]
     .sort((a, b) => (b.useCount || 0) - (a.useCount || 0) || ((b.desc || b.localNote) ? 1 : 0) - ((a.desc || a.localNote) ? 1 : 0))
     .slice(0, Math.max(1, Math.min(30, Number(max) || 8)));
   const lines = top.map((e) => {
-    const label = e.desc || e.localNote || '（无备注，可先看图）';
-    const extra = e.tags?.length ? ` [${e.tags.join('/')}]` : '';
+    const cache = readLocalCache && cacheDir ? readStickerCacheRecord(cacheDir, e) : null;
+    const note = cache?.localNote || e.localNote;
+    const usage = cache?.usage || e.usage;
+    const label = readLocalCache
+      ? ([e.desc, note, usage].filter(Boolean).join(' / ') || '（无备注，可先看图）')
+      : (e.desc || e.localNote || '（无备注，可先看图）');
+    const tags = readLocalCache && Array.isArray(cache?.tags) ? [...new Set([...(e.tags || []), ...cache.tags])] : (e.tags || []);
+    const extra = tags.length ? ` [${tags.join('/')}]` : '';
     const used = e.useCount ? `（用过${e.useCount}次）` : '';
     // 优先给 md5（短），没有就退回整条 id。
     const ref = e.md5 || e.id || '';
-    return `- ${label}${extra}${used}${ref ? `  id=${ref}` : ''}`;
+    return `- ${label.slice(0, 120)}${extra}${used}${ref ? `  id=${ref}` : ''}`;
   });
   return `【可用表情包】你的 QQ 收藏表情里有 ${list.length} 个表情（以下为常用/有备注的 ${top.length} 个，可直接把 id 传给 qq_send_sticker，无需再 list）：\n${lines.join('\n')}`;
 }

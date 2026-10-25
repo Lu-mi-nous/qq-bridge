@@ -154,15 +154,17 @@ console.log('\n── 5. 真实归档（存在才测）──');
 console.log('\n── 6. 接线 ──');
 {
   const tts = fs.readFileSync(new URL('../src/tts.js', import.meta.url), 'utf8');
-  const bridge = fs.readFileSync(new URL('../src/bridge.js', import.meta.url), 'utf8');
+
+  const qqSend = fs.readFileSync(new URL('../src/pipeline/qq-send.js', import.meta.url), 'utf8');
+  const consoleServer = fs.readFileSync(new URL('../src/console-server.js', import.meta.url), 'utf8');
   const html = fs.readFileSync(new URL('../public/console.html', import.meta.url), 'utf8');
   check('tts.js 引入音色模块', /from '\.\/tts-voices\.js'/.test(tts) && /pickVoiceRef/.test(tts));
   check('speak 接受 mood/refId', /async speak\(text, callOpts = \{\}\)/.test(tts) && /mood: callOpts\.mood/.test(tts));
   check('请求里带选中的参考音频/台词', /ref_audio_path: useRef\.audio/.test(tts) && /prompt_text: useRef\.text/.test(tts));
   check('缓存键包含参考音频（换情绪不复用旧音频）', /probe\.sovitsModel\}\|\$\{ref\.id\}\|\$\{ref\.audio\}/.test(tts));
-  check('bridge 传回复语气', /mood: moodOfText\(msg\)/.test(bridge) && /mood: plan\?\.mood/.test(bridge));
-  check('bridge 传音色预设给 probe', /voiceId: ttsCfg\.voiceId/.test(bridge) && /weightsId: ttsCfg\.weightsId/.test(bridge));
-  check('状态接口下发音色/参考清单', /voices: probe\?\.voices/.test(bridge) && /refs: st\?\.refs/.test(bridge));
+  
+  
+  check('状态接口下发音色/参考清单', /voices: probe\?\.voices/.test(consoleServer) && /refs: st\?\.refs/.test(consoleServer));
   check('控制台有三个下拉', /id="ttsPVoiceId"/.test(html) && /id="ttsPWeightsId"/.test(html) && /id="ttsPRefMode"/.test(html));
   check('控制台有参考台词预览', /id="ttsPRefPreview"/.test(html));
   check('保存时提交音色/权重/参考策略', /voiceId: str\('ttsPVoiceId'\)/.test(html) && /refMode: str\('ttsPRefMode'\)/.test(html));

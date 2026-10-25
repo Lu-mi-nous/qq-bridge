@@ -119,7 +119,7 @@ QQ 消息 ──► SnowLuma（OneBot v11）──► 桥接进程 ──► DSH
 ### 第 2 步 · 获取代码并安装依赖
 
 ```bash
-git clone https://github.com/Lu-mi-nous/qq-bridge.git
+git clone https://github.com/群友U/qq-bridge.git
 cd qq-bridge
 npm install
 ```

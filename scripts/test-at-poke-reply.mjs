@@ -1,3 +1,5 @@
+import { WAKE_PRIORITY } from '../src/pipeline/wake.js';
+import { createEventHarness, sessionEvent, assistantMessage, turnEnd } from './helpers/dsh-event-harness.mjs';
 // 回归测试：「@ 它 / 戳它有时候不回」的三个成因。
 //
 // 用户反馈（2026-10-20）：「现在@它或者戳它依旧有时候不回复」。
@@ -23,23 +25,24 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const src = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
+const wakeSrc = fs.readFileSync(path.join(root, 'src/pipeline/wake.js'), 'utf8');
 
 console.log('── 1. 拍一拍区分「拍你」和「拍别人」──');
 {
   check('有 pokeSelf 唤醒原因', /scheduleWakeV2\(key, targetIsSelf \? 'pokeSelf' : 'poke'\)/.test(src));
-  check('pokeSelf 在优先级表里', /pokeSelf:\s*85/.test(src));
-  check('poke 优先级低于普通消息（拍别人不抢戏）', /poke:\s*35/.test(src));
+  check('pokeSelf 在优先级表里', WAKE_PRIORITY.pokeSelf === 85);
+  check('poke 优先级低于普通消息（拍别人不抢戏）', WAKE_PRIORITY.poke === 35);
   check('pokeSelf 优先级高于 poke', (() => {
-    const self = Number((/pokeSelf:\s*(\d+)/.exec(src) || [])[1]);
-    const other = Number((/(?:^|\s)poke:\s*(\d+)/.exec(src) || [])[1]);
+    const self = Number((/pokeSelf:\s*(\d+)/.exec(wakeSrc) || [])[1]);
+    const other = Number((/(?:^|\s)poke:\s*(\d+)/.exec(wakeSrc) || [])[1]);
     return self > other && other > 0;
   })());
 
   // 提示词：拍你 -> 必须回应；拍别人 -> 不必回
-  const selfBlock = /reason === 'pokeSelf'\) \{[\s\S]{0,500}?\n    \}/.exec(src)?.[0] ?? '';
+  const selfBlock = /reason === 'pokeSelf'\) \{[\s\S]{0,500}?\n    \}/.exec(wakeSrc)?.[0] ?? '';
   check('pokeSelf 提示词明确"必须回应"', /必须回应/.test(selfBlock), selfBlock.slice(0, 60));
   check('pokeSelf 提示词给出最小回应方式（回拍/短句）', /qq_send_poke/.test(selfBlock) && /诶？|干嘛|在/.test(selfBlock));
-  const otherBlock = /reason === 'poke'\) \{[\s\S]{0,400}?\n    \}/.exec(src)?.[0] ?? '';
+  const otherBlock = /reason === 'poke'\) \{[\s\S]{0,400}?\n    \}/.exec(wakeSrc)?.[0] ?? '';
   check('poke 提示词明确"不是拍你"', /不是拍你/.test(otherBlock));
   check('poke 提示词允许不说话', /不必每次都说话|安静收尾/.test(otherBlock));
   check('不再出现"可能拍了你，也可能拍了别人"的模糊措辞',
@@ -49,20 +52,26 @@ console.log('── 1. 拍一拍区分「拍你」和「拍别人」──');
 console.log('\n── 2. 繁忙期间的唤醒原因必须持久化 ──');
 {
   // 定位 saveSocialV2State 的白名单块
-  const s = src.indexOf('function saveSocialV2State');
-  const block = src.slice(s, s + 4000);
+  const storeSrc=fs.readFileSync(path.join(root,'src/pipeline/social-state.js'),'utf8');
+  const s=storeSrc.indexOf('function saveSocialV2State');
+  const block=storeSrc.slice(s,s+5000);
   check('pendingWakeReasons 进入持久化白名单', /pendingWakeReasons:\s*Array\.isArray\(st\.pendingWakeReasons\)/.test(block));
   check('只保留对象项且上限 20 条（与内存队列一致）', /slice\(-20\)/.test(block));
   check('赋值处仍在（生产端）', /queuePendingWakeReasonV2\(st, key, reason, seq\)/.test(src)
     && /st\.pendingWakeReasons\.push\(\{ reason, seq: nseq, snapshot:/.test(src));
-  check('补发处仍在（消费端）', /补发繁忙期间积压的唤醒/.test(src));
+  const events = createEventHarness({ mode: 'reserved2' });
+  const st = events.deps.getSocialV2State('group:1');
+  st.pendingWakeReasons = [{ reason: 'atMention', seq: 9 }];
+  await events.turn(1);
+  check('补发会消费队列并保存状态', st.pendingWakeReasons.length === 0
+    && events.get('scheduleWake').length === 1 && events.get('save').length > 0);
 }
 
 console.log('\n── 3. 收尾提醒不能把没回的 @ 带走 ──');
 {
   const s = src.indexOf('function buildWakeReminderPromptV2');
   const block = src.slice(s, s + 1800);
-  check('提醒里注入角色卡正文', /currentRoleHintV2\(\)/.test(block));
+  check('提醒里注入角色卡正文', /currentRoleHintV2\([^)]*\)/.test(block));
   check('不再只给"请调用 qq_get_prompt"', !/完整角色卡请调用 qq_get_prompt 查看/.test(block));
   check('有未读时先要求回应再收尾', /先别急着收尾/.test(block));
   check('提醒里点明"有人@你/问你/拍你就先回应"', /先回应/.test(block));
@@ -73,9 +82,9 @@ console.log('\n── 3b. 「谁拍了你」必须出现在此刻状态里 ─�
   // 实测证据（state/qq-activity.log 04:36~04:39）：连续 5 次「戳了戳 你」，
   // 每一轮模型只输出"这轮先到这儿"就收尾 —— 因为它压根没在状态里看到"有人拍你"。
   // findCallersV2 刻意排除拍一拍（怕逼它回应），但 pokeSelf 场景必须单独point出来。
-  const s = src.indexOf('const pokeSelfs');
+  const s = wakeSrc.indexOf('const pokeSelfs');
   // 这一段的文案会随提示词迭代变长，别用太窄的固定窗口（曾经 700 字就会漏掉后半句）。
-  const block = src.slice(s, s + 2000);
+  const block = wakeSrc.slice(s, s + 2000);
   check('状态里单独统计"拍你"的事件', s > 0 && /poke\?\.targetIsSelf/.test(block));
   check('写明是谁拍的', /有人戳了你（\$\{who\}）/.test(block) || /有人戳了你/.test(block));
   check('给出可执行的回应方式（含可照抄的目标）', /targetUserId="latest"/.test(block) && /回一句话/.test(block), block.slice(0, 120));
@@ -89,11 +98,15 @@ console.log('\n── 3b. 「谁拍了你」必须出现在此刻状态里 ─�
 
 console.log('\n── 4. @ 本身的唤醒链路仍然完整 ──');{
   check('atMention 判定仍在', /if \(tr\.atMention\) \{[\s\S]{0,220}?return 'atMention'/.test(src));
-  check('@ 的优先级最高（仅次于私聊）', /atMention:\s*90/.test(src));
+  check('@ 的优先级最高（仅次于私聊）', WAKE_PRIORITY.atMention === 90);
   check('高优先级会缩短合并窗口等待', /高优先级，已缩短等待/.test(src));
-  check('繁忙时会记录并在回合结束按优先级补发', /按优先级选取/.test(src));
+  const events = createEventHarness({ mode: 'reserved2' });
+  const pendingState = events.deps.getSocialV2State('group:1');
+  pendingState.pendingWakeReasons = [{ reason: 'poke', seq: 1 }, { reason: 'atMention', seq: 2 }];
+  await events.turn(1);
+  check('繁忙时会记录并在回合结束按优先级补发', events.get('scheduleWake')[0]?.[2] === 'atMention');
 
-  // 2026-10-23 群 100001006：anyMessage 放在最前面，把 owner 的 @ 记成
+  // 2026-10-23 群 100002005：anyMessage 放在最前面，把 owner 的 @ 记成
   // anyMessage@seq7064，随后连续「唤醒频率超限，跳过」——@ 被自己的兜底规则饿死。
   const start = src.indexOf('function evaluateWakeTriggerV2');
   const fn = src.slice(start, start + 3200);
@@ -132,7 +145,7 @@ console.log('\n── 5. 唤醒频率限流不能饿死 @ / 戳你 ──');
   check('跳过日志标注"低优先级"以便区分', /低优先级）/.test(block));
 
   // 阈值必须真的覆盖 @ 和 pokeSelf
-  const prio = (name) => Number((new RegExp(`${name}:\\s*(\\d+)`).exec(src) || [])[1] || 0);
+  const prio = (name) => Number((new RegExp(`${name}:\\s*(\\d+)`).exec(wakeSrc) || [])[1] || 0);
   check(`atMention(${prio('atMention')}) >= 75`, prio('atMention') >= 75);
   check(`pokeSelf(${prio('pokeSelf')}) >= 75`, prio('pokeSelf') >= 75);
   check(`private(${prio('private')}) >= 75`, prio('private') >= 75);

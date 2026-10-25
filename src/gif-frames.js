@@ -23,8 +23,7 @@ function resolveBinary(name) {
   const exts = process.platform === 'win32' ? ['.exe', ''] : [''];
   const dirs = [
     ...String(process.env.PATH ?? '').split(path.delimiter),
-    process.env.FFMPEG_DIR,
-    'C:\\Program Files\\ffmpeg\\bin',
+    'C:\\Program Files\\ffmpeg-6.1.1-essentials_build\\bin',
     'C:\\ffmpeg\\bin',
     '/usr/bin',
     '/usr/local/bin',

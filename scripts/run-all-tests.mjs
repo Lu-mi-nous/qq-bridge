@@ -24,8 +24,9 @@ const scriptsDir = path.join(root, 'scripts');
 //     这类测试自己的文件头也写了「依赖真实网络；无网络时相关用例会失败」。
 const NEEDS_SERVICE = [
   { re: /^test-vision|^test-local-|^test-model-route|^test-onebot-connection|^test-mcp-/, hint: '需要 DSH / 网关 / SnowLuma / 测试图片在跑' },
-  { re: /^test-console\.mjs$/, hint: '需要桥接已在 127.0.0.1:3100 运行（会读写真实角色/白名单）' },
   { re: /^test-image-query|^test-pixiv|^test-yandere|^test-image-lib|^test-image-source|^test-artist-search|^test-group-images|^test-reverse-search/, hint: '依赖真实图站 API（上游可能被 Cloudflare 拦或限流）' },
+  // test-console 打的是运行中桥接的 http://127.0.0.1:3100，不是当前目录的代码。
+  { re: /^test-console\.mjs$/, hint: '需要桥接本体在 127.0.0.1:3100 运行' },
 ];
 
 const files = fs.readdirSync(scriptsDir).filter((f) => /^test-.*\.mjs$/.test(f)).sort();

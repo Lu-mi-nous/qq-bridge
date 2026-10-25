@@ -34,7 +34,7 @@ const provs = await call('llm.providers');
 console.log('displayName now:', JSON.stringify(provs.providers.find((p) => p.provider === 'local')?.displayName));
 
 // 2. 建会话，分别用 off / 不传 effort 测试
-const created = await call('session.create', { cwd: path.join(ROOT, 'state', 'local-provider-test') });
+const created = await call('session.create', { cwd: 'E:\\Downloads\\qq-bridge-main\\state\\local-provider-test' });
 const sessionId = created.sessionId;
 console.log('会话:', sessionId);
 

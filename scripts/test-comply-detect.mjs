@@ -1,36 +1,7 @@
 // 一次性回归：验证「群友点单」检测逻辑（不写状态、不联网）
-// 直接从 bridge.js 抽出正则与判定函数求值，保证测的是真实代码。
-import fs from 'node:fs';
-
-const src = fs.readFileSync(new URL('../src/bridge.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-
-function grabConst(name) {
-  const m = src.match(new RegExp(`const ${name} = /[^\\n]*/[gimsuy]*;`));
-  if (!m) throw new Error('const not found: ' + name);
-  return m[0];
-}
-// 抽出整个函数体（到下一个「\n  }」为止，这两个函数内部没有嵌套的同缩进块）
-function grabFn(name) {
-  const start = src.indexOf(`function ${name}(`);
-  if (start < 0) throw new Error('fn not found: ' + name);
-  const end = src.indexOf('\n  }\n', start);
-  if (end < 0) throw new Error('fn end not found: ' + name);
-  return src.slice(start, end + 4);
-}
-
-const code = [
-  grabConst('COMPLY_REQUEST_RE'),
-  grabConst('COMPLY_ARTIFACT_RE'),
-  grabConst('COMPLY_NEGATIVE_RE'),
-  grabConst('COMPLY_IMPERATIVE_RE'),
-  grabConst('COMPLY_SELF_DESC_RE'),
-  grabConst('COMPLY_EXPLICIT_RE'),
-  grabFn('isAimedAtSelfV2'),
-  grabFn('isContentRequestV2'),
-].join('\n');
-
-// selfNickname 在真实代码里是闭包变量，这里作为参数注入
-const f = new Function('selfNickname', `${code}\nreturn { isContentRequestV2, isAimedAtSelfV2 };`)('dsh');
+// 直接调用真实导出的点单策略。
+import { createContentRequestPolicy } from '../src/pipeline/content-request.js';
+const f = createContentRequestPolicy({ getSelfNickname: () => 'dsh' });
 
 const atSelf = { message: [{ type: 'at', data: { qq: '999' } }], self_id: '999' };
 const atOther = { message: [{ type: 'at', data: { qq: '123' } }], self_id: '999' };
@@ -47,7 +18,7 @@ const cases = [
   ['写个 python 脚本', none, false, true],    // 祈使句起手
   ['帮我改改这段', none, false, true],
   // 不该命中的
-  ['@群友T1 帮我写个文案', atOther, false, false], // 明确冲着别人
+  ['@群友V 帮我写个文案', atOther, false, false], // 明确冲着别人
   ['哈哈哈哈', atSelf, false, false],
   ['今天天气不错', atSelf, false, false],
   ['这个个别产品挺特别', atSelf, false, false],  // 裸「别」不误伤

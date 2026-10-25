@@ -16,7 +16,7 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const src = fs.readFileSync(path.join(root, 'src', 'cache-manager.js'), 'utf8');
-const bridgeSrc = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
+const bridgeSrc = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
 const { collectCacheItems, summarizeCache, purgeCache, humanBytes, sizeOf, CACHE_GROUPS } =

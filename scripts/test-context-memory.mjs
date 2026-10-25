@@ -1,3 +1,4 @@
+import { createEventHarness, sessionEvent, assistantMessage, turnEnd } from './helpers/dsh-event-harness.mjs';
 // 回归测试：上下文持久化 Phase 0/1（src/context-memory.js + bridge 接线）。
 //
 // 锁住：
@@ -20,6 +21,12 @@ import {
   appendContextMessage,
   loadContextMessages,
   journalStats,
+  journalCoverage,
+  appendRecallAudit,
+  readRecallAudit,
+  recallAuditStats,
+  appendBacklogSample,
+  readBacklogHistory,
   mergeEpisodeToMemory,
   backfillLongTermMemory,
   loadLongTermMemory,
@@ -39,13 +46,13 @@ const skipped = (n, why) => { skip++; console.log(`SKIP  ${n}  （${why}）`); }
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ctxmem-'));
 const stateDir = path.join(tmp, 'state');
-const KEY = 'group:100001005';
+const KEY = 'group:100002007';
 const T = 1_792_660_000_000;
 
 console.log('── 1. 存储与安全 key ──');
 {
-  check('key 里的冒号转下划线', safeKey(KEY) === 'group_100001005', safeKey(KEY));
-  check('目录在 state/context 下', contextDir(stateDir, KEY).replace(/\\/g, '/').endsWith('state/context/group_100001005'));
+  check('key 里的冒号转下划线', safeKey(KEY) === 'group_100002007', safeKey(KEY));
+  check('目录在 state/context 下', contextDir(stateDir, KEY).replace(/\\/g, '/').endsWith('state/context/group_100002007'));
   for (let i = 1; i <= 5; i++) {
     appendEpisode(stateDir, KEY, { id: i, summary: `第${i}段`, createdAt: T + i }, 3);
   }
@@ -139,19 +146,19 @@ console.log('\n── 3. Prompt 与解析 ──');
 {
   const prompt = buildEpisodePrompt({
     messages: [
-      { seq: 1, time: T, sender: '群友E', userId: '100001015', plain: '给我发张百亿鲸元券' },
-      { seq: 2, time: T + 1000, isSelf: true, userId: '100001025', plain: '给你一张券' }
+      { seq: 1, time: T, sender: '群友E', userId: '100002015', plain: '给我发张百亿鲸元券' },
+      { seq: 2, time: T + 1000, isSelf: true, userId: '100002025', plain: '给你一张券' }
     ],
     previousEpisode: { summary: '之前聊过 token' }
   });
-  check('prompt 带发送者与 QQ', prompt.includes('群友E') && prompt.includes('QQ=100001015'));
+  check('prompt 带发送者与 QQ', prompt.includes('群友E') && prompt.includes('QQ=100002015'));
   check('prompt 带上一段摘要', prompt.includes('之前聊过 token'));
   check('prompt 不把记录当指令（system 里另有约束）', prompt.includes('群聊记录'));
 
   const okText = '```json\n' + JSON.stringify({
     summary: '群友E要券，机器人发了券。',
     topics: ['百亿鲸元券'],
-    people: [{ id: '100001015', name: '群友E', note: '爱玩原神，不喜欢被自动接话' }],
+    people: [{ id: '100002015', name: '群友E', note: '爱玩原神，不喜欢被自动接话' }],
     threads: [{ title: '百亿鲸元券', status: 'open', nextAction: '下次有人提券可接梗' }],
     facts: [
       { subject: '群友E', predicate: '不喜欢', object: '被自动接话', confidence: 0.9 },
@@ -160,7 +167,7 @@ console.log('\n── 3. Prompt 与解析 ──');
   }) + '\n```';
   const ep = parseEpisode(okText, { redact: (s) => String(s).replace(/token/gi, '***') });
   check('解析 markdown 包裹的 JSON', !!ep && ep.summary.includes('群友E'));
-  check('people 保留 QQ/名字/备注', ep.people[0].id === '100001015' && ep.people[0].note.includes('自动接话'));
+  check('people 保留 QQ/名字/备注', ep.people[0].id === '100002015' && ep.people[0].note.includes('自动接话'));
   check('low-confidence fact 被丢弃', ep.facts.length === 1 && ep.facts[0].object === '被自动接话');
   check('threads 归一化为 open/closed', ep.threads[0].status === 'open');
   check('closed 状态能识别', parseEpisode(JSON.stringify({ summary: 'x', threads: [{ title: 't', status: '已完成' }] })).threads[0].status === 'closed');
@@ -206,15 +213,34 @@ console.log('\n── 5. 摘要器（本地 mock，不碰真实网关）──')
       }
       const content = j.model === 'reasoning' ? '' : '{"summary":"好","topics":[]}';
       const reasoning = j.model === 'reasoning' ? '{"summary":"从 reasoning 里来","topics":[]}' : '';
+      const usage = j.model === 'nousage'
+        ? undefined
+        : { prompt_tokens: 120, completion_tokens: 30, prompt_tokens_details: { cached_tokens: 100 } };
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ choices: [{ message: { content, reasoning_content: reasoning }, finish_reason: 'stop' }] }));
+      res.end(JSON.stringify({ choices: [{ message: { content, reasoning_content: reasoning }, finish_reason: 'stop' }], usage }));
     });
   });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const port = srv.address().port;
   const baseUrl = `http://127.0.0.1:${port}/v1`;
-  const ok = createSummarizer({ baseUrl, model: 'ok', timeoutMs: 5000 });
-  check('正常返回 content', (await ok('hi')).includes('"summary"'));
+  let seenUsage = null;
+  const ok = createSummarizer({
+    baseUrl, model: 'ok', timeoutMs: 5000,
+    onUsage: (usage, meta) => { seenUsage = { usage, meta }; }
+  });
+  check('正常返回 content', (await ok('hi', { key: 'group:1' })).includes('"summary"'));
+  check('摘要 usage 回调（未缓存/缓存读分开，总输入=两者之和）',
+    seenUsage?.usage?.input === 20 && seenUsage?.usage?.output === 30
+    && seenUsage?.usage?.cacheRead === 100 && seenUsage?.usage?.hasUsage === true,
+    JSON.stringify(seenUsage));
+  check('摘要 usage 回调带回会话 key', seenUsage?.meta?.key === 'group:1');
+  let noUsageSeen = null;
+  const noUsage = createSummarizer({
+    baseUrl, model: 'nousage', timeoutMs: 5000,
+    onUsage: (usage) => { noUsageSeen = usage; }
+  });
+  await noUsage('hi');
+  check('网关不返回 usage 时也回调（只记调用次数）', noUsageSeen?.hasUsage === false);
   check('摘要指令并入 user（网关会忽略 system）',
     !!lastBody && lastBody.messages?.[0]?.role === 'user'
     && lastBody.messages[0].content.includes('QQ 群聊记忆整理器')
@@ -234,32 +260,55 @@ console.log('\n── 5. 摘要器（本地 mock，不碰真实网关）──')
 console.log('\n── 6. 桥接接线 ──');
 {
   const bridge = fs.readFileSync(new URL('../src/bridge.js', import.meta.url), 'utf8');
+  const consoleServer = fs.readFileSync(new URL('../src/console-server.js', import.meta.url), 'utf8');
   check('引入 context-memory', /from '\.\/context-memory\.js'/.test(bridge));
   check('有独立 context 目录', /const CONTEXT_DIR = path\.join\(STATE_DIR, 'context'\)/.test(bridge));
-  check('捕获 compaction/summary', /frame\.event\.type === 'compaction\/summary'/.test(bridge) && /appendCompaction\(STATE_DIR/.test(bridge));
-  check('唤醒注入记忆包', /formatMemoryPack\(\{/.test(bridge) && /lastMemoryChars = memoryPack\.length/.test(bridge));
-  check('唤醒注入长期记忆', /loadLongTermMemory\(STATE_DIR, key\)/.test(bridge) && /longTerm,/.test(bridge));
+  const events = createEventHarness();
+  const frame = sessionEvent('compaction/summary', undefined, { summary: [{ type: 'text', text: '压缩记忆 fixture-secret' }] });
+  delete frame.payload.event.data.turn;
+  await events.handle(frame);
+  check('捕获 compaction/summary 并脱敏保存', events.get('compaction')[0]?.[3].summary === '压缩记忆 ***'
+    && events.deps.contextMetrics.has('group:1'));
+  const wakeSrc = fs.readFileSync(new URL('../src/pipeline/wake.js', import.meta.url), 'utf8');
+  check('唤醒注入记忆包', /formatMemoryPack\(\{/.test(wakeSrc) && /lastMemoryChars = memoryPack\.length/.test(wakeSrc));
+  check('唤醒注入长期记忆', /deps\.loadLongTermMemory\(deps\.stateDir, key\)/.test(wakeSrc) && /longTerm,/.test(consoleServer));
+  check('唤醒注入跨会话人物资料', /formatSharedMemoryForWake/.test(wakeSrc)
+    && /sharedText/.test(wakeSrc) && /lastSharedChars/.test(wakeSrc));
+  check('episode 后更新跨会话人物资料', /mergeEpisodeToSharedMemory\(STATE_DIR/.test(bridge)
+    && /共享记忆\] .*更新失败（不影响情节记忆）/.test(bridge));
   check('记录唤醒提示长度', /m\.lastPromptChars = promptText\.length/.test(bridge));
   check('定时扫描 episode', /function contextSweep\(\)/.test(bridge) && /setInterval\(\(\) => \{ void contextSweep\(\); \}/.test(bridge));
-  check('状态接口', /'\/api\/socialV2\/context-status'/.test(bridge));
-  check('立即总结接口', /'\/api\/socialV2\/context-summarize'/.test(bridge));
-  check('长期记忆详情接口', /'\/api\/socialV2\/context-memory'/.test(bridge));
-  check('长期记忆重建接口', /'\/api\/socialV2\/context-rebuild-memory'/.test(bridge));
-  check('活动日志状态接口', /'\/api\/socialV2\/activity-feed'/.test(bridge));
-  check('清空接口', /'\/api\/socialV2\/context-clear'/.test(bridge));
+  check('扫描候选过滤掉不够条数的会话', /if \(pending < every && !idleReady\) continue;/.test(bridge));
+  check('扫描失败有日志兜底', /\[上下文\] 扫描失败/.test(bridge));
+  check('扫描支持每会话多段追赶', /sweepChunksPerKey/.test(bridge) && /chunksPerKey/.test(bridge));
+  check('扫描有单轮总段数上限', /sweepMaxEpisodesPerRun/.test(bridge) && /maxEpisodes/.test(bridge));
+  check('状态接口', /'\/api\/socialV2\/context-status'/.test(consoleServer));
+  check('立即总结接口', /'\/api\/socialV2\/context-summarize'/.test(consoleServer));
+  check('长期记忆详情接口', /'\/api\/socialV2\/context-memory'/.test(consoleServer));
+  check('长期记忆重建接口', /'\/api\/socialV2\/context-rebuild-memory'/.test(consoleServer));
+  check('活动日志状态接口', /'\/api\/socialV2\/activity-feed'/.test(consoleServer));
+  check('清空接口', /'\/api\/socialV2\/context-clear'/.test(consoleServer));
   check('默认配置含 contextMemory', /contextMemory: \{ \.\.\.DEFAULT_CONTEXT_MEMORY \}/.test(bridge));
   check('入站消息写入 journal', /appendContextMessage\(STATE_DIR, key, msg\)/.test(bridge));
   check('self 消息也写入 journal', /appendContextMessage\(STATE_DIR, key, entry\)/.test(bridge));
   check('episode 优先从 journal 取数', /loadContextMessages\(STATE_DIR, key, \{/.test(bridge));
+  check('记忆检索接口存在', /'\/api\/socialV2\/recall'/.test(consoleServer) && /searchMemory\(/.test(consoleServer));
+  check('唤醒提示注入检索结果', /buildRecallLineV2\(key, st\)/.test(bridge) && /formatRecallResults\(/.test(bridge));
+  check('桥接记录召回延迟/命中率', /m\.lastRecallMs = elapsed/.test(bridge) && /m\.recallHitCalls/.test(bridge) && /m\.recallMsTotal/.test(bridge));
+  check('桥接写检索审计', /appendRecallAudit\(STATE_DIR/.test(bridge));
+  check('扫描写积压快照', /appendBacklogSample\(STATE_DIR/.test(bridge));
+  check('状态接口返回覆盖率/积压/召回', /journalCoverage\(STATE_DIR/.test(consoleServer) && /backlogHistory: readBacklogHistory/.test(consoleServer) && /recallHitRate/.test(consoleServer));
+  check('追赶/重建索引接口存在', /context-catchup/.test(consoleServer) && /context-rebuild-index/.test(consoleServer));
+  check('检索索引来自 journal + episode', /buildMemoryIndex\(\{ messages, episodes \}\)/.test(bridge));
   check('episode 合并长期记忆', /mergeEpisodeToMemory\(STATE_DIR, key, ep/.test(bridge));
-  check('状态接口返回长期记忆/日志体积', /longTermStats\(STATE_DIR, key\)/.test(bridge) && /journalBytes/.test(bridge));
-  check('状态接口返回群名/QQ昵称', /displayName: contextDisplayName\(key\)/.test(bridge));
+  check('状态接口返回长期记忆/日志体积', /longTermStats\(STATE_DIR, key\)/.test(consoleServer) && /journalBytes/.test(consoleServer));
+  check('状态接口返回群名/QQ昵称', /displayName: contextDisplayName\(key\)/.test(consoleServer));
   check('名称缓存定期刷新', /refreshContextNames\(true\)/.test(bridge) && /getGroupList\(\{ noCache: true \}\)/.test(bridge) && /getFriendList\(\)/.test(bridge));
-  check('状态接口补种历史长期记忆', /backfillLongTermMemory\(STATE_DIR, key\)/.test(bridge));
+  check('状态接口补种历史长期记忆', /backfillLongTermMemory\(STATE_DIR, key\)/.test(consoleServer));
   check('扫描按最久未总结优先', /a\.lastEpisodeAt - b\.lastEpisodeAt/.test(bridge) && /countContextPendingV2/.test(bridge));
   {
-    const cs = bridge.indexOf("url.pathname === '/api/socialV2/context-clear'");
-    const block = bridge.slice(cs, cs + 1600);
+    const cs = consoleServer.indexOf("url.pathname === '/api/socialV2/context-clear'");
+    const block = consoleServer.slice(cs, cs + 1600);
     check('清空只删派生记忆、保留 messages.jsonl',
       block.includes("['episodes.jsonl', 'compactions.jsonl', 'memory.json']")
       && !block.includes("rmSync(path.join(dir, 'messages.jsonl'))"));
@@ -268,6 +317,39 @@ console.log('\n── 6. 桥接接线 ──');
   // 会变成 state/context/context/<key>；写入/读取都能"自洽"，但真实目录错了。
   check('context-memory 调用传 STATE_DIR（不能再套一层 context）',
     !/(loadEpisodes|appendEpisode|loadCompactions|appendCompaction|contextStats)\(CONTEXT_DIR/.test(bridge));
+}
+
+console.log('\n── 6b. P1 指标、召回审计与积压历史 ──');
+{
+  const key = 'group:555000111';
+  const now = Date.now();
+  for (let i = 1; i <= 5; i += 1) {
+    appendContextMessage(tmp, key, {
+      seq: i,
+      messageId: `p1-${i}`,
+      sender: '甲',
+      text: `P1 消息 ${i}`,
+      time: now - (5 - i) * 1000
+    });
+  }
+  const cov = journalCoverage(tmp, key, { hours: 24, now, indexLimit: 3 });
+  check('24h 覆盖率按索引窗口计算', cov.messages24h === 5 && cov.indexed24h === 3 && cov.coveragePct === 60, JSON.stringify(cov));
+  const covAll = journalCoverage(tmp, key, { hours: 24, now, indexLimit: 100 });
+  check('索引足够时覆盖率 100%', covAll.coveragePct === 100);
+  const covEmpty = journalCoverage(tmp, 'group:999999999', { hours: 24, now });
+  check('无日志时覆盖率按 100% 处理', covEmpty.messages24h === 0 && covEmpty.coveragePct === 100);
+
+  appendRecallAudit(tmp, key, { at: now, query: '测试查询', ms: 12, hits: 2, chars: 80, results: [{ kind: 'message', seq: 1, text: '命中 A' }] }, 3);
+  appendRecallAudit(tmp, key, { at: now + 1, query: '测试查询 2', ms: 8, hits: 0, chars: 0, results: [] }, 3);
+  const audit = readRecallAudit(tmp, key, 10);
+  check('检索审计可读', audit.length === 2 && audit[0].query === '测试查询' && audit[1].hits === 0);
+  const stats = recallAuditStats(tmp, key, 10);
+  check('召回统计可汇总', stats.calls === 2 && stats.hits === 1 && stats.hitRate === 50 && stats.avgMs === 10, JSON.stringify(stats));
+
+  appendBacklogSample(tmp, { at: now, pending: 10, episodes: 2, conversations: 1 }, 5);
+  appendBacklogSample(tmp, { at: now + 1, pending: 20, episodes: 2, conversations: 1 }, 5);
+  const hist = readBacklogHistory(tmp, 10);
+  check('积压历史可读', hist.length === 2 && hist[1].pending === 20);
 }
 
 console.log('\n── 7. 真实目录（存在才测）──');
@@ -286,7 +368,7 @@ console.log('\n── 7. 真实目录（存在才测）──');
     if (!files.length) {
       skipped('真实 episode', '目录里还没有 episodes.jsonl');
     } else {
-      const eps = loadEpisodes(realState, 'group:100001005', 3);
+      const eps = loadEpisodes(realState, 'group:100002007', 3);
       check('真实 episode 可读', eps.length > 0 ? !!eps[0].summary : true, `files=${files.length}`);
     }
   }

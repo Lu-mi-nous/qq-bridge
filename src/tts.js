@@ -27,7 +27,6 @@
 //   所以由桥接掷骰（`probability`，默认 0.05），模型不参与决策——
 //   与自动 @ 一样的思路：让机器决定频率，避免模型"想起来才发"导致忽多忽少。
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -36,8 +35,8 @@ import { loadVoicesManifest, resolveVoiceSelection, pickVoiceRef, voicesForApi }
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
-/** 默认的 GPT-SoVITS 安装位置：环境变量优先，否则用户主目录下的 GPT-SoVITS。 */
-export const DEFAULT_SOVITS_DIR = process.env.GPT_SOVITS_DIR || path.join(os.homedir(), 'GPT-SoVITS');
+/** 默认的 GPT-SoVITS 安装位置（用户环境）。 */
+export const DEFAULT_SOVITS_DIR = 'E:\\Downloads\\GPT-SoVITS';
 
 /**
  * 读 wav 头算时长（秒）。仅用于缓存命中时补时长。

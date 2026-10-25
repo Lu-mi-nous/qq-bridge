@@ -1,3 +1,4 @@
+import { clearSessionTracking as clearSessionTrackingState } from './pipeline/session-tracking.js';
 // QQ ↔ DeepSeek Harness 桥接主程序。
 //
 // 链路：
@@ -5,6 +6,14 @@
 //   DSH agent 回复/提问/审批 → events.mux 事件流 → 本进程 → send_msg → QQ
 //
 // 用法：node src/bridge.js （先编辑 ../config.json）
+import { createIncomingStages } from './pipeline/incoming.js';
+import { createImageSender } from './pipeline/image-send.js';
+import { createSocialStateStore, canonicalV2Key } from './pipeline/social-state.js';
+import { createContentRequestPolicy } from './pipeline/content-request.js';
+import { createBiliRuntime } from './pipeline/bili-runtime.js';
+import { normalizePrivateMode, allowed, privateAllowed as privateAllowedPure, modeAllowed as modeAllowedPure } from './pipeline/admission.js';
+import { createBiliSharing } from './pipeline/bili-sharing.js';
+import { createRoleHintReader } from './pipeline/role-hint.js';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -12,13 +21,13 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { SnowLumaWebSocketClient, text } from '@snowluma/sdk';
-import { NodeApiClient, unwrap, createTurnCollector } from './dsh-client.js';
+import { NodeApiClient, unwrap } from './dsh-client.js';
 import { mdToPlain, splitForQQ } from './md-to-plain.js';
 import { SENSITIVE_RE } from './sensitive.js';
 import { looksLikeUnfinished } from './v2-wait.js';
 import { tileGifFrames, isGifBuffer, probeFrameCount, gifFramesHint } from './gif-frames.js';
 // 传给模型前把过大图片降采样（防 DSH 侧 base64 爆栈），见模块顶部说明。
-import { downscaleIfLarge, upscaleIfSmall, prepareImageForModel } from './image-downscale.js';
+import { downscaleIfLarge, upscaleIfSmall, prepareImageForModel, shrinkStickerForUpload, STICKER_UPLOAD_MAX_BYTES, STICKER_UPLOAD_TARGET_BYTES } from './image-downscale.js';
 // 群文件只读分类（列表/统计/搜索，不做写操作），见模块顶部说明。
 import { summarizeGroupFiles, formatSummary, searchGroupFiles, humanSize } from './group-files.js';
 import { fetchFromSources, resolveTagName, sourcePageOf } from './image-sources.js';
@@ -34,6 +43,13 @@ import { createReverseSearcher } from './image-reverse-search.mjs';
 import { classifyImageFeedback, createFeedbackGate } from './image-feedback.js';
 // 回复时按概率 @ 对方：由桥接掷骰（模型几乎不主动传 atUserId），见 auto-at.js 顶部说明。
 import { pickAutoAt, DEFAULT_AUTO_AT } from './auto-at.js';
+// 非白名单群的 @：预设话术直接回，不经过 DSH（不消耗 token）。
+import { createWhitelistNotifier } from './whitelist-notice.js';
+import {
+  buildMemoryIndex,
+  searchMemory,
+  formatRecallResults
+} from './memory-retrieval.js';
 import {
   DEFAULT_CONTEXT_MEMORY,
   contextDir,
@@ -44,6 +60,12 @@ import {
   appendContextMessage,
   loadContextMessages,
   journalStats,
+  journalCoverage,
+  appendRecallAudit,
+  readRecallAudit,
+  recallAuditStats,
+  appendBacklogSample,
+  readBacklogHistory,
   loadLongTermMemory,
   mergeEpisodeToMemory,
   backfillLongTermMemory,
@@ -88,10 +110,10 @@ import { crawlUrl, crawlAigengtu, saveStickerImage, isAigengtuUrl } from './web-
 // 群友功能菜单图（HTML+CSS → Chrome 无头截图），见 feature-menu.js 顶部说明。
 import { renderFeatureMenu } from './feature-menu-render.js';
 import { parseGitHubUrl, extractGitHubUrl, screenshotGitHubRepo } from './github-shot.js';
-import { parseJoinCommand, describeJoinRequest, createJoinQueue, DEFAULT_TTL_MS as JOIN_TTL_MS } from './join-request.js';
+import { describeJoinRequest, createJoinQueue, DEFAULT_TTL_MS as JOIN_TTL_MS } from './join-request.js';
 import { CREDENTIAL_ITEMS, maskValue } from './credentials-doc.js';
 import { TOOL_FLAGS, toolNamesOf, groupedToolFlags } from './tool-flags.js';
-import { aggregateTokenUsage, humanTokens } from './token-usage.js';
+import { aggregateTokenUsage, humanTokens, dayKey } from './token-usage.js';
 import { buildTokenReport, summarizeTokenReport } from './token-report.js';
 import { renderTokenReport, pruneTokenReportCache } from './token-report-render.js';
 import { validateEmojiId, createReactionGate, REACTION_EMOJIS, emojiMenuText } from './emoji-react.js';
@@ -117,26 +139,52 @@ import {
   buildStickerContext,
   buildStickerStrategyHint,
   applyStickerNote,
-  markStickerUsed
+  markStickerUsed,
+  syncStickerCache,
+  writeStickerCacheRecord,
+  writeStickerCacheImage
 } from './sticker-lib.js';
 // 表情包主动要求：按本轮语气挑候选（见模块顶部说明）
 import { pickStickerCandidates, buildStickerNudge, moodOfText } from './sticker-pick.js';
+import { createConsoleServer } from './console-server.js';
+import { createAdminCommands, isAdminCommand, canBypassAdmission, rawTextOfMessage } from './admin-commands.js';
+import { createContextRecovery, isContextOverflowError, rotateContextSession } from './context-recovery.js';
+import { createSessionHistory } from './session-history.js';
+import { createSessionGap, normalizeGapNoticeConfig } from './session-gap.js';
+import {
+  normalizeSharedMemoryConfig,
+  mergeEpisodeToSharedMemory,
+  formatSharedMemoryForWake
+} from './shared-memory.js';
+import { createTokenFuse } from './token-fuse.js';
+import { needsNewSession } from './pipeline/session-generation.js';
+import { createDshEventPump } from './pipeline/dsh-events.js';
+import { identityTagOf, senderDisplayName, groupRoleOf, isOwnerSender, isOwnerTurn as isOwnerTurnPure, buildMediaHint, buildIncomingPrompt } from './pipeline/message-format.js';
+import { segmentsToText, extractMediaFromSegments } from './pipeline/segments.js';
+import { normalizeMessagesInput } from './pipeline/text-normalize.js';
+import { createSendQueue } from './pipeline/send-queue.js';
+import { createWakePromptBuilder, findPendingCallers, wakePriorityV2 } from './pipeline/wake.js';
+import { createQQSender } from './pipeline/qq-send.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const STATE_DIR = path.join(ROOT, 'state');
 const STATE_FILE = path.join(STATE_DIR, 'sessions.json');
 const ROLE_STATE_FILE = path.join(STATE_DIR, 'current-role.json');
+const CONVERSATION_ROLE_FILE = path.join(STATE_DIR, 'conversation-roles.json');
 const SLANG_FILE = path.join(STATE_DIR, 'slang.json');
 const SLANG_SESSION_FILE = path.join(STATE_DIR, 'slang-session.json');
 const SOCIAL_V2_FILE = path.join(STATE_DIR, 'social-v2.json');
 // Token 用量统计（每日更新）：聚合结果 + 每会话文件的扫描缓存
 const TOKEN_USAGE_FILE = path.join(STATE_DIR, 'token-usage.json');
+// 会话映射历史：token 统计把轮换前的旧 sessionId 仍归属到原 QQ 会话
+const SESSION_HISTORY_FILE = path.join(STATE_DIR, 'session-history.json');
 // 加好友/入群邀请的待裁决队列（落盘，重启不丢）
 const JOIN_REQUESTS_FILE = path.join(STATE_DIR, 'join-requests.json');
 // 上下文持久化（Phase 0/1）：情节摘要 + DSH 压缩摘要，独立目录，不塞进 social-v2.json
 const CONTEXT_DIR = path.join(STATE_DIR, 'context');
 const STICKER_FILE = path.join(STATE_DIR, 'stickers.json');
+const STICKER_CACHE_DIR = path.join(STATE_DIR, 'sticker-cache');
 const IMAGE_LIB_DIR = path.join(STATE_DIR, 'image-lib');
 // 控制台「选择文件/文件夹」同一时刻只允许一个原生对话框，避免连点叠出多个窗口
 let pickPathBusy = false;
@@ -303,59 +351,6 @@ function unquoteJsonString(value) {
 // （例如 ["他说"你好"就走了","第二条"]），JSON.parse 必然失败；若把
 // 异常吞掉，整串 JSON 会被当成一条消息原样发到群里（线上事故）。
 // 因此解析失败时按引号/逗号手工切分，至少保住分条语义。
-function normalizeMessagesInput(value) {
-  if (Array.isArray(value)) return value.map((m) => String(m ?? '')).filter((s) => s.trim() !== '');
-  if (typeof value !== 'string') return [];
-
-  const trimmed = value.trim();
-  // 单条 JSON 字符串："\"你好\"" → 你好
-  if (trimmed.startsWith('"') && !trimmed.startsWith('["')) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (typeof parsed === 'string') return [parsed].filter((s) => s.trim() !== '');
-      if (Array.isArray(parsed)) return parsed.map((m) => String(m ?? '')).filter((s) => s.trim() !== '');
-    } catch {}
-  }
-
-  // JSON 数组字符串（含内层直引号未转义的容错）
-  //
-  // 判据必须包含「有引号」：模型真正会踩的是 `["a","b"]` 这种**元素带引号**的序列化形式，
-  // 此时引号一定存在。若不加这个前提，容错分支会把任何以 `[` 开头的正文都当数组字面量：
-  //   实测（2026-10-09 用真实端点验证）`[图片]` → `图片`、`[doge]这个梗我熟` → `doge]这个梗我熟`，
-  //   前者是桥接自己生成的段标记、后者是群友常用写法，都被静默改坏了。
-  if (trimmed.startsWith('[') && /["']/.test(trimmed)) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      // 只有「字符串数组」才算消息列表；`[1]` 这种不应被当成分条内容。
-      if (Array.isArray(parsed) && parsed.every((m) => typeof m === 'string')) {
-        const out = parsed.map((m) => String(m ?? '')).filter((s) => s.trim() !== '');
-        if (out.length) return out;
-      }
-    } catch {
-      const salvaged = splitArrayLiteral(trimmed);
-      if (salvaged.length) return salvaged;
-    }
-  }
-  return trimmed ? [trimmed] : [];
-}
-
-// 手工切分形如 ["a","b"] 的数组字面量：以「引号 + 逗号 + 引号」为分隔，
-// 剥掉首尾的 [ ] 与每个元素两侧的引号。仅供 JSON.parse 失败时兜底。
-function splitArrayLiteral(text) {
-  let s = String(text ?? '').trim();
-  if (s.startsWith('[')) s = s.slice(1);
-  if (s.endsWith(']')) s = s.slice(0, -1);
-  return s
-    .split(/"?\s*,\s*"?/)
-    .map((part) => {
-      let t = part.trim();
-      if (t.startsWith('"')) t = t.slice(1);
-      if (t.endsWith('"')) t = t.slice(0, -1);
-      return t.trim();
-    })
-    .filter((t) => t !== '');
-}
-
 // QQ 活动日志：每次收发都追加一行，供 WebUI 侧 agent 汇报 QQ 动态。
 function appendActivity(line) {
   try {
@@ -376,6 +371,69 @@ function readRoleState() {
 function writeRoleState(role, mode) {
   atomicWriteJson(ROLE_STATE_FILE, { role: role ?? null, mode: mode ?? 'active' });
 }
+// 会话级人格覆盖：{ version:1, overrides: { "group:123": "角色名" } }。
+// 未配置的会话回退 state/current-role.json 的全局默认角色。
+let conversationRoleCache = { mtimeMs: -1, overrides: {} };
+function readConversationRoles() {
+  try {
+    const st = fs.statSync(CONVERSATION_ROLE_FILE);
+    if (st.mtimeMs !== conversationRoleCache.mtimeMs) {
+      const raw = readJsonSafe(CONVERSATION_ROLE_FILE, { version: 1, overrides: {} });
+      const overrides = raw && typeof raw.overrides === 'object' && raw.overrides ? raw.overrides : {};
+      conversationRoleCache = { mtimeMs: st.mtimeMs, overrides: { ...overrides } };
+    }
+    return conversationRoleCache.overrides;
+  } catch {
+    return {};
+  }
+}
+function writeConversationRole(key, role) {
+  const overrides = { ...readConversationRoles() };
+  if (role) overrides[key] = role; else delete overrides[key];
+  atomicWriteJson(CONVERSATION_ROLE_FILE, { version: 1, overrides });
+  conversationRoleCache = { mtimeMs: -1, overrides: {} };
+}
+function roleExists(name) {
+  const safe = sanitizeRoleName(name);
+  if (!safe || safe !== String(name ?? '').trim()) return false;
+  return fs.existsSync(path.join(ROOT, 'roles', safe + '.md'));
+}
+
+/**
+ * 删除角色卡（控制台 / 测试用）。
+ * 路径由桥接自己解析——测试脚本可能从别的克隆运行，按脚本位置删会删错目录，
+ * 留下永远清不掉的测试人格。
+ */
+function deleteRole(name) {
+  const safe = sanitizeRoleName(name);
+  if (!safe || safe !== String(name ?? '').trim()) return { ok: false, error: '角色名不合法' };
+  if (safe === 'README') return { ok: false, error: '该名称被保留' };
+  const file = path.join(ROOT, 'roles', safe + '.md');
+  if (!fs.existsSync(file)) return { ok: false, error: `角色「${safe}」不存在`, missing: true };
+  // 正在使用的角色被删掉会让 current-role.json 指向空文件；保留原 mode，
+  // 否则删个角色会顺手把静默/活跃状态重置掉。
+  try {
+    const rs = readRoleState();
+    if (rs.role === safe) writeRoleState(null, rs.mode);
+  } catch { /* 状态损坏不应阻止删除文件 */ }
+  try {
+    fs.unlinkSync(file);
+  } catch (error) {
+    return { ok: false, error: `删除失败：${error?.message ?? error}` };
+  }
+  log(`控制台：删除人格「${safe}」`);
+  return { ok: true, role: safe };
+}
+
+/** 当前会话实际生效的角色：本会话 override 优先，否则全局默认。 */
+function roleFor(key) {
+  const overrides = key ? readConversationRoles() : {};
+  const override = key ? overrides[key] : null;
+  if (override && roleExists(override)) return override;
+  const fallback = readRoleState().role;
+  return fallback && roleExists(fallback) ? fallback : null;
+}
+
 function sanitizeRoleName(name) {
   // 角色名白名单：中文、字母、数字、下划线、横线，以及**成对的括号**。
   // 为什么允许括号：像「大肥鱼（傲娇版）」这种「本名+变体」的命名很自然，
@@ -407,13 +465,6 @@ function normalizeIdList(value) {
 
 // 私聊准入策略规范化。非法值一律回落到 'list'（白名单制）——fail-closed：
 // 配置写错时宁可收紧，也不要意外变成"谁都放进来"。
-function normalizePrivateMode(value) {
-  const s = String(value ?? '').trim().toLowerCase();
-  if (s === 'friends' || s === 'friend') return 'friends';
-  if (s === 'all') return 'all';
-  return 'list';
-}
-
 // ── 配置 ────────────────────────────────────────────────────────────────────
 function loadConfig() {
   const p = path.join(ROOT, 'config.json');
@@ -809,6 +860,14 @@ function loadConfig() {
     ...(cfg.socialV2.tools ?? {})
   };
 
+  // 非白名单群的 @ 提示：预设话术直接回，不调用 DSH（用户 2026-10-23 要求）。
+  cfg.socialV2.whitelistNotice = {
+    enabled: true,
+    cooldownMs: 10 * 60 * 1000,
+    messages: [],
+    ...(cfg.socialV2?.whitelistNotice ?? {})
+  };
+
   // socialV2.sticker.collect 也需要深度合并，避免旧配置缺失 collect 子项时丢默认值。
   cfg.socialV2.sticker = {
     enabled: true,
@@ -950,8 +1009,12 @@ function loadConfig() {
 let state = { sessions: {} };
 function loadState() {
   const loaded = readJsonSafe(STATE_FILE, null);
-  if (loaded && loaded.sessions && typeof loaded.sessions === 'object') state = loaded;
-  else state = { sessions: {} };
+  if (loaded && loaded.sessions && typeof loaded.sessions === 'object') {
+    state = loaded;
+    if (!state.sessionMeta || typeof state.sessionMeta !== 'object') state.sessionMeta = {};
+  } else {
+    state = { sessions: {}, sessionMeta: {} };
+  }
 }
 function saveState() {
   fs.mkdirSync(STATE_DIR, { recursive: true });
@@ -1083,73 +1146,6 @@ function withTimeout(promise, ms, label) {
  * 一个人可能同时是多种身份，所以标记可以叠加（如「【管理员】【群主】」）。
  * 措辞保持**客观状态描述**而非命令（既有教训：内部指令写成"必须…"会被当台词复述）。
  */
-function identityTagOf(m) {
-  if (!m || typeof m !== 'object') return '';
-  const tags = [];
-  if (m.isOwner) tags.push('【管理员】');
-  if (m.isGroupOwner) tags.push('【群主】');
-  else if (m.isGroupAdmin) tags.push('【群管理员】');
-  return tags.join('');
-}
-
-async function segmentsToText(segments, options = {}) {
-  const { resolveAtName, resolveReply, includeReply = true, mediaFetchHint } = options ?? {};
-  // 有些 OneBot 实现直接把纯文本消息放在 message 字段里（string）
-  if (typeof segments === 'string') return segments.trim();
-  const out = [];
-  for (const seg of segments ?? []) {
-    const d = seg?.data ?? {};
-    switch (seg?.type) {
-      case 'text': out.push(d.text ?? ''); break;
-      case 'at': {
-        if (d.qq === 'all') {
-          out.push('@全体成员');
-        } else {
-          // 优先把 @ 对象解析成群名片/昵称，解析不到再回退成 QQ 号
-          let name = null;
-          try { name = resolveAtName ? await resolveAtName(String(d.qq)) : null; } catch { name = null; }
-          out.push(name ? `@${name}` : `@${d.qq}`);
-        }
-        break;
-      }
-      case 'face': out.push(`[表情${d.id ?? ''}]`); break;
-      case 'image': out.push('[图片]'); break;
-      case 'record': out.push('[语音]'); break;
-      case 'video': out.push('[视频]'); break;
-      case 'file': out.push(`[文件${d.name ?? ''}]`); break;
-      case 'reply': {
-        // 引用/回复段：默认解析成「被引用人 + 原文」；有图时再附「怎么看到它」。
-        // includeReply=false 时跳过该段，得到“当前消息自己的文字”（用于指令/指向性判断）。
-        // 拼装逻辑在 quoted-media.js（原先只拼 sender+text，把图片段丢了 →
-        // 模型看到 `[引用 某人：[图片]]` 却无法取图，实测「回复图片问这是什么」直接失效）。
-        if (!includeReply) break;
-        let info = null;
-        if (resolveReply) {
-          try { info = await resolveReply(String(d.id)); } catch {}
-        }
-        out.push(buildReplyText(info, mediaFetchHint));
-        break;
-      }
-      case 'json': {
-        // 分享卡片（B 站视频/小红书/音乐/位置等）：解析出标题、描述、真实链接、封面。
-        // 原先这里只推 '[卡片消息]' 四个字，标题和封面全丢，实测机器人自己在群里
-        // 抱怨过「卡片只显示成[卡片消息]，里面什么内容我看不到」。
-        // 解析不出内容时退回占位符（不编内容）。封面图走媒体管线，见 extractMediaFromSegments。
-        const card = parseShareCard(d.data);
-        out.push(card ? formatShareCard(card) : '[卡片消息]');
-        break;
-      }
-      case 'forward': {
-        const fid = forwardIdFromData(d);
-        out.push(fid ? `[转发消息 id=${fid}]` : '[转发消息]');
-        break;
-      }
-      default: out.push(`[${seg?.type ?? '未知'}]`); break;
-    }
-  }
-  return out.join('').trim();
-}
-
 // 从 OneBot 消息段中提取图片/表情元数据（不下载字节，仅记录定位信息）。
 // 供一代自动内联、二代按需工具、控制台/日志使用。
 // 实现在 quoted-media.js（与「引用消息里的图」共用同一份判定，也便于离线回归测试）。
@@ -1157,146 +1153,6 @@ async function segmentsToText(segments, options = {}) {
 // 分享卡片的**封面图**也作为一项 media 加进来：这样 qq_get_message_images 能直接
 // 看到封面（fetchOneBotImage 已支持只用 media.url 取图），无需另写取图路径。
 // 注意 cover 项没有 file、只有 url，所以判断「有无媒体」时不能只看 file。
-function extractMediaFromSegments(segments) {
-  const media = extractQuotedMedia(segments);
-  const out = Array.isArray(media) ? [...media] : [];
-  for (const seg of Array.isArray(segments) ? segments : []) {
-    if (!seg || seg.type !== 'json') continue;
-    const card = parseShareCard(seg.data?.data);
-    if (!card) continue;
-    const cover = coverUrlOf(card);
-    if (!cover) continue;
-    out.push({
-      kind: 'image',
-      file: '',
-      url: cover,
-      subType: '',
-      // 让模型知道这张图是卡片封面（而不是群友直接发的图）
-      summary: `${card.platform || '分享'}卡片封面`,
-      fromCard: true,
-    });
-  }
-  return out;
-}
-
-function allowed(kind, id, cfg) {
-  // OneBot 事件里的 id 可能是数字也可能是字符串（int64 序列化差异），统一转字符串比较。
-  // 配置字段兼容单数（group/private）与复数（groups/privates）两种写法。
-  const s = String(id);
-  const denyList = cfg.deny[kind] ?? cfg.deny[kind + 's'] ?? [];
-  if (denyList.map(String).includes(s)) return false;
-  const allowList = cfg.allow[kind] ?? cfg.allow[kind + 's'] ?? [];
-  if (allowList.length > 0) return allowList.map(String).includes(s);
-  return cfg.allowAllWhenEmpty;
-}
-
-// ── 群白名单管理命令（管理员可用）──────────────────────────────────────────
-//
-// 需求：管理员在群里直接把人/群加进白名单或移出，不用去控制台或改 config.json 重启。
-//
-// 为什么放在模块级而不是命令块里内联：解析与增删都是纯函数，测试可以直接抽出来跑；
-// 挂在 bridge 里的话得先拉起整个 WS/HTTP 栈才能测一行字符串切分。
-//
-// 语义与 allowed() 保持一致（**这是最容易写错的地方**）：
-//   - allow.groups 为空 且 allowAllWhenEmpty=true  → 等于"全部放行"，此时删到空不会锁群；
-//   - allow.groups 为空 且 allowAllWhenEmpty=false → 等于"全部拦截"，**删到空会把所有群关掉**。
-// 所以「删最后一条」要显式提醒，而不是静默生效。
-// 主命令 `/wl`（whitelist 缩写），同时接受中文 `/白名单`。
-// 刻意不占用 `/allow` 这类泛化词：adminCmd 的判定优先于 DSH 斜杠命令，
-// 名字越泛越容易在将来与 DSH 自带命令撞车，撞了就是"管理员命令把 DSH 命令吃了"。
-const WHITELIST_CMD_RE = /^\/(?:wl|白名单)(?:\s|$)/i;
-
-// 解析 `/wl` 系列命令；不是该命令返回 null，让调用方继续走别的分支。
-//   /wl                          列当前白名单
-//   /wl add 123456               加群
-//   /wl del 123456               移出群
-//   /wl add 123456 654321        一次多个（空格/逗号/顿号都认）
-function parseWhitelistCommand(text) {
-  const s = String(text ?? '').trim();
-  if (!WHITELIST_CMD_RE.test(s)) return null;
-  const rest = s.replace(/^\/(?:wl|白名单)/i, '').trim();
-  if (!rest) return { action: 'list', ids: [] };
-  const m = /^(删除|移除|去掉|add|delete|remove|del|rm|加|删)(?:\s+([\s\S]*))?$/i.exec(rest);
-  if (!m) {
-    // 只写了一个群号（`/wl 123456`）时按「加」处理——管理员手快时最常见的写法。
-    if (/^[\d\s,，、]+$/.test(rest)) {
-      return { action: 'add', ids: extractIdList(rest) };
-    }
-    return { action: 'help', ids: [] };
-  }
-  const action = /^(add|加)$/i.test(m[1]) ? 'add' : 'del';
-  return { action, ids: extractIdList(m[2]) };
-}
-
-// 从任意分隔的文字里抠出 QQ 号/群号；非数字的整词忽略（不报错，让上层统一提示）。
-function extractIdList(text) {
-  const out = [];
-  for (const raw of String(text ?? '').split(/[\s,，、;；]+/)) {
-    const t = raw.trim();
-    if (!t) continue;
-    if (!/^\d{5,12}$/.test(t)) continue;
-    const n = Number(t);
-    if (!Number.isSafeInteger(n) || n <= 0) continue;
-    if (!out.includes(n)) out.push(n);
-  }
-  return out;
-}
-
-// 增删白名单数组，返回新数组与"实际发生了什么"。纯函数，不改入参。
-function applyWhitelistChange(list, action, ids) {
-  // 只收正整数：`Number(null)` / `Number('')` 都是 0，光用 Number.isFinite 会把脏值放进来。
-  const toId = (v) => {
-    const n = Number(String(v ?? '').trim());
-    return Number.isSafeInteger(n) && n > 0 ? n : null;
-  };
-  const before = (Array.isArray(list) ? list : []).map(toId).filter((n) => n !== null);
-  const set = new Set(before);
-  const added = [];
-  const removed = [];
-  const missing = [];
-  if (action === 'add') {
-    for (const id of ids) {
-      if (set.has(id)) { missing.push(id); continue; }
-      set.add(id);
-      added.push(id);
-    }
-  } else if (action === 'del') {
-    for (const id of ids) {
-      if (!set.has(id)) { missing.push(id); continue; }
-      set.delete(id);
-      removed.push(id);
-    }
-  }
-  return { next: [...set], added, removed, unchanged: missing };
-}
-
-// `allow.groups` 被删空时会发生什么——命令里要如实说出来，别让管理员以为"处理了"。
-function describeEmptyWhitelistRisk(allowAllWhenEmpty) {
-  return allowAllWhenEmpty
-    ? '注意：群白名单已空，但 allowAllWhenEmpty=true，仍是所有群都放行。'
-    : '注意：群白名单已空，且 allowAllWhenEmpty=false，现在所有群都会被拦截（包括本群）。重新加入本群可直接发 /wl add <本群号>。';
-}
-
-// 只取消息里的纯文本段（不解析 @ / 引用，便宜且同步）。
-// 用途：准入闸门在解析整条消息之前就要判断"是不是白名单命令"——
-// 否则新群（还没进白名单）发的 /wl add 会在闸门处被丢掉，永远到不了命令处理。
-function rawTextOfMessage(segments) {
-  if (typeof segments === 'string') return segments.trim();
-  return (segments ?? [])
-    .filter((s) => s?.type === 'text')
-    .map((s) => s?.data?.text ?? '')
-    .join('')
-    .trim();
-}
-
-// 二代会话 key 规范化：只接受 group:正整数 / private:正整数，并去掉前导零，避免同一会话出现多个别名。
-function canonicalV2Key(key) {
-  const m = /^(group|private):(\d+)$/.exec(String(key ?? '').trim());
-  if (!m) return null;
-  const id = Number(m[2]);
-  if (!Number.isSafeInteger(id) || id <= 0) return null;
-  return `${m[1]}:${id}`;
-}
 
 const APPROVE_WORDS = new Set(['通过', '同意', '允许', '批准', 'yes', 'y', 'approve', 'ok']);
 const REJECT_WORDS = new Set(['拒绝', '不同意', '不允许', '驳回', 'no', 'n', 'reject', 'deny']);
@@ -1325,6 +1181,27 @@ async function main() {
     await waitForPortFree(Number(cfg.consolePort) || 3100, 5000);
   }
   loadState();
+
+  // 会话映射历史：首次启用时登记当前映射，并从已有的上下文压缩记录回填旧 sessionId。
+  // 这两步都只读本地文件，不影响启动；摘要器记账与 token 报表都依赖它归属旧会话。
+  const sessionHistory = createSessionHistory({ file: SESSION_HISTORY_FILE, log });
+  sessionHistory.adoptCurrent(state.sessions);
+  sessionHistory.backfillFromContext(CONTEXT_DIR);
+  // 记忆断层：独立运行状态，不被 reset/上下文清理删除。
+  const sessionGap = createSessionGap({ file: path.join(STATE_DIR, 'session-gap.json'), log });
+
+  // 上下文超限恢复器：识别 DSH 的 CONTEXT_WINDOW_EXCEEDED / prompt_too_long，
+  // 摘除中毒会话并用新会话重试一次。只认明确错误码/固定文案，避免误判普通 context 事件。
+  const contextRecovery = createContextRecovery({
+    rotateSession: rotateSessionForContextOverflow,
+    buildWakePrompt: (key) => buildWakePromptV2(key, 'contextRecovery'),
+    deliverPrompt: (key, prompt) => deliverPrompt(key, prompt, { contextRecovery: true }),
+    notifyOwnerOfError,
+    appendActivity,
+    log,
+    cooldownMs: 30 * 60 * 1000,
+    retryDelayMs: 1000
+  });
 
   // ── 群聊黑话/网络用语学习（slang） ──────────────────────────────────────
   let slangEntries = loadSlang(SLANG_FILE);
@@ -1688,185 +1565,8 @@ async function main() {
    * 取一张本地图并发送。返回 { sent, entry } 或 { error }。
    * 带来源标注（画师/出处），这是使用第三方作品的基本要求。
    */
-  async function sendImageV2(key, options = {}) {
-    if (!imagesEnabled()) throw new Error('图库未启用（config.socialV2.images.enabled）');
-    const startedAt = Date.now(); // 用于回传耗时（让模型知道哪些查询"重"）
-    const gate = imageSendAllowed(key, { fromFeedback: options._fromFeedback === true });
-    if (!gate.ok) throw new Error(gate.error);
-
-    const wantTags = Array.isArray(options.tags) ? options.tags.filter(Boolean) : [];
-    // 限定的图源（群主说「从 pixiv 找」时）：本地挑选与现拉都要限制，
-    // 否则会返回别的站的图（也可能把别的站的图拉进库）。
-    // 模型没传时就吃会话记忆（实测模型经常漏传这个参数）。
-    const wantSources = sourcesWithHint(key, options.sources);
-
-    // 取图策略：本地优先 → 未命中就按需回源拉取 → 再取一次。
-    // 「按需查询」是这里的核心：群友要「猫」而库里没有时，不该只回一句「没有」，
-    // 而应去图源按 cat 标签现拉几张入库再发。日榜/热门同理（order+maxAgeDays）。
-    //
-    // 差评换图跳过「10 分钟内不重复发」：那张刚被拒的图已经移出图库，
-    // 剩下能选的本来就不可能是它。若还按 10 分钟窗口拦，只有一张图可用的角色
-    // 会直接报"都发过了"而换不出图——那是把"防重复"变成了"不许换"。
-    const recentOpt = options._fromFeedback === true ? { blockRecentMs: 0 } : {};
-    let picked = imageStore.pickRandom({ tags: wantTags, ...sourceFilterForPick(wantSources), ...groupImageOpts(), ...recentOpt });
-    let fetchedNow = 0;
-    let fetchErrors = [];
-    // 标签纠错信息：本地命中时也要有（否则 notice 缺失，模型不知道实际查的是哪个词）。
-    // 做法是先算一次纠错结果，拉取路径再覆盖成实际那次的值。
-    let corrections = [];
-    if (wantTags.length) {
-      try {
-        for (const t of wantTags) {
-          const r = await resolveTagName(t);
-          if (r && !r.exact && r.postCount > 0) corrections.push({ from: t, to: r.name, postCount: r.postCount });
-        }
-      } catch { /* 纠错是增强，失败不影响取图 */ }
-    }
-    if (!picked) {
-      const r = await refreshImageLib({
-        // 按需查询时绕过冷却：用户正等着，但限定拉取量避免打爆图源
-        force: true,
-        tags: wantTags,
-        // 按需现拉**只拉够用就好**，不要用补货用的 fetchPerRun（默认 20）。
-        // 为什么：pixiv 每张要"逐个探测扩展名(1.5~4s) + 经代理下载(7~22s)"，
-        // 实测约 10~25 秒/张——拉 20 张就是 3~8 分钟，期间模型完全静默、不能回话，
-        // 群主看到的就是「又不理人了」（实测 3 分钟无响应后模型超时重试）。
-        // 一条消息只发 1 张，所以按需拉 4 张足够（还留了替换余地：群像降权、
-        // 拒过的图、扩展名探测失败等都可能让个别条目不可用）。
-        limit: Math.max(1, Number(cfg.socialV2.images?.ondemandFetchCount) || 4),
-        order: options.order,
-        maxAgeDays: options.maxAgeDays,
-        // 限定图源：只去指定站点现拉（否则会拉回别的站的图）
-        sources: wantSources.requested ? (wantSources.valid.length ? wantSources.valid : []) : undefined
-      }).catch((error) => ({ ok: false, error: error?.message ?? String(error) }));
-      if (r?.ok && r.added) fetchedNow = r.added;
-      // 把上游的失败原因带出来：里面含「上游存在的相近标签」提示，
-      // 是模型自我纠正的关键线索（否则它只能反复瞎换词）。
-      if (Array.isArray(r?.errors) && r.errors.length) fetchErrors = r.errors;
-      // 拉取路径的纠错更权威（是真正执行查询时算出来的），覆盖前置估算。
-      if (Array.isArray(lastFetchCorrections) && lastFetchCorrections.length) {
-        corrections = lastFetchCorrections.slice();
-      }
-      picked = imageStore.pickRandom({ tags: wantTags, ...sourceFilterForPick(wantSources), ...groupImageOpts(), ...recentOpt });
-    }
-    if (!picked) {
-      // 「10 分钟内发过」的图被硬过滤掉了，可能就是这个角色可用的都刚发过。
-      // 这种情况不能报"没找到"——会让模型以为这角色库里没有，进而换词乱搜。
-      // 要告诉它"是刚发过、再等等"，它才知道该怎么回应群友。
-      // 换图路径（_fromFeedback）本来就跳过这层，所以不必再判。
-      const blocked = (options._fromFeedback !== true && Array.isArray(wantTags) && wantTags.length)
-        ? imageStore.pickRandom({
-            tags: wantTags,
-            ...sourceFilterForPick(wantSources),
-            ...groupImageOpts(),
-            blockRecentMs: 0 // 关掉本层，看看"是不是只因为刚发过才没得选"
-          })
-        : null;
-      if (blocked) {
-        const windowSec = Math.round(
-          Math.max(0, Number(cfg.socialV2?.images?.recentSendBlockMs ?? 10 * 60 * 1000)) / 1000);
-        throw new Error(
-          `「${wantTags.join('/')}」的图在最近 ${Math.round(windowSec / 60)} 分钟内都发过了`
-          + `（用户要求同一张图不要重复发）。库里还有别的候选但都在冷却中，`
-          + `可以等几分钟再发，或换个角色/主题。**不要**告诉群友"没有这个角色的图"。`
-        );
-      }
-      const base = wantTags.length
-        ? `没找到「${wantTags.join('/')}」相关的图（已按需拉取${fetchedNow ? `，新入库 ${fetchedNow} 张` : '，未拉到新图'}）`
-        : '图库里没有可用的图，先让管理员刷新一次图库';
-      // 把标签提示附上（去掉图源名前缀，避免噪音）
-      const hint = fetchErrors
-        .map((e) => String(e).replace(/^[a-z_]+:\s*/i, ''))
-        .filter((e) => e.includes('相近标签'))
-        .join('；');
-      // 画师查不到时的专用提示。措辞要克制：**不能断言画师不存在**——
-      // 实测 pixiv 按画师名搜图是标签匹配，对确认存在的画师（村カルキ/大津/霧月）
-      // 同样返回 0 条，所以「搜不到」推不出「没这人」。只说明限制并给出可靠替代。
-      const artistNames = wantTags
-        .filter((t) => /^(artist|user):/i.test(String(t)))
-        .map((t) => String(t).replace(/^(artist|user):\s*/i, ''));
-      // 示例数字 ID：查询本身是数字就沿用，否则给个格式样例
-      const idExample = artistNames.find((n) => /^\d+$/.test(n)) ?? '12345678';
-      const artistHint = artistNames.length
-        ? `。注意：搜不到不代表该画师不存在——pixiv 的作品搜索按标签匹配，画师名常常不是自己作品的标签，实测对确认存在的画师也可能 0 条。别连续换拼写硬试。可靠做法：让群友给 pixiv 主页链接（原样传即可，如 https://www.pixiv.net/users/${idExample}）或数字 ID（artist:${idExample}），桥接会直接按 ID 取图；或改用 safebooru/yande.re（这两个源按画师名搜是可靠的）`
-        : '';
-      throw new Error(hint ? `${base}。${hint}${artistHint}` : `${base}${artistHint}`);
-    }
-
-    // 首轮问 web 工具/GIF 抽帧都不适用于本地图：这里直接把本地文件路径交给 OneBot，
-    // 由 SnowLuma 读本地文件上传（避免把整张图 base64 过一遍 HTTP）。
-    const [kind, id] = key.split(':');
-    const abs = path.join(imageStore.libDir, picked.entry.file);
-    // 兜底校验：路径必须在图库目录内（防元数据被污染成任意路径读取）
-    if (!path.resolve(abs).startsWith(path.resolve(imageStore.libDir))) {
-      throw new Error('图库路径越界，已拒绝发送');
-    }
-    if (!fs.existsSync(abs)) throw new Error('图片文件丢失，已从图库移除');
-
-    const segments = [];
-    if (options.replyToMessageId != null && String(options.replyToMessageId).trim() !== '') {
-      // 上游端点已把 seq 解析成真实 messageId（见 resolveReplyTargetV2），这里只做格式校验
-      const rid = String(options.replyToMessageId).trim();
-      if (!/^-?[1-9]\d*$/.test(rid)) throw new Error('replyToMessageId 必须是非零整数');
-      segments.push({ type: 'reply', data: { id: rid } });
-    }
-    segments.push({ type: 'image', data: { file: `file://${abs}` } });
-    // 出处标注单独作为一条文字消息，避免「图文混排」在 QQ 上的显示问题。
-    const ann = imageAnnotation(picked.entry);
-
-    const action = kind === 'private' ? 'send_private_msg' : 'send_group_msg';
-    const params = kind === 'private'
-      ? { user_id: Number(id), message: segments }
-      : { group_id: Number(id), message: segments };
-    const httpUrl = String(cfg.snowluma?.httpUrl || 'http://127.0.0.1:3000').replace(/\/+$/, '');
-    const res = await fetch(`${httpUrl}/${action}`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(cfg.snowluma?.accessToken ? { authorization: `Bearer ${cfg.snowluma.accessToken}` } : {})
-      },
-      body: JSON.stringify(params),
-      signal: AbortSignal.timeout(30000)
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok || body.status !== 'ok' || body.retcode !== 0) {
-      throw new Error(`发图失败: ${body.wording || body.retcode || res.status}`);
-    }
-    recordSentMessage(key, body.data, `［图库图片］${picked.entry.id.slice(0, 16)}`);
-    if (ann) {
-      // 标注失败不影响图已发出的事实
-      try { await onebotSend(kind, id, ann); } catch (error) { log(`图库来源标注发送失败: ${error?.message ?? error}`); }
-    }
-    imageStore.markUsed(picked.entry.id);
-    // 记下这张图是本会话最近发出的：群友之后说「不好看」时要能定位到它。
-    lastSentImage.set(key, { id: picked.entry.id, tags: wantTags, at: Date.now(), entry: picked.entry });
-    const times = gate.times;
-    times.push(Date.now());
-    imageSendTimes.set(key, times);
-    lastFetchCorrections = [];
-    // 记下这次是否走了现拉、花了多久：回给模型，让它知道哪些词"重"，
-    // 下次对这类词可以先回一句再发（同一会话内避免反复触发长等待）。
-    const elapsedMs = Date.now() - startedAt;
-    return {
-      sent: true,
-      entry: picked.entry,
-      annotation: ann,
-      // 来源信息单列出来，方便模型被问「这图哪来的」时直接回答：
-      //   originUrl  画师的原始发布处（多为 x.com/twitter 原帖）
-      //   sourcePage 图源站点上这张图的条目页
-      //   source     图源站名（safebooru / pixiv / yandere）
-      source: picked.entry.source,
-      artist: picked.entry.artist || '',
-      originUrl: picked.entry.page || '',
-      sourcePage: sourcePageOf(picked.entry),
-      fetchedNow,
-      tookMs: elapsedMs,
-      ...(fetchedNow > 0 && elapsedMs > 3000
-        ? { note: `这次是现拉的，花了 ${(elapsedMs / 1000).toFixed(1)} 秒（新入库 ${fetchedNow} 张）。下次要同一个词通常很快（已在本地库）。` }
-        : {}),
-      ...(corrections.length ? { tagCorrections: corrections } : {})
-    };
-  }
+  // 工厂在启动依赖就绪后绑定；函数声明保留给较早创建的路由/反馈回调。
+  function sendImageV2(key, options) { return imageSender.sendImageV2(key, options); }
 
   /**
    * 收藏一张图的**原图**到专用目录（群主说「保存」时用）。
@@ -1968,6 +1668,13 @@ async function main() {
 
   // 从 SnowLuma OneBot 拉取 QQ 账号收藏表情（fetch_custom_face_detail），并合并进本地库。
   // force=true 时忽略 TTL 强制刷新；失败时返回 null（调用方决定是否使用缓存）。
+  // 本地表情缓存读取选项：控制台「读取本地缓存信息」开关。
+  function stickerCacheOpts() {
+    return {
+      cacheDir: STICKER_CACHE_DIR,
+      readLocalCache: cfg.socialV2?.sticker?.readLocalCache !== false,
+    };
+  }
   async function syncStickerLibrary(force = false) {
     if (cfg.socialV2?.sticker?.enabled === false) return null;
     const rawTtl = Number(cfg.socialV2?.sticker?.syncTtlMs);
@@ -1988,6 +1695,7 @@ async function main() {
       }
       const fetched = response.data;
       stickerEntries = mergeStickerLibrary(stickerEntries, fetched);
+      try { syncStickerCache(stickerEntries, STICKER_CACHE_DIR); } catch (e) { log(`[sticker] 本地缓存标注写入失败: ${e?.message ?? e}`); }
       stickerSyncedAt = Date.now();
       saveStickerStoreSafe();
       log(`[sticker] 已同步 QQ 收藏表情 ${fetched.length} 个（本地库 ${stickerEntries.length} 条）`);
@@ -2002,7 +1710,7 @@ async function main() {
   async function listStickersForV2(query = '', count = 48, force = false) {
     const synced = await syncStickerLibrary(force);
     const entries = synced?.entries ?? stickerEntries;
-    return formatStickerList(entries, query, count);
+    return formatStickerList(entries, query, count, stickerCacheOpts());
   }
 
   // 取单个表情的图片字节（多模态用）。
@@ -2020,80 +1728,6 @@ async function main() {
   }
 
   // 发送一个收藏表情（按 emoji_id/url/md5 解析，发图片段）。
-  async function sendStickerV2(key, stickerRef, options = {}) {
-    // 发送前强制同步一次，确保“刚新增的表情能立即用、刚删除的表情不会继续发”。
-    const synced = await syncStickerLibrary(true);
-    const entry = findSticker(synced?.entries ?? stickerEntries, stickerRef);
-    if (!entry) throw new Error(`找不到表情 ${stickerRef}，请先用 qq_list_stickers 获取有效 id`);
-    const url = entry.url;
-    if (!url) throw new Error(`表情 ${entry.id} 没有可发送的图片地址`);
-    const [kind, id] = key.split(':');
-    const segments = [];
-    const replyToMessageId = options.replyToMessageId;
-    const atUserId = options.atUserId;
-    // 仿真常识：一条消息只能是一张表情，不能在同一气泡里附带文字说明。
-    // 想说的话请用 qq_send_message / qq_reply 作为单独气泡发送。
-    if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '') {
-      // 上层已把 seq 解析成真实 messageId（见 resolveReplyTargetV2），这里只做格式校验
-      const rid = String(replyToMessageId).trim();
-      if (!/^-?[1-9]\d*$/.test(rid)) throw new Error('replyToMessageId 必须是非零整数（消息 id 可能为负数）');
-      segments.push({ type: 'reply', data: { id: rid } });
-    }
-    if (atUserId !== undefined && atUserId !== null && String(atUserId).trim() !== '') {
-      const at = String(atUserId).trim();
-      if (!/^\d+$/.test(at)) throw new Error('atUserId 必须是正整数 QQ 号，且不能为 all');
-      segments.push({ type: 'at', data: { qq: at } });
-    }
-    // 发送前校验表情 URL 必须是公网 http(s)，防止本地库被污染后诱导 OneBot 抓取内网/本机地址。
-    try {
-      await validateFetchUrl(url);
-    } catch (error) {
-      throw new Error(`表情 ${entry.id} 的图片地址不合法，已拒绝发送：${error?.message ?? error}`);
-    }
-    segments.push({ type: 'image', data: { file: url } });
-    const action = kind === 'private' ? 'send_private_msg' : 'send_group_msg';
-    const params = kind === 'private' ? { user_id: Number(id), message: segments } : { group_id: Number(id), message: segments };
-    const httpUrl = String(cfg.snowluma?.httpUrl || 'http://127.0.0.1:3000').replace(/\/+$/, '');
-    // 与文本发送共用 sendChain，保证“先文字后表情”的真人顺序不被并发工具调用打乱。
-    let sendResolve;
-    let sendReject;
-    const sendResult = new Promise((resolve, reject) => {
-      sendResolve = resolve;
-      sendReject = reject;
-    });
-    sendChain = sendChain.then(async () => {
-      try {
-        // 真人发表情前通常会有短暂停顿，避免“文字刚发完表情立刻跟上”的机械感。
-        await sleep(randInt(800, 2000));
-        const res = await fetch(`${httpUrl}/${action}`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            ...(cfg.snowluma?.accessToken ? { authorization: `Bearer ${cfg.snowluma.accessToken}` } : {})
-          },
-          body: JSON.stringify(params),
-          signal: AbortSignal.timeout(15000)
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok || body.status !== 'ok' || body.retcode !== 0) {
-          const hint = res.status === 426 ? '（HTTP 426：snowluma.httpUrl 可能指向了 WebSocket 端口，请检查 config.json 的 snowluma.httpUrl 是否为 OneBot HTTP API 地址）' : '';
-          throw new Error(`OneBot ${action} 失败: ${body.wording || body.retcode || res.status}${hint}`);
-        }
-        recordSentMessage(key, body.data, `［表情］${entry.id.slice(0, 16)}`);
-        sendResolve(body.data);
-      } catch (error) {
-        sendReject(error);
-      }
-    });
-    const data = await sendResult;
-    // 更新本地使用统计
-    const updated = markStickerUsed(stickerEntries, entry.id, 'sticker');
-    stickerEntries = updated.entries;
-    saveStickerStoreSafe();
-    return { entry: updated.entry, messageId: data?.message_id ?? null };
-  }
-
-  // 更新本地 AI 认知（含义/标签/用法）。
   function applyStickerNoteV2(stickerId, note, tags, usage) {
     const patch = {};
     if (note !== undefined && note !== null) patch.note = String(note);
@@ -2103,6 +1737,7 @@ async function main() {
     if (!updated.entry) return null;
     stickerEntries = updated.entries;
     saveStickerStoreSafe();
+    try { writeStickerCacheRecord(STICKER_CACHE_DIR, updated.entry, { preserveLocal: false }); } catch { /* 缓存失败不影响本地库 */ }
     return updated.entry;
   }
 
@@ -2183,24 +1818,48 @@ async function main() {
     const mediaList = Array.isArray(found.media) ? found.media : [];
     if (!mediaList.length) throw new Error('这条消息没有可收藏的图片/表情');
     const media = mediaList[0];
-    let file = '';
+    let buffer = null;
     if (media?.kind === 'image') {
       // 优先取图片字节转 base64，避免 SnowLuma 直接下载聊天图片 URL 失败（带签名/防盗链）。
       // 严禁把消息里的原始 media.url / media.file 直接交给 OneBot 去下载：那会绕过 SSRF/本地文件防护。
       const img = await fetchOneBotImage(media);
       if (img?.buffer) {
-        file = 'base64://' + img.buffer.toString('base64');
+        buffer = img.buffer;
       } else {
         throw new Error('无法安全获取该图片字节，已拒绝收藏');
       }
     } else if (media?.kind === 'face') {
       const face = await fetchFaceMedia(media);
-      if (face?.buffer) file = 'base64://' + face.buffer.toString('base64');
+      if (face?.buffer) buffer = face.buffer;
     }
-    if (!file) throw new Error('无法获取该表情的图片源');
-    const addRes = await bot.request('add_custom_face', { file });
+    if (!buffer) throw new Error('无法获取该表情的图片源');
+    // QQ 收藏表情的 highway 上传上限实测 4MiB：超过后 SnowLuma 只报 `fetch failed`，
+    // 模型会误以为是网络抖动而反复重试。这里先压到目标体积，再把失败原因说清楚。
+    const maxUploadBytes = Math.max(256 * 1024, Number(cfg.socialV2?.sticker?.collect?.maxUploadBytes) || STICKER_UPLOAD_MAX_BYTES);
+    if (buffer.length > STICKER_UPLOAD_TARGET_BYTES) {
+      const shrunk = await shrinkStickerForUpload(buffer, {
+        maxBytes: Math.min(maxUploadBytes, STICKER_UPLOAD_TARGET_BYTES),
+        mimeType: media?.mimeType || '',
+        log
+      });
+      if (shrunk.shrunk) {
+        buffer = shrunk.buffer;
+        log(`[sticker] 收藏表情已压缩：${(shrunk.from / 1048576).toFixed(1)}MB → ${(shrunk.to / 1048576).toFixed(1)}MB${shrunk.static ? '（GIF 转静态首帧）' : ''}`);
+      }
+    }
+    if (buffer.length > maxUploadBytes) {
+      throw new Error(`这张表情 ${(buffer.length / 1048576).toFixed(1)}MB，超过 QQ 收藏表情 ${(maxUploadBytes / 1048576).toFixed(0)}MB 上限，压缩后仍然放不下`);
+    }
+    const file = 'base64://' + buffer.toString('base64');
+    let addRes = await bot.request('add_custom_face', { file });
+    // highway 偶发 RST：同尺寸第一次失败、隔几百毫秒重试常能过。只重试一次，避免拖住模型。
+    if ((!addRes || addRes.status !== 'ok' || addRes.retcode !== 0) && String(addRes?.wording || '').includes('fetch failed')) {
+      await new Promise((r) => setTimeout(r, 400));
+      addRes = await bot.request('add_custom_face', { file });
+    }
     if (!addRes || addRes.status !== 'ok' || addRes.retcode !== 0) {
-      throw new Error(`add_custom_face 失败: ${addRes?.wording || addRes?.retcode || 'unknown'}`);
+      const wording = addRes?.wording || addRes?.retcode || 'unknown';
+      throw new Error(`add_custom_face 失败: ${wording}${String(wording).includes('fetch failed') ? '（QQ 表情上传通道拒绝了这次请求，通常是图片超过 4MB 或上游网络抖动）' : ''}`);
     }
     const emojiId = String(addRes.data?.emoji_id || '');
     if (!emojiId) throw new Error('add_custom_face 未返回 emoji_id');
@@ -2488,14 +2147,17 @@ async function main() {
   const collectors = new Map(); // sessionId -> turn collector
   const sendToolSucceededSessions = new Set(); // sessionId：当前 turn 内 MCP 发送类工具至少成功一次
   const v2TurnStartAt = new Map(); // sessionId -> timestamp：reserved2 turn 开始时间，用于判断是否“无行动”
-  // 本回合已自动 @ 过的会话（sessionId → 上次 @ 的时间戳）。
+  // sessionId -> { turn, turnId }：当前正在进行的 DSH 回合。turnId 用于把“本回合已 @”/
+  // B站 waiter 等状态绑定到具体回合，而不是只按 sessionId 猜（同一 session 的相邻回合会互相污染）。
+  const currentTurnBySession = new Map();
+  // 本回合已自动 @ 过的会话（turnId，旧版无 turnId 时退回 sessionId → 上次 @ 的时间戳）。
   //
   // 为什么需要：模型回同一个人时常常**分多次调用** qq_send_message（实测 17:55:43 /
   // 17:55:56 / 17:56:09 三次单条发送），而 autoAt 每次都会独立掷骰。
   // 单次调用内部本来就只有第一条带 @（sendMessagesV2 里 `i === 0` 限定），
   // 但跨调用会叠加，同一个人可能连着被 @ 两三次——比不 @ 更像催债。
   // 有了这个标记：**一个回合内最多 @ 一次**。
-  const autoAtTurnDone = new Map(); // sessionId -> 时间戳
+  const autoAtTurnDone = new Map(); // sessionId#turn -> 时间戳
   const toolCallNames = new Map(); // sessionId -> Map<callId, toolName>：用于结果日志关联工具名
   const pendingSendToolCalls = new Map(); // sessionId -> Set<callId>：等待 tool/result 的发送类调用
   // reserved2 防“忘记设置唤醒条件”：key -> 当前是否等待 AI 处理唤醒回合 / 本回合已更新唤醒配置 / 连续未设置次数
@@ -2526,6 +2188,20 @@ async function main() {
   const wakeConfigMissCount = new Map();
   const reverse = new Map(); // sessionId -> conv key
   for (const [key, sessionId] of Object.entries(state.sessions)) reverse.set(sessionId, key);
+
+  // 会话级 Token 熔断（二期）：默认关闭；只在 assistant/message 的 usage 上累计，
+  // 达到阈值后由 scheduleWakeV2 / sendWakePromptV2 / B 站自主刷的闸门拦截自动行为。
+  const tokenFuse = createTokenFuse({
+    stateDir: STATE_DIR,
+    getConfig: () => cfg.socialV2?.tokenFuse || {},
+    resolveKey: (sessionId) => reverse.get(sessionId) || sessionHistory.get(sessionId) || '',
+    notifyOwner: (key, title, detail, extra) => notifyOwnerOfError(key, title, detail, extra),
+    appendActivity,
+    log
+  });
+  process.on('SIGINT', () => { try { tokenFuse.flush(); } catch {} });
+  process.on('SIGTERM', () => { try { tokenFuse.flush(); } catch {} });
+
   const sessionPromises = new Map(); // key -> create promise（防并发重复创建）
   const promptQueues = new Map(); // key -> { queue: [], running: false }：每个 QQ 会话串行投递 DSH prompt，保证 turn 顺序
 
@@ -2617,8 +2293,6 @@ async function main() {
   const FRIEND_LIST_TTL_MS = 5 * 60 * 1000;
   // 私聊被拒时「强制刷新好友列表」的全局限流时间戳。
   // 防止非好友持续发消息把桥接变成打 SnowLuma 接口的放大器（见 handleIncoming 注释）。
-  let lastFriendForceRefreshAt = 0;
-  const FRIEND_FORCE_REFRESH_MS = 30 * 1000;
   async function refreshFriendList({ force = false } = {}) {
     if (!force && Date.now() - friendIdsAt < FRIEND_LIST_TTL_MS) return friendIds;
     if (friendListLoading) return friendListLoading;
@@ -2657,27 +2331,8 @@ async function main() {
    * `deny` 优先级最高：即使命中 allow / 是好友，被 deny 也一律拒。
    * 单个好友名单来源是**缓存**（见 refreshFriendList）：同步判定，避免改动 18 个调用点。
    */
-  function privateAllowed(id, cfg) {
-    const s = String(id);
-    const denyList = (Array.isArray(cfg.deny?.private) ? cfg.deny.private : []).map(String);
-    if (denyList.includes(s)) return false;
-    const mode = cfg.allow?.privateMode ?? 'list';
-    if (mode === 'all') return true;
-    if (mode === 'friends' && friendIds.has(s)) return true;
-    // 'list' 模式、或 'friends' 下非好友（临时会话）：交回白名单
-    return allowed('private', id, cfg);
-  }
-
-  /** 当前模式是否允许该会话进入 */
-  function modeAllowed(key, kind, id, cfg, mode) {
-    if (mode === 'closed-agent') {
-      // 封闭 agent 模式：仅 owner 私聊
-      return key === `private:${String(cfg.ownerQQ ?? '')}`;
-    }
-    // chat / reserved / reserved2（仿真模式，暂同 chat 白名单）
-    if (kind === 'private') return privateAllowed(id, cfg);
-    return allowed(kind, id, cfg);
-  }
+  function privateAllowed(id, cfg) { return privateAllowedPure(id, cfg, friendIds); }
+  function modeAllowed(key, kind, id, cfg, mode) { return modeAllowedPure(key, kind, id, cfg, mode, friendIds); }
 
   /**
    * 当前这一轮请求是不是管理员发起的（用于"仅管理员可用"的写操作，如删表情）。
@@ -2707,14 +2362,12 @@ async function main() {
    * 管理员说过话"也算成授权。可用 socialV2.adminCommandWindowMs 调整。
    */
   function isOwnerTurn(key) {
-    const owner = String(cfg.ownerQQ ?? '').trim();
-    if (!owner) return false;
-    const st = getSocialV2State(key);
-    const requester = String(st?.lastRequesterId ?? '').trim();
-    if (requester && requester === owner) return true;
-    const winMs = Math.max(0, Number(cfg.socialV2?.adminCommandWindowMs ?? 5 * 60 * 1000));
-    const spokeAt = Number(st?.ownerSpokeAt) || 0;
-    return winMs > 0 && spokeAt > 0 && Date.now() - spokeAt <= winMs;
+    return isOwnerTurnPure({
+      ownerQQ: cfg.ownerQQ,
+      state: getSocialV2State(key),
+      windowMs: cfg.socialV2?.adminCommandWindowMs,
+      now: Date.now()
+    });
   }
 
   /** 当前模式下的会话预设 */
@@ -2857,6059 +2510,7 @@ async function main() {
 
   // ── 本地控制台（独立 Web 面板，不依赖 DSH WebUI） ───────────────────────────
   // 模式/角色/静默状态都存 state/*.json，桥接即时感知；此服务只读写这些文件。
-  function startConsoleServer() {
-    const port = cfg.consolePort ?? 3100;
-    // 控制台鉴权：
-    //   - `consoleAuth: false` → **不要求令牌**（用户要求：每次刷新都要填太麻烦）。
-    //   - 否则：优先用 config.consoleToken，未配置则自动生成并持久化到 state/console-token。
-    //
-    // 为什么每次刷新都会问：浏览器直接访问 `/` 是普通导航，**没法带自定义请求头**，
-    // 所以即便 localStorage 里存着令牌，根路径那一步仍然 401 → 弹 prompt；
-    // `?token=` 进来的那次会被前端 replaceState 从地址栏抹掉，于是下次刷新又丢。
-    // 关掉鉴权就绕过了这个死循环。
-    //
-    // 关闭后仍保留两道防线（见下方 CSRF 段）：
-    //   ① 只监听 127.0.0.1（外网/局域网访问不到）；
-    //   ② 写操作必须是 application/json 且 Origin 为本机页面——
-    //      这能挡住「别的网页用表单/图片/跨站 fetch 打 /api/restart 这类破坏性接口」。
-    const authDisabled = cfg.consoleAuth === false;
-    const configuredToken = String(cfg.consoleToken ?? '').trim();
-    const tokenValid = configuredToken.length >= 16 && configuredToken.length <= 128 && /^[A-Za-z0-9_-]+$/.test(configuredToken);
-    let consoleToken = authDisabled ? '' : (tokenValid ? configuredToken : loadOrCreateConsoleToken());
-    if (authDisabled) log('控制台鉴权已关闭（config.consoleAuth=false）：不校验令牌，仅监听 127.0.0.1 + 写操作校验 Origin');
-    else if (!tokenValid && configuredToken) log(`控制台 config.consoleToken 长度/字符不合法，已忽略并回退到自动生成令牌`);
-    else if (!configuredToken) log(`控制台未配置 consoleToken，已自动生成：${String(consoleToken).slice(0, 6)}…（完整值保存在 state/console-token）`);
-    // 二代会话级隔离：MCP 工具调用时若带 x-agent-token，则必须匹配该会话的 agentToken。
-    // 控制台/管理端请求不带此头，仍走 consoleToken 管理通道。
-    const agentTokenOk = (key, token) => {
-      const canonical = canonicalV2Key(key);
-      const st = socialV2.conversations.get(canonical ?? key);
-      return !!st && !!st.agentToken && token === st.agentToken;
-    };
-    // 二代会话工具必须仍命中当前模式的白名单/准入；避免白名单移除后旧 agentToken 继续读状态。
-    const v2SessionAllowed = isSessionAllowedInCurrentMode;
-    const v2ToolEnabled = (flag) => cfg.socialV2?.tools?.[flag] !== false;
-    const server = http.createServer(async (req, res) => {
-      const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
-      const SECURITY_HEADERS = {
-        'X-Frame-Options': 'DENY',
-        // img-src / media-src / connect-src 需要单独放行 blob:。
-        //
-        // 为什么（两次都踩到，症状都极隐蔽）：
-        //   ① 2026-10-21「生成报表图」：fetch → Blob → createObjectURL → <img>。
-        //      `default-src 'self'` 不含 blob:，图被静默拦掉——
-        //      img 在、complete 为 true、naturalWidth 却是 0，页面只剩 alt 文字。
-        //   ② 2026-10-22「试听一句」：<audio src=blob:...> 同理。
-        //      media-src 没放行 → 播放器空白；页面内 fetch(blob:) 也失败
-        //      （TypeError: Failed to fetch），因为 connect-src 也没放行。
-        //      表面看是"按钮点了没反应"，实际是 CSP 静默拦截。
-        // 只放开这三类（分别是图片、音视频、同页 fetch），script-src 仍限 self。
-        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; "
-          + "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
-          + "media-src 'self' blob: data:; connect-src 'self' blob: data:",
-        'Cache-Control': 'no-store',
-        'X-Content-Type-Options': 'nosniff',
-        'Referrer-Policy': 'no-referrer'
-      };
-      const sendJson = (obj, status = 200) => {
-        res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...SECURITY_HEADERS });
-        res.end(JSON.stringify(obj, null, 2));
-      };
-      // 请求体读取。默认上限 1MB（控制台/配置类请求都远小于此，
-      // 收得紧一些可以挡掉恶意大包），个别需要传图片的路由可以显式放宽。
-      //
-      // 为什么要能放宽（2026-10-19）：超分回传要 POST 一张 base64 图片，
-      // 800×652 的 PNG 就 600KB、编码后 800KB，稍微大一点就撞 413。
-      // 但**不放宽全局**——只有白名单里的路由能申请大上限，其余仍受 1MB 约束。
-      //
-      // 注意这里管的是**第一跳**（MCP → 桥接），不是发到 QQ 的那一跳：
-      //   链路是 MCP --base64--> 桥接(:3100) --base64--> OneBot(:3000) --> QQ
-      //   第一跳放宽到 8MB 只是让请求进得来；第二跳受 OneBot 自身限制（实测 base64
-      //   超过约 2MB 就直接 ECONNRESET，且不返回错误码），那个改不了，只能靠
-      //   MCP 侧提前压到 1.3MB 原始字节（≈1.73MB base64）。两者是**并存**的，
-      //   不是二选一：只放宽第一跳，图会在第二跳静默失败（实测 6.8MB base64：
-      //   第一跳 500「发送失败: fetch failed」= 它成功收到了大图、但转发时被 OneBot 拒绝）。
-      const BIG_BODY_ROUTES = new Set(['/api/socialV2/send-upscaled']);
-      const readBody = (options = {}) => new Promise((resolve, reject) => {
-        // 路由级上限：只允许白名单路由申请，且不得超过 8MB（够放 3~4MB 图片的 base64）。
-        const routeWantsBig = BIG_BODY_ROUTES.has(String(options.route ?? ''));
-        const MAX_BODY_BYTES = routeWantsBig
-          ? Math.min(8_000_000, Number(options.maxBytes) || 8_000_000)
-          : 1_000_000;
-        const chunks = [];
-        let total = 0;
-        let settled = false;
-        let bodyTimer = null;
-        const fail = (status, message) => {
-          if (settled) return;
-          settled = true;
-          if (bodyTimer) clearTimeout(bodyTimer);
-          const err = new Error(message);
-          err.statusCode = status;
-          reject(err);
-        };
-        const done = (val) => {
-          if (settled) return;
-          settled = true;
-          if (bodyTimer) clearTimeout(bodyTimer);
-          resolve(val);
-        };
-        // 提前按 Content-Length 拒绝超限请求体
-        const declared = Number(req.headers['content-length']);
-        if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
-          fail(413, '请求体过大（超过 1MB）');
-          return;
-        }
-        bodyTimer = setTimeout(() => fail(400, '请求体读取超时'), 30000);
-        req.on('data', (c) => {
-          if (settled) return;
-          const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
-          total += buf.length;
-          if (total > MAX_BODY_BYTES) {
-            req.pause();
-            fail(413, '请求体过大（超过 1MB）');
-            return;
-          }
-          chunks.push(buf);
-        });
-        req.on('end', () => {
-          if (settled) return;
-          const data = Buffer.concat(chunks).toString('utf8');
-          if (!data.trim()) { done({}); return; }
-          let parsed;
-          try { parsed = JSON.parse(data); } catch { fail(400, '请求体必须是合法 JSON'); return; }
-          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            fail(400, '请求体必须是 JSON 对象');
-            return;
-          }
-          done(parsed);
-        });
-        // 请求体超限/连接异常时也要结束等待，避免 handler 悬挂
-        req.on('error', () => fail(400, '请求体读取失败'));
-        req.on('aborted', () => fail(400, '请求体读取中断'));
-      });
-      // 控制台鉴权：所有请求需带 x-console-token 或 ?token=
-      // 注意：MCP 工具（AI 侧）调用时**同时**带 x-console-token 和 x-agent-token
-      // （见 mcp-snowluma-safe.js 的 agentApi：它会读 state/console-token 补上），
-      // 所以这里不需要为 agent 调用开豁免——曾误加过一个 AGENT_CALLABLE 白名单，
-      // 既多余（请求本来就带 console token）又危险（会绕开控制台令牌）。
-      const suppliedToken = url.searchParams.get('token') ?? req.headers['x-console-token'];
-      if (consoleToken && suppliedToken !== consoleToken) {
-        if (req.method === 'GET' && url.pathname === '/') {
-          res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });
-          res.end('<!doctype html><meta charset="utf-8"><title>需要令牌</title><script>const t=prompt(\'请输入控制台访问令牌\');if(t)location.href=\'/?token=\'+encodeURIComponent(t);</script>');
-        } else {
-          sendJson({ ok: false, error: '未授权：请提供控制台访问令牌' }, 401);
-        }
-        return;
-      }
-      // CSRF 防护：所有写操作必须是 application/json，且（若带 Origin）必须来自本机页面。
-      // 默认未配 consoleToken 时，这可阻止任意网页用表单/跨站请求触发
-      // /api/restart、/api/workspace/reset、/api/role 等破坏性接口。
-      if (req.method !== 'GET') {
-        const ctype = String(req.headers['content-type'] ?? '');
-        if (!ctype.toLowerCase().includes('application/json')) {
-          sendJson({ ok: false, error: '请求必须是 application/json' }, 415);
-          return;
-        }
-        const origin = req.headers['origin'];
-        if (origin) {
-          let originHost = '';
-          try { originHost = new URL(String(origin)).host; } catch {}
-          if (![`127.0.0.1:${port}`, `localhost:${port}`].includes(originHost)) {
-            sendJson({ ok: false, error: '跨站请求被拒绝' }, 403);
-            return;
-          }
-        }
-      }
-      try {
-        // 空 agent token 一律拒绝，防止 MCP 传入空字符串时被当作“管理端/无 token”绕过校验
-        if (req.headers['x-agent-token'] === '') {
-          sendJson({ ok: false, error: 'agent token 不能为空' }, 403);
-          return;
-        }
-        // 暂停二代 AI 时，所有带 agent token 的 v2 工具调用一律拒绝
-        if (socialV2.paused && req.headers['x-agent-token'] && (url.pathname.startsWith('/api/socialV2/') || url.pathname.startsWith('/api/send/') || url.pathname.startsWith('/api/images/'))) {
-          sendJson({ ok: false, error: 'AI 已暂停，当前不允许执行 v2 工具' }, 403);
-          return;
-        }
-        // 二代模式总开关：关闭后 agent token 调用的 v2 工具全部拒绝（控制台仍可管理）
-        if (cfg.socialV2?.enabled === false && req.headers['x-agent-token'] && (url.pathname.startsWith('/api/socialV2/') || url.pathname.startsWith('/api/send/') || url.pathname.startsWith('/api/images/'))) {
-          sendJson({ ok: false, error: '二代模式已关闭，当前不允许执行 v2 工具' }, 403);
-          return;
-        }
-        // 模式隔离：带 agent token 的 v2 接口只允许在 reserved2 模式下使用
-        if (req.headers['x-agent-token'] && url.pathname.startsWith('/api/socialV2/') && currentMode !== 'reserved2') {
-          sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403);
-          return;
-        }
-        // 管理端专用 v2 接口：带 agent token 的请求一律拒绝，防止 MCP 工具越权访问控制台功能
-        const adminOnlyV2Paths = ['/api/socialV2/config', '/api/socialV2/activity', '/api/socialV2/reset', '/api/socialV2/states', '/api/socialV2/wake'];
-        if (req.headers['x-agent-token'] && (adminOnlyV2Paths.includes(url.pathname) || (url.pathname === '/api/socialV2/feedback' && req.method === 'GET') || (url.pathname === '/api/socialV2/tool-log' && req.method === 'GET'))) {
-          sendJson({ ok: false, error: '该接口仅控制台可用' }, 403);
-          return;
-        }
-        // 表情库管理接口只允许控制台（带 agent token 的 v2 工具一律拒绝，防止越权改库）
-        if (req.headers['x-agent-token'] && (url.pathname === '/api/stickers' || url.pathname.startsWith('/api/stickers/'))) {
-          sendJson({ ok: false, error: '该接口仅控制台可用' }, 403);
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/') {
-          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });
-          try {
-            res.end(fs.readFileSync(path.join(ROOT, 'public', 'console.html'), 'utf8'));
-          } catch {
-            res.end('控制台页面缺失：qq-bridge/public/console.html');
-          }
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/status') {
-          const rs = readRoleState();
-          sendJson({
-            mode: currentMode,
-            closedAgentPreset,
-            role: rs.role ?? null,
-            roleMode: rs.mode ?? 'active',
-            dshReady,
-            ownerQQ: cfg.ownerQQ ?? null,
-            allowGroups: cfg.allow?.groups ?? [],
-            allowPrivate: cfg.allow?.private ?? [],
-            // 私聊准入策略与好友数：控制台状态栏按它显示"好友自动放行/纯黑名单/白名单"
-            privateMode: cfg.allow?.privateMode ?? 'list',
-            friendCount: friendIds.size,
-            socialV2Paused: socialV2.paused,
-            activity: readActivityTail(100)
-          });
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/presets') {
-          let presets = [];
-          try {
-            const { presets: list } = unwrap(await api.agentPresets.list({}), 'agentPreset.list');
-            presets = list.map((p) => ({ id: p.id, trust: p.trust ?? 'system' }));
-          } catch {}
-          sendJson({ presets });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/mode') {
-          const body = await readBody();
-          if (!['chat', 'closed-agent', 'reserved', 'reserved2'].includes(body.mode)) {
-            sendJson({ ok: false, error: 'mode 必须是 chat / closed-agent / reserved / reserved2' }, 400);
-            return;
-          }
-          const existing = readJsonSafe(path.join(STATE_DIR, 'mode.json'), {});
-          const next = {
-            mode: body.mode,
-            ...(body.closedAgentPreset ? { closedAgentPreset: String(body.closedAgentPreset) } : { closedAgentPreset: existing.closedAgentPreset ?? 'router-standard' })
-          };
-          atomicWriteJson(path.join(STATE_DIR, 'mode.json'), next);
-          if (next.closedAgentPreset) closedAgentPreset = next.closedAgentPreset;
-          if (currentMode === 'reserved' && body.mode !== 'reserved') {
-            cleanupSocialForModeChange();
-            log('控制台：模式离开一代仿真模式，清理社交状态');
-          }
-          if (currentMode === 'reserved2' && body.mode !== 'reserved2') {
-            clearAllSocialV2Timers();
-            drainAllPromptQueues('模式切换，已取消排队中的投递');
-            log('控制台：模式离开二代仿真模式，清理 reserved2 定时器与排队投递');
-          }
-          currentMode = body.mode;
-          lastMode = body.mode;
-          if (body.mode === 'reserved2') {
-            for (const key of socialV2.conversations.keys()) {
-              setupSleepTimerV2(key);
-              scheduleProactiveCheckV2(key);
-            }
-            log('控制台：模式进入二代仿真模式，重建有限睡眠定时器');
-          }
-          log(`控制台：模式已设置为 ${body.mode}${next.closedAgentPreset ? `（closed-agent preset: ${next.closedAgentPreset}）` : ''}`);
-          sendJson({ ok: true, mode: body.mode, closedAgentPreset: next.closedAgentPreset });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/role') {
-          const body = await readBody();
-          const rs = readRoleState();
-          if (body.role && typeof body.role === 'string') {
-            const name = sanitizeRoleName(body.role);
-            if (!fs.existsSync(path.join(ROOT, 'roles', name + '.md'))) {
-              sendJson({ ok: false, error: `角色「${name}」不存在（roles/${name}.md）` }, 400);
-              return;
-            }
-            writeRoleState(name, rs.mode);
-            log(`控制台：角色已设置为 ${name}`);
-            sendJson({ ok: true, role: name });
-          } else {
-            writeRoleState(null, rs.mode);
-            log('控制台：角色已清除');
-            sendJson({ ok: true, role: null });
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/role-mode') {
-          const body = await readBody();
-          const rs = readRoleState();
-          const mode = body.mode === 'silent' ? 'silent' : 'active';
-          writeRoleState(rs.role, mode);
-          log(`控制台：静默模式 ${mode === 'silent' ? '开启' : '关闭'}`);
-          sendJson({ ok: true, roleMode: mode });
-          return;
-        }
-        // ── 人格管理 ──────────────────────────────────────────────────────────
-        if (req.method === 'GET' && url.pathname === '/api/roles') {
-          const rs = readRoleState();
-          sendJson({ roles: listRoles(), current: rs.role ?? null });
-          return;
-        }
-        // 读取单个角色的 Markdown 原文（控制台用来在卡片里渲染人格内容）。
-        // 直接读文件而不是维护副本：角色卡是热更新的（改完下次读就生效），
-        // 缓存一份反而会出现"控制台看到的和实际用的不一致"。
-        if (req.method === 'GET' && url.pathname === '/api/role-content') {
-          const name = String(url.searchParams.get('name') ?? '').trim();
-          if (!name) { sendJson({ ok: false, error: 'name 不能为空' }, 400); return; }
-          // 走与创建/设置同一套名字校验，既防路径穿越（../）也保证与列表口径一致
-          const safe = sanitizeRoleName(name);
-          if (!safe || safe !== name) { sendJson({ ok: false, error: '角色名不合法' }, 400); return; }
-          const roleFile = path.join(ROOT, 'roles', safe + '.md');
-          if (!fs.existsSync(roleFile)) { sendJson({ ok: false, error: `角色「${safe}」不存在` }, 404); return; }
-          try {
-            const content = fs.readFileSync(roleFile, 'utf8');
-            sendJson({ ok: true, name: safe, content, bytes: Buffer.byteLength(content, 'utf8') });
-          } catch (error) {
-            sendJson({ ok: false, error: `读取失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/roles/create') {
-          const body = await readBody();
-          const name = sanitizeRoleName(body.name);
-          const content = String(body.content ?? '').trim();
-          if (!name) { sendJson({ ok: false, error: '角色名不能为空（仅限中文/字母/数字/横线）' }, 400); return; }
-          if (!content) { sendJson({ ok: false, error: '角色内容不能为空' }, 400); return; }
-          if (name === 'README') { sendJson({ ok: false, error: '该名称被保留' }, 400); return; }
-          const roleFile = path.join(ROOT, 'roles', name + '.md');
-          if (fs.existsSync(roleFile)) { sendJson({ ok: false, error: `角色「${name}」已存在` }, 400); return; }
-          fs.mkdirSync(path.join(ROOT, 'roles'), { recursive: true });
-          atomicWriteText(roleFile, content + (content.endsWith('\n') ? '' : '\n'));
-          log(`控制台：创建人格「${name}」`);
-          sendJson({ ok: true, role: name });
-          return;
-        }
-        // 删除角色卡。控制台原先只能建不能删，测试也只能直接删文件——但测试脚本
-        // 与桥接未必在同一个目录（跑在别处的克隆会删错地方、留下永远清不掉的角色）。
-        // 走这个端点后，路径由桥接自己解析，调用方在哪儿都一致。
-        if (req.method === 'POST' && url.pathname === '/api/roles/delete') {
-          const body = await readBody();
-          const name = sanitizeRoleName(body.name);
-          if (!name) { sendJson({ ok: false, error: '角色名不能为空' }, 400); return; }
-          if (name === 'README') { sendJson({ ok: false, error: '该名称被保留' }, 400); return; }
-          const roleFile = path.join(ROOT, 'roles', name + '.md');
-          if (!fs.existsSync(roleFile)) { sendJson({ ok: false, error: `角色「${name}」不存在` }, 404); return; }
-          // 正在使用的角色被删掉会让 current-role.json 指向空文件，先清掉当前角色。
-          // 保留原 mode，否则删个角色会顺手把静默/活跃状态重置掉。
-          try {
-            const rs = readRoleState();
-            if (rs.role === name) writeRoleState(null, rs.mode);
-          } catch { /* 状态损坏不应阻止删除文件 */ }
-          try {
-            fs.unlinkSync(roleFile);
-          } catch (error) {
-            sendJson({ ok: false, error: `删除失败：${error?.message ?? error}` }, 500);
-            return;
-          }
-          log(`控制台：删除人格「${name}」`);
-          sendJson({ ok: true, role: name, roles: listRoles() });
-          return;
-        }
-        // ── 黑话库管理 ──────────────────────────────────────────────────────
-        if (req.method === 'GET' && url.pathname === '/api/slang') {
-          const status = url.searchParams.get('status') || '';
-          const list = status ? slangEntries.filter((e) => e.status === status) : slangEntries;
-          sendJson({ entries: list, config: cfg.slang });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/slang') {
-          const body = await readBody();
-          const content = String(body.content ?? '').trim();
-          if (!content) { sendJson({ ok: false, error: '黑话内容不能为空' }, 400); return; }
-          if (slangEntries.some((e) => e.content === content)) { sendJson({ ok: false, error: `黑话「${content}」已存在` }, 400); return; }
-          const entry = createSlangEntry({
-            content,
-            meaning: String(body.meaning ?? '').trim(),
-            usage: String(body.usage ?? '').trim(),
-            example: String(body.example ?? '').trim(),
-            risk: String(body.risk ?? '').trim(),
-            sources: Array.isArray(body.sources) ? body.sources.map(String).filter(Boolean) : [],
-            status: body.status === SLANG_STATUS.CANDIDATE ? SLANG_STATUS.CANDIDATE : SLANG_STATUS.CONFIRMED,
-            source: 'manual',
-            evidence: Array.isArray(body.evidence) ? body.evidence : []
-          });
-          slangEntries.push(entry);
-          saveSlangStore();
-          log(`控制台：新增黑话「${content}」`);
-          sendJson({ ok: true, entry });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/slang/clear') {
-          const body = await readBody();
-          const status = String(body.status ?? '').trim();
-          if (status && ![SLANG_STATUS.CANDIDATE, SLANG_STATUS.CONFIRMED, SLANG_STATUS.REJECTED].includes(status)) {
-            sendJson({ ok: false, error: `无效的 status：${status}，仅支持 candidate/confirmed/rejected 或留空全部删除` }, 400);
-            return;
-          }
-          let removedCount = 0;
-          if (status) {
-            removedCount = slangEntries.filter((e) => e.status === status).length;
-            slangEntries = slangEntries.filter((e) => e.status !== status);
-          } else {
-            removedCount = slangEntries.length;
-            slangEntries = [];
-            // 清空所有时同步清掉待提取窗口和冷却，避免“删了又回来”
-            slangWindows.clear();
-            slangExtractionCooldowns.clear();
-            slangSubmitTimes.clear();
-            slangResearchingIds.clear();
-          }
-          saveSlangStore();
-          log(`控制台：清空黑话 ${removedCount} 条${status ? `（${status}）` : ''}`);
-          sendJson({ ok: true, removedCount });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/slang/batch-delete') {
-          const body = await readBody();
-          const ids = Array.isArray(body.ids) ? body.ids.map(String).filter(Boolean) : [];
-          const status = String(body.status ?? '').trim();
-          if (ids.length) {
-            const idSet = new Set(ids);
-            const before = slangEntries.length;
-            slangEntries = slangEntries.filter((e) => !idSet.has(e.id));
-            const removedCount = before - slangEntries.length;
-            if (!removedCount) { sendJson({ ok: false, error: '没有匹配到要删除的黑话' }, 404); return; }
-            saveSlangStore();
-            log(`控制台：批量删除黑话 ${removedCount} 条`);
-            sendJson({ ok: true, removedCount });
-            return;
-          }
-          if (status && ![SLANG_STATUS.CANDIDATE, SLANG_STATUS.CONFIRMED, SLANG_STATUS.REJECTED].includes(status)) {
-            sendJson({ ok: false, error: `无效的 status：${status}` }, 400);
-            return;
-          }
-          if (!status) { sendJson({ ok: false, error: '请提供 ids 或 status' }, 400); return; }
-          const removedCount = slangEntries.filter((e) => e.status === status).length;
-          slangEntries = slangEntries.filter((e) => e.status !== status);
-          saveSlangStore();
-          log(`控制台：批量删除黑话 ${removedCount} 条（${status}）`);
-          sendJson({ ok: true, removedCount });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/slang/batch-confirm') {
-          const body = await readBody();
-          const ids = Array.isArray(body.ids) ? body.ids.map(String).filter(Boolean) : [];
-          if (!ids.length) { sendJson({ ok: false, error: '请选择要确认的黑话' }, 400); return; }
-          let confirmedCount = 0;
-          let skippedCount = 0;
-          const skipped = [];
-          for (const id of ids) {
-            const idx = slangEntries.findIndex((e) => e.id === id);
-            if (idx < 0) { skippedCount++; skipped.push({ id, reason: '不存在' }); continue; }
-            const entry = slangEntries[idx];
-            if (entry.status !== SLANG_STATUS.CANDIDATE) { skippedCount++; skipped.push({ id, content: entry.content, reason: '不是候选' }); continue; }
-            if (!entry.meaning || !String(entry.meaning).trim()) { skippedCount++; skipped.push({ id, content: entry.content, reason: '缺少含义' }); continue; }
-            entry.status = SLANG_STATUS.CONFIRMED;
-            entry.updatedAt = new Date().toISOString();
-            confirmedCount++;
-          }
-          if (confirmedCount) saveSlangStore();
-          log(`控制台：批量确认黑话 ${confirmedCount} 条，跳过 ${skippedCount} 条`);
-          sendJson({ ok: true, confirmedCount, skippedCount, skipped: skipped.slice(0, 20) });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/slang/batch-reject') {
-          const body = await readBody();
-          const ids = Array.isArray(body.ids) ? body.ids.map(String).filter(Boolean) : [];
-          if (!ids.length) { sendJson({ ok: false, error: '请选择要拒绝的黑话' }, 400); return; }
-          let rejectedCount = 0;
-          for (const id of ids) {
-            const idx = slangEntries.findIndex((e) => e.id === id);
-            if (idx < 0) continue;
-            const entry = slangEntries[idx];
-            if (entry.status === SLANG_STATUS.REJECTED) continue;
-            entry.status = SLANG_STATUS.REJECTED;
-            entry.updatedAt = new Date().toISOString();
-            rejectedCount++;
-          }
-          if (rejectedCount) saveSlangStore();
-          log(`控制台：批量拒绝黑话 ${rejectedCount} 条`);
-          sendJson({ ok: true, rejectedCount });
-          return;
-        }
-        const slangMatch = url.pathname.match(/^\/api\/slang\/([^/]+)(?:\/(confirm|reject))?$/);
-        if (req.method === 'PATCH' && slangMatch && !slangMatch[2]) {
-          const id = slangMatch[1];
-          const idx = slangEntries.findIndex((e) => e.id === id);
-          if (idx < 0) { sendJson({ ok: false, error: '黑话不存在' }, 404); return; }
-          const body = await readBody();
-          const entry = { ...slangEntries[idx] };
-          if (body.content !== undefined) entry.content = String(body.content ?? '').trim();
-          if (body.content !== undefined && slangEntries.some((e) => e.id !== id && e.content === entry.content)) {
-            sendJson({ ok: false, error: `黑话「${entry.content}」已存在` }, 400);
-            return;
-          }
-          if (body.meaning !== undefined) entry.meaning = String(body.meaning ?? '').trim();
-          if (body.usage !== undefined) entry.usage = String(body.usage ?? '').trim();
-          if (body.example !== undefined) entry.example = String(body.example ?? '').trim();
-          if (body.risk !== undefined) entry.risk = String(body.risk ?? '').trim();
-          if (body.sources !== undefined) entry.sources = Array.isArray(body.sources) ? body.sources.map(String).filter(Boolean).slice(0, 10) : [];
-          if (body.status !== undefined && [SLANG_STATUS.CANDIDATE, SLANG_STATUS.CONFIRMED, SLANG_STATUS.REJECTED].includes(body.status)) entry.status = body.status;
-          if (!entry.content) { sendJson({ ok: false, error: '黑话内容不能为空' }, 400); return; }
-          entry.updatedAt = new Date().toISOString();
-          slangEntries[idx] = entry;
-          saveSlangStore();
-          log(`控制台：更新黑话「${entry.content}」`);
-          sendJson({ ok: true, entry });
-          return;
-        }
-        if (req.method === 'POST' && slangMatch && slangMatch[2] === 'confirm') {
-          const id = slangMatch[1];
-          const idx = slangEntries.findIndex((e) => e.id === id);
-          if (idx < 0) { sendJson({ ok: false, error: '黑话不存在' }, 404); return; }
-          const body = await readBody();
-          const entry = slangEntries[idx];
-          if (body.meaning !== undefined) entry.meaning = String(body.meaning ?? '').trim();
-          if (body.usage !== undefined) entry.usage = String(body.usage ?? '').trim();
-          if (body.example !== undefined) entry.example = String(body.example ?? '').trim();
-          if (body.risk !== undefined) entry.risk = String(body.risk ?? '').trim();
-          if (body.sources !== undefined) entry.sources = Array.isArray(body.sources) ? body.sources.map(String).filter(Boolean).slice(0, 10) : [];
-          if (!entry.meaning) {
-            sendJson({ ok: false, error: '请先填写含义再确认，否则不会注入 AI 上下文' }, 400);
-            return;
-          }
-          entry.status = SLANG_STATUS.CONFIRMED;
-          entry.updatedAt = new Date().toISOString();
-          saveSlangStore();
-          log(`控制台：确认黑话「${entry.content}」`);
-          sendJson({ ok: true, entry });
-          return;
-        }
-        if (req.method === 'POST' && slangMatch && slangMatch[2] === 'reject') {
-          const id = slangMatch[1];
-          const idx = slangEntries.findIndex((e) => e.id === id);
-          if (idx < 0) { sendJson({ ok: false, error: '黑话不存在' }, 404); return; }
-          const entry = slangEntries[idx];
-          entry.status = SLANG_STATUS.REJECTED;
-          entry.updatedAt = new Date().toISOString();
-          saveSlangStore();
-          log(`控制台：拒绝黑话「${entry.content}」`);
-          sendJson({ ok: true, entry });
-          return;
-        }
-        if (req.method === 'DELETE' && slangMatch && !slangMatch[2]) {
-          const id = slangMatch[1];
-          const idx = slangEntries.findIndex((e) => e.id === id);
-          if (idx < 0) { sendJson({ ok: false, error: '黑话不存在' }, 404); return; }
-          const [removed] = slangEntries.splice(idx, 1);
-          saveSlangStore();
-          log(`控制台：删除黑话「${removed.content}」`);
-          sendJson({ ok: true, removed });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/slang/extract') {
-          if (cfg.slang?.enabled === false) { sendJson({ ok: false, error: '黑话学习已关闭（slang.enabled=false）' }, 400); return; }
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          if (key && slangWindows.has(key)) {
-            queueSlangTask(() => runSlangExtraction(key));
-            sendJson({ ok: true, key });
-          } else {
-            const firstKey = slangWindows.keys().next().value;
-            if (!firstKey) { sendJson({ ok: false, error: '当前没有可学习消息窗口' }, 400); return; }
-            queueSlangTask(() => runSlangExtraction(firstKey));
-            sendJson({ ok: true, key: firstKey });
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/slang/research') {
-          if (cfg.slang?.enabled === false) { sendJson({ ok: false, error: '黑话学习已关闭（slang.enabled=false）' }, 400); return; }
-          const body = await readBody();
-          const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
-          const candidates = ids.length
-            ? slangEntries.filter((e) => ids.includes(e.id) && e.status === SLANG_STATUS.CANDIDATE)
-            : slangEntries.filter((e) => e.status === SLANG_STATUS.CANDIDATE);
-          if (!candidates.length) { sendJson({ ok: false, error: '没有可研究的候选黑话' }, 400); return; }
-          queueSlangTask(() => runSlangResearch(candidates));
-          sendJson({ ok: true, count: candidates.length });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/slang/config') {
-          const body = await readBody();
-          const oldPreset = cfg.slang?.learnerPreset;
-          const oldWorkspaceTitle = cfg.slang?.workspaceTitle;
-          const configFile = path.join(ROOT, 'config.json');
-          const file = readJsonSafe(configFile, null, true);
-          const merged = { ...(file.slang ?? {}), ...body };
-          if (typeof merged.enabled === 'boolean') merged.enabled = merged.enabled;
-          else if (merged.enabled !== undefined) merged.enabled = merged.enabled === true;
-          if (merged.extractMinMessages !== undefined) merged.extractMinMessages = Math.max(1, Math.round(Number(merged.extractMinMessages) || 1));
-          if (merged.extractCooldownMs !== undefined) merged.extractCooldownMs = Math.max(0, Math.round(Number(merged.extractCooldownMs) || 0));
-          if (merged.injectMax !== undefined) merged.injectMax = Math.min(30, Math.max(1, Math.round(Number(merged.injectMax) || 1)));
-          if (merged.autoResearch !== undefined) merged.autoResearch = merged.autoResearch === true;
-          if (merged.learnerPreset !== undefined) merged.learnerPreset = String(merged.learnerPreset ?? '').trim();
-          if (merged.workspaceTitle !== undefined) merged.workspaceTitle = String(merged.workspaceTitle ?? '').trim() || 'QQ 黑话学习';
-          if (body.inferenceThresholds !== undefined) {
-            const raw = Array.isArray(body.inferenceThresholds)
-              ? body.inferenceThresholds
-              : String(body.inferenceThresholds).split(/[,，\s]+/);
-            merged.inferenceThresholds = [...new Set(raw.map((n) => Math.max(1, Math.round(Number(n) || 1))))].sort((a, b) => a - b);
-            if (!merged.inferenceThresholds.length) merged.inferenceThresholds = [2, 4, 8];
-          }
-          file.slang = merged;
-          atomicWriteJson(configFile, file);
-          cfg.slang = { ...cfg.slang, ...merged };
-          if (body.learnerPreset !== undefined && String(body.learnerPreset ?? '').trim() !== String(oldPreset ?? '')) {
-            invalidateSlangLearnerSession();
-            log('黑话学习 preset 已变更，已重置学习会话');
-          } else if (body.workspaceTitle !== undefined && String(body.workspaceTitle ?? '').trim() !== String(oldWorkspaceTitle ?? '')) {
-            invalidateSlangLearnerSession();
-            log('黑话学习工作区名已变更，已重置学习会话');
-          }
-          log('控制台：黑话系统配置已更新');
-          sendJson({ ok: true, config: cfg.slang });
-          return;
-        }
-        // ── 会话查看 ──────────────────────────────────────────────────────────
-        if (req.method === 'GET' && url.pathname === '/api/sessions') {
-          const list = [];
-          for (const [key, sessionId] of Object.entries(state.sessions)) {
-            list.push({ key, sessionId, owner: key === `private:${String(cfg.ownerQQ ?? '')}` });
-          }
-          sendJson({ sessions: list });
-          return;
-        }
-        // ── 挂起审批 / 提问 ───────────────────────────────────────────────────
-        if (req.method === 'GET' && url.pathname === '/api/pending') {
-          const list = [];
-          for (const [key, p] of pending.entries()) {
-            list.push({
-              key,
-              kind: p.kind,
-              sessionId: p.sessionId,
-              ...(p.kind === 'approval' ? { toolName: p.toolName, reason: p.reason, approvalId: p.approvalId } : {}),
-              ...(p.kind === 'question' ? { questions: p.questions } : {})
-            });
-          }
-          sendJson({ pending: list });
-          return;
-        }
-        // ── 白名单可视化编辑（写 config.json + 热更新内存） ───────────────────
-        if (req.method === 'GET' && url.pathname === '/api/whitelist') {
-          sendJson({
-            allow: cfg.allow ?? { private: [], groups: [] },
-            deny: cfg.deny ?? { private: [], groups: [] },
-            ownerQQ: cfg.ownerQQ ?? null,
-            // 私聊准入策略（'list' 白名单 / 'friends' 好友自动放行 / 'all' 纯黑名单）
-            privateMode: cfg.allow?.privateMode ?? 'list',
-            // 好友数：'friends' 模式下控制台据此提示"当前生效的好友有多少"
-            friendCount: friendIds.size
-          });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/whitelist') {
-          const body = await readBody();
-          const toNum = (arr) => Array.isArray(arr) ? [...new Set(arr.map((x) => Number(String(x).trim())).filter((n) => Number.isFinite(n)))] : undefined;
-          const configFile = path.join(ROOT, 'config.json');
-          // fail-fast：配置文件损坏时直接 500，绝不回写，避免把整个配置清成只剩 allow/deny/ownerQQ
-          const file = readJsonSafe(configFile, null, true);
-          // 私聊准入策略：可改。缺省沿用原值，非法值回落到 'list'（fail-closed）。
-          const privateMode = body.allow?.privateMode !== undefined
-            ? normalizePrivateMode(body.allow.privateMode)
-            : (file.allow?.privateMode ?? 'list');
-          const allow = {
-            private: toNum(body.allow?.private) ?? (file.allow?.private ?? []),
-            groups: toNum(body.allow?.groups) ?? (file.allow?.groups ?? []),
-            privateMode
-          };
-          const deny = {
-            private: toNum(body.deny?.private) ?? (file.deny?.private ?? []),
-            groups: toNum(body.deny?.groups) ?? (file.deny?.groups ?? [])
-          };
-          // 管理员 QQ 可在控制台输入；空值=清除管理员（fail-closed），非法值拒绝写入。
-          let ownerQQ = cfg.ownerQQ ?? null;
-          if (body.ownerQQ !== undefined) {
-            try {
-              ownerQQ = normalizeOwnerQQ(body.ownerQQ);
-            } catch (error) {
-              sendJson({ ok: false, error: error?.message ?? 'ownerQQ 无效' }, 400);
-              return;
-            }
-          }
-          file.allow = allow;
-          file.deny = deny;
-          file.ownerQQ = ownerQQ;
-          atomicWriteJson(configFile, file);
-          cfg.allow = { private: allow.private, groups: allow.groups, privateMode: allow.privateMode };
-          cfg.deny = { private: deny.private, groups: deny.groups };
-          cfg.ownerQQ = ownerQQ;
-          // 切到 'friends' 时立刻拉一次好友列表（否则要等 5 分钟的定期刷新才生效）
-          if (privateMode === 'friends') {
-            refreshFriendList({ force: true }).then((ids) => log(`[私聊准入] 好友列表已刷新：${ids.size} 人`)).catch(() => {});
-          }
-          const modeLabel = { list: '白名单', friends: '好友自动放行', all: '纯黑名单（全放开）' }[allow.privateMode] || allow.privateMode;
-          log(`控制台：白名单已更新（群: ${allow.groups.join(',') || '无'}，私聊: ${allow.private.join(',') || '无'}，私聊策略: ${modeLabel}，管理员: ${ownerQQ ?? '未设置'}）`);
-          sendJson({ ok: true, allow, deny, ownerQQ, friendCount: friendIds.size });
-          return;
-        }
-
-        // ── 安全拦截通知设置 ─────────────────────────────────────────────────
-        if (req.method === 'GET' && url.pathname === '/api/security') {
-          sendJson({ security: cfg.security ?? { interceptNotify: true } });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/security') {
-          const body = await readBody();
-          const configFile = path.join(ROOT, 'config.json');
-          const file = readJsonSafe(configFile, null, true);
-          const next = { ...(file.security ?? {}), ...body };
-          if (typeof next.interceptNotify === 'boolean') next.interceptNotify = next.interceptNotify;
-          else if (next.interceptNotify !== undefined) next.interceptNotify = Boolean(next.interceptNotify);
-          file.security = next;
-          atomicWriteJson(configFile, file);
-          cfg.security = { ...(cfg.security ?? {}), ...next };
-          log(`控制台：安全拦截通知已更新（interceptNotify=${cfg.security.interceptNotify}）`);
-          sendJson({ ok: true, security: cfg.security });
-          return;
-        }
-        // ── 控制台访问令牌（可手动修改/生成随机） ─────────────────────────────
-        // GET：只读返回「鉴权是否开启」，供页面显示当前状态。
-        // **不回传令牌本身**（控制台页面不需要它，令牌值在 state/console-token 与 config 里）。
-        if (req.method === 'GET' && url.pathname === '/api/console/token') {
-          sendJson({
-            ok: true,
-            authEnabled: consoleToken !== '',
-            hasToken: consoleToken !== '',
-            port,
-            hint: consoleToken === ''
-              ? '令牌鉴权已关闭（config.consoleAuth=false）：直接访问即可，无需登录'
-              : '令牌鉴权已开启：刷新页面时会要求输入令牌'
-          });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/console/token') {
-          const body = await readBody();
-          let newToken = String(body.token ?? '').trim();
-          const generated = !newToken;
-          if (generated) {
-            newToken = crypto.randomBytes(24).toString('hex');
-          }
-          if (newToken.length < 16) {
-            sendJson({ ok: false, error: '控制台访问令牌至少需要 16 位；留空可生成随机令牌' }, 400);
-            return;
-          }
-          if (newToken.length > 128) {
-            sendJson({ ok: false, error: '控制台访问令牌不能超过 128 位' }, 400);
-            return;
-          }
-          if (!/^[A-Za-z0-9_-]+$/.test(newToken)) {
-            sendJson({ ok: false, error: '控制台访问令牌只能包含字母、数字、下划线或短横线' }, 400);
-            return;
-          }
-          const configFile = path.join(ROOT, 'config.json');
-          const file = readJsonSafe(configFile, null, true);
-          // 手动令牌写入 config.json（用户可见、可再改）；随机令牌写入 state/console-token 并清空 config 中的手动值。
-          file.consoleToken = generated ? '' : newToken;
-          atomicWriteJson(configFile, file);
-          cfg.consoleToken = generated ? '' : newToken;
-          atomicWriteText(path.join(STATE_DIR, 'console-token'), newToken);
-          consoleToken = newToken;
-          log(`控制台：访问令牌已${generated ? '重新生成' : '手动修改'}（不记录完整值）`);
-          sendJson({ ok: true, token: newToken, generated });
-          return;
-        }
-        // ── 测试发送消息（强制走白名单校验） ───────────────────────────────────
-        if (req.method === 'POST' && url.pathname === '/api/test-send') {
-          const body = await readBody();
-          const kind = body.kind === 'private' ? 'private' : 'group';
-          const id = Number(body.id);
-          const message = String(body.message ?? '').trim();
-          if (!Number.isFinite(id) || id <= 0) { sendJson({ ok: false, error: '目标 id 无效' }, 400); return; }
-          if (!message) { sendJson({ ok: false, error: '消息不能为空' }, 400); return; }
-          if (SENSITIVE_RE.test(message)) { sendJson({ ok: false, error: '消息含敏感信息，已阻止发送' }, 403); return; }
-          if (!allowed(kind, id, cfg)) { sendJson({ ok: false, error: `目标不在白名单内（${kind} ${id}），请先加入白名单` }, 403); return; }
-          if (!modeAllowed(`${kind}:${id}`, kind, id, cfg, currentMode)) { sendJson({ ok: false, error: `当前模式（${currentMode}）不允许向 ${kind}:${id} 发送测试消息` }, 403); return; }
-          try {
-            const safeMessage = escapeCqText(redactKnownTokensOnly(message));
-            const result = kind === 'private'
-              ? await bot.sendPrivateMessage(id, text(safeMessage))
-              : await bot.sendGroupMessage(id, text(safeMessage));
-            recordSentMessage(`${kind}:${id}`, result, safeMessage);
-            log(`控制台：测试发送 ${kind}:${id} 成功`);
-            sendJson({ ok: true, kind, id, message_id: result?.message_id ?? result });
-          } catch (error) {
-            sendJson({ ok: false, error: `发送失败: ${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/social/state') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          const phase = body.phase;
-          if (phase === 'active') {
-            // 手动进入活跃：相当于第四种触发方式，之后按正常活跃流程跑
-            enterActive(key);
-            log(`控制台：手动将 ${key} 设为活跃`);
-            sendJson({ ok: true, key, phase: 'active' });
-          } else if (phase === 'idle') {
-            leaveActive(key);
-            log(`控制台：手动将 ${key} 设为观望`);
-            sendJson({ ok: true, key, phase: 'idle' });
-          } else {
-            sendJson({ ok: false, error: 'phase 必须是 active 或 idle' }, 400);
-          }
-          return;
-        }
-        // ── 仿真群友模式（社交引擎）配置 ──────────────────────────────────────
-        if (req.method === 'GET' && url.pathname === '/api/social') {
-          const stats = {};
-          for (const [k, e] of social.pendingSummaries.entries()) stats[k] = e.items.length;
-          const states = {};
-          const keys = new Set([...social.states.keys(), ...social.recentMessages.keys()]);
-          for (const k of keys) {
-            const st = social.states.get(k);
-            states[k] = { phase: st?.phase ?? 'idle' };
-          }
-          sendJson({ config: cfg.social, pendingSummaries: stats, states });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/social') {
-          const body = await readBody();
-          const configFile = path.join(ROOT, 'config.json');
-          // fail-fast：配置文件损坏时直接 500，绝不回写，避免把整个配置清成只剩 social
-          const file = readJsonSafe(configFile, null, true);
-          const merged = { ...(file.social ?? {}), ...body };
-          // 新分句逻辑不再使用旧字段：保存时统一清理，避免旧配置残留
-          for (const k of ['burstProbability', 'burstMaxMessages', 'followUpEnabled', 'followUpProbability', 'followUpDelayMinMs', 'followUpDelayMaxMs', 'followUpCooldownMs']) {
-            delete merged[k];
-          }
-          for (const k of ['triggerProbability', 'activeCheckMinMs', 'activeCheckMaxMs', 'activeReplyDelayMinMs', 'activeReplyDelayMaxMs', 'activeDurationMinMs', 'activeDurationMaxMs', 'idleWindowMs', 'idleRetryProbability', 'idleRetryWaitMs', 'proactiveIdleThresholdMs', 'proactiveCheckMinMs', 'proactiveCheckMaxMs', 'proactiveProbability', 'maxReplyChars', 'contextWindow', 'burstIntervalMinMs', 'burstIntervalMaxMs', 'longGapMinMs', 'longGapMaxMs']) {
-            if (merged[k] !== undefined) {
-              const n = Number(merged[k]);
-              if (Number.isFinite(n) && n >= 0) merged[k] = n;
-            }
-          }
-          // 分条间隔 clamp 到非负
-          for (const k of ['burstIntervalMinMs', 'burstIntervalMaxMs', 'longGapMinMs', 'longGapMaxMs']) {
-            if (merged[k] !== undefined) merged[k] = Math.max(0, Number(merged[k]) || 0);
-          }
-          // 概率字段 clamp 到 0~1
-          for (const k of ['triggerProbability', 'idleRetryProbability', 'proactiveProbability', 'skipProbability', 'surrenderProbability', 'longGapProbability']) {
-            if (merged[k] !== undefined) merged[k] = Math.min(1, Math.max(0, Number(merged[k])));
-          }
-          // contextWindow 限制 1~100
-          if (merged.contextWindow !== undefined) {
-            merged.contextWindow = Math.min(100, Math.max(1, Math.round(Number(merged.contextWindow))));
-          }
-          // 布尔字段
-          for (const k of ['activeDurationEnabled', 'proactiveEnabled', 'burstEnabled']) {
-            if (merged[k] !== undefined) merged[k] = Boolean(merged[k]);
-          }
-          // 范围字段保证 min <= max
-          for (const [minK, maxK] of [['activeCheckMinMs', 'activeCheckMaxMs'], ['activeReplyDelayMinMs', 'activeReplyDelayMaxMs'], ['activeDurationMinMs', 'activeDurationMaxMs'], ['proactiveCheckMinMs', 'proactiveCheckMaxMs'], ['burstIntervalMinMs', 'burstIntervalMaxMs'], ['longGapMinMs', 'longGapMaxMs']]) {
-            if (merged[minK] !== undefined && merged[maxK] !== undefined && Number(merged[minK]) > Number(merged[maxK])) {
-              [merged[minK], merged[maxK]] = [merged[maxK], merged[minK]];
-            }
-          }
-          if (Array.isArray(body.mustReplyKeywords)) merged.mustReplyKeywords = body.mustReplyKeywords.map(String);
-          file.social = merged;
-          atomicWriteJson(configFile, file);
-          cfg.social = { ...cfg.social, ...merged };
-          log('控制台：社交配置已更新');
-          sendJson({ ok: true, config: cfg.social });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/social/flush') {
-          const body = await readBody();
-          await flushSummaries(body.key || null);
-          sendJson({ ok: true });
-          return;
-        }
-        // ── 后台控制端引导：向指定会话的 DSH agent 投递提醒 ──────────────────
-        if (req.method === 'POST' && url.pathname === '/api/console/notify-ai') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const message = String(body.message ?? '').trim();
-          if (!key || !message) {
-            sendJson({ ok: false, error: 'key 和 message 不能为空' }, 400);
-            return;
-          }
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) {
-            sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400);
-            return;
-          }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          if (!Number.isFinite(id) || id <= 0) {
-            sendJson({ ok: false, error: 'id 无效' }, 400);
-            return;
-          }
-          if (!modeAllowed(key, kind, id, cfg, currentMode)) {
-            sendJson({ ok: false, error: `该会话不在当前模式（${currentMode}）允许范围内` }, 403);
-            return;
-          }
-          if (!state.sessions[key] && !allowed(kind, id, cfg)) {
-            sendJson({ ok: false, error: '该会话不在白名单内，且尚未创建' }, 403);
-            return;
-          }
-          if (!dshReady) {
-            sendJson({ ok: false, error: 'DSH 当前不可用，请稍后再试' }, 503);
-            return;
-          }
-          const isV2 = currentMode === 'reserved2';
-          const roleState = readRoleState();
-          const roleLine = roleState.role ? `【当前角色】${roleState.role}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
-          // 二代必须带会话令牌，否则 AI 调用任何 MCP 状态/发送工具都会被拒。
-          let tokenLine = '';
-          if (isV2) {
-            const stV2 = getSocialV2State(key);
-            tokenLine = `【会话令牌】${stV2.agentToken}（调用二代状态/发送工具时请在参数中带上此令牌）\n\n`;
-          }
-          const promptText = `${roleLine}${tokenLine}【后台控制端提醒】（来自控制台/管理端，不是群友消息）\n${message}\n\n这是后台给你的引导或提醒，请据此调整你的行为。绝对不要复述、转发或原样发送这条后台提醒，也不要发送其中的会话令牌；它只用于你内部调整行为。${isV2 ? '当前是二代仿真模式：你的文本输出不会自动发送到 QQ；如果需要在群里发言，请使用发送工具（qq_send_message / qq_reply）。如果不需要发言，可以 qq_mark_read 或 qq_set_wake_config 收尾。' : '如果不需要在群里发言，请不要输出会发到 QQ 的内容。'}`;
-          let sessionId = null;
-          let popSilent = null;
-          try {
-            sessionId = await ensureSession(key);
-            const silentId = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
-            const arr = social.silentTurns.get(sessionId) ?? [];
-            social.silentTurns.set(sessionId, [...arr, { id: silentId, ts: Date.now() }]);
-            popSilent = () => {
-              const list = social.silentTurns.get(sessionId) ?? [];
-              const next = list.filter((x) => x.id !== silentId);
-              if (next.length > 0) social.silentTurns.set(sessionId, next);
-              else social.silentTurns.delete(sessionId);
-            };
-            const result = await deliverPrompt(key, promptText, { silent: true });
-            if (result.ok) {
-              log(`控制台：已向 ${key} 的 DSH 发送后台提醒`);
-              appendActivity(`${key} 控制台后台提醒：${message.slice(0, 80)}`);
-              sendJson({ ok: true, key, sessionId });
-            } else {
-              popSilent();
-              sendJson({ ok: false, error: result.error || '投递失败' }, 500);
-            }
-          } catch (error) {
-            if (popSilent) popSilent();
-            sendJson({ ok: false, error: error?.message ?? String(error) }, 500);
-          }
-          return;
-        }
-        // ── 二代仿真模式（reserved2）内部 Agent API ─────────────────────────
-        // ── 待配置项（凭据 / 密钥 / 关键连接配置）────────────────────────────
-        //
-        // 用户要求（2026-10-20）：把这些项放到控制台、做成密码样式（右侧隐藏/显示）、
-        // 旁边配说明文档与保存键，需要重启的标明并提供重启按钮。
-        //
-        // 安全设计（务必保持）：
-        //   ① GET 默认**只回「是否已配置」+ 脱敏预览**，绝不下发完整明文。
-        //      用户点「显示」才单条请求（reveal=1），减少明文在页面/内存里的驻留。
-        //   ② 写入沿用原始位置（config.json / state/*.json），**不新建集中明文文件**
-        //      ——集中一处只会扩大泄露面。
-        //   ③ 任何分支都不把这些值写进日志。
-        // Token 用量：控制台读这个拿每日/累计数据。
-        //
-        // 需求（2026-10-21 用户）：「把 token 记录做成日志，每日更新并且放进控制台」。
-        // 这里只读缓存（state/token-usage.json），**不在请求里现算**——
-        // 全量扫一遍要 13~15 秒，放在 HTTP 请求里会卡住控制台。
-        // 需要立刻重算时用 POST ?refresh=1（后台跑，不阻塞响应）。
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/token-usage') {
-          const data = tokenUsage || loadTokenUsage();
-          if (!data) {
-            // 还没算过：返回空态 + 提示（前端会显示"正在统计"）
-            sendJson({ ok: true, ready: false, days: {}, models: {}, dayModels: {}, turns: 0, calls: 0 });
-            return;
-          }
-          const dayKeys = Object.keys(data.days || {}).sort().reverse();
-          const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
-          const tot = Object.values(data.days || {}).reduce((a, v) => ({
-            input: a.input + v.input, output: a.output + v.output,
-            cacheRead: a.cacheRead + v.cacheRead, reasoning: a.reasoning + v.reasoning,
-            calls: a.calls + v.calls
-          }), { input: 0, output: 0, cacheRead: 0, reasoning: 0, calls: 0 });
-
-          // 按日审阅（2026-10-21 用户要求）：`?date=YYYY-MM-DD` 时，
-          // `models` 换成**那一天**的模型明细；不传或传 `all` 则是全时段汇总。
-          // 为什么要服务端过滤而不是前端自己挑：dayModels 是日×模型的联合分布，
-          // 全量下发给前端在日期多了以后会明显变大（30 天 × 6 模型），
-          // 而且前端拿到的数字必须和后端口径一致，放一处算就不会漂。
-          const dateParam = String(url.searchParams.get('date') ?? '').trim();
-          const wantAll = !dateParam || dateParam === 'all';
-          const wantDate = wantAll ? '' : (/^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : '');
-          if (!wantAll && !wantDate) {
-            sendJson({ ok: false, error: 'date 应为 YYYY-MM-DD 或 all' }, 400);
-            return;
-          }
-          const modelSource = wantAll ? (data.models || {}) : (data.dayModels?.[wantDate] || {});
-          const sumModels = (obj) => Object.values(obj || {}).reduce((a, v) => ({
-            input: a.input + (Number(v.input) || 0),
-            output: a.output + (Number(v.output) || 0),
-            cacheRead: a.cacheRead + (Number(v.cacheRead) || 0),
-            reasoning: a.reasoning + (Number(v.reasoning) || 0),
-            calls: a.calls + (Number(v.calls) || 0)
-          }), { input: 0, output: 0, cacheRead: 0, reasoning: 0, calls: 0 });
-
-          sendJson({
-            ok: true,
-            ready: true,
-            updatedAt: data.updatedAt || 0,
-            today,
-            // 当前"按模型"块对应哪一天：'all' = 全时段，否则是 YYYY-MM-DD。
-            // 前端用它在标题上写清楚"这是哪天的数"，避免看错口径。
-            modelScope: wantAll ? 'all' : wantDate,
-            modelScopeUsage: wantAll ? sumModels(data.models) : sumModels(modelSource),
-            todayUsage: data.days?.[today] || { input: 0, output: 0, cacheRead: 0, calls: 0 },
-            total: tot,
-            turns: data.turns || 0,
-            calls: data.calls || 0,
-            files: data.files || 0,
-            // 按日：最近 30 天，新的在前
-            days: dayKeys.slice(0, 30).map((d) => ({ date: d, ...data.days[d] })),
-            // 按模型：当前所选日期（或全时段）的明细，按输入量排序
-            models: Object.entries(modelSource)
-              .map(([model, v]) => ({ model, ...v }))
-              .sort((a, b) => b.input - a.input)
-          });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/token-usage-refresh') {
-          // 后台重算，立刻回 202：全量扫描 13~15 秒，不能同步等
-          void refreshTokenUsage({ force: url.searchParams.get('force') === '1' }).catch(() => {});
-          sendJson({ ok: true, message: '已在后台开始重新统计（约 15 秒）' });
-          return;
-        }
-        // ── Token 用量报表图（2026-10-21 用户要求）──────────────────────────
-        //
-        // 「让 bot 能够看到 token 消耗日志，能够以图片形式响应群友要求 token 消耗量
-        //   相关问题」——所以这个端点是**给模型用的**（MCP 的 qq_token_report 调它），
-        // 一次做完「取数 → 渲染 PNG → 发到当前会话」。
-        //
-        // 为什么由桥接直接发而不是把图 base64 还给模型：模型没有"发送任意图片"的能力
-        // （qq_send_image 只认图库里的图），与功能菜单同一个理由。
-        //
-        // GET，参数：key（会话）、refresh（可选，1=先重算再出图）
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/token-report') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          // agent token 必需（与 send-image / send-feature-menu / github-shot 同规则）：
-          // 这是个往群里发东西的写操作，不能靠"控制台没设令牌"就放行。
-          if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: '发送 Token 报表必须携带 agent token' }, 403); return; }
-          if (!agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (!v2ToolEnabled('tokenReport')) { sendJson({ ok: false, error: '工具未启用：qq_token_report' }, 403); return; }
-          if (socialV2.paused) { sendJson({ ok: false, error: 'AI 已暂停，当前不允许发送' }, 403); return; }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
-            sendJson({ ok: false, error: '当前模式不允许向该会话发送' }, 403);
-            return;
-          }
-          if (shouldBlockSilentReply(key)) { sendJson({ ok: false, error: '静默模式已开启，当前不允许发送' }, 403); return; }
-          try {
-            // refresh=1：先同步重算一次（约 7 秒增量 / 15 秒全量）。
-            // 群友明确问"今天用了多少"时值得等一下——拿 6 小时前的旧数回答，
-            // 数字可能差出一大截。但不做全量强制重算（force 不传）。
-            if (url.searchParams.get('refresh') === '1') {
-              await refreshTokenUsage({});
-            }
-            const usage = tokenUsage || loadTokenUsage() || { days: {}, models: {}, turns: 0, calls: 0 };
-            const report = buildTokenReport(usage);
-            const title = String(url.searchParams.get('title') ?? '').trim().slice(0, 40) || 'Token 用量';
-            const r = await renderTokenReport(report, { title, log: (m) => log(m) });
-            if (!r.ok) { sendJson({ ok: false, error: r.error }, 500); return; }
-            await onebotSendImageFile(key, r.file, { label: 'Token 用量报表' });
-            // 顺手清理旧报表缓存（每天都会产生新指纹文件，不清理会攒几千张）
-            try { pruneTokenReportCache({ maxFiles: 20, maxAgeDays: 14 }); } catch {}
-            log(`[Token报表] 已发送到 ${key}（${Math.round(r.bytes / 1024)}KB${r.cached ? '，缓存' : '，新渲染'}）`);
-            appendActivity(`${key} [Token报表] 已发送 Token 用量图`);
-            sendJson({
-              ok: true,
-              key,
-              cached: r.cached,
-              bytes: r.bytes,
-              // 把关键数字一并回给模型：它在群友追问时要能回答，且**必须与图上同源**
-              // （否则模型会凭印象再编一个数，和刚发出去的图对不上）。
-              summary: summarizeTokenReport(report),
-              today: { day: report.today.day, input: report.today.input, output: report.today.output, calls: report.today.calls },
-              total: { input: report.all.input, output: report.all.output, calls: report.all.calls },
-              stale: report.stale,
-              ageText: report.ageText
-            });
-          } catch (error) {
-            log(`Token 报表发送失败：${error?.message ?? error}`);
-            sendJson({ ok: false, error: `Token 报表发送失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-
-        // 控制台预览：渲染 Token 报表并以 PNG 返回（**不发群**）。
-        //
-        // 与 /api/socialV2/token-report 的区别：那个是给模型用的（渲染 + 发到会话），
-        // 这个只给控制台看图。分成两个端点而不是加个 flag，是因为权限模型不同：
-        // 发群那条必须带 agent token，预览这条走控制台鉴权（本机 + 同源）。
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/token-report-image') {
-          try {
-            if (url.searchParams.get('refresh') === '1') await refreshTokenUsage({});
-            const usage = tokenUsage || loadTokenUsage() || { days: {}, models: {}, turns: 0, calls: 0 };
-            const report = buildTokenReport(usage);
-            const title = String(url.searchParams.get('title') ?? '').trim().slice(0, 40) || 'Token 用量';
-            const r = await renderTokenReport(report, { title, force: url.searchParams.get('force') === '1', log: (m) => log(m) });
-            if (!r.ok) { sendJson({ ok: false, error: r.error }, 500); return; }
-            const buf = fs.readFileSync(r.file);
-            res.writeHead(200, {
-              ...SECURITY_HEADERS,
-              'content-type': 'image/png',
-              'content-length': String(buf.length),
-              // 内容指纹已在文件名里，但浏览器拿不到——用 no-store 保证看到的是新图
-              'cache-control': 'no-store'
-            });
-            res.end(buf);
-          } catch (error) {
-            sendJson({ ok: false, error: `生成报表失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-
-        // 工具开关清单（控制台由此渲染，不再硬编码复选框）。
-        //
-        // 需求（2026-10-20 用户）：「工具开关卡片过于复杂，似乎还有遗漏项目」。
-        // 实测确实漏了 10 个、还有 1 个空开关。根因是**清单写在控制台 HTML 里**，
-        // 加工具时只改后端不改前端（或反过来）就会漂移。
-        // 现在清单唯一来源是 src/tool-flags.js，前端只负责画。
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/tool-flags') {
-          const tools = cfg.socialV2?.tools ?? {};
-          const groups = groupedToolFlags((flag) => tools[flag] !== false);
-          sendJson({
-            ok: true,
-            total: TOOL_FLAGS.length,
-            toolCount: toolNamesOf().length,
-            enabledCount: TOOL_FLAGS.filter((x) => x.fixed !== true && tools[x.flag] !== false).length,
-            groups
-          });
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/credentials') {
-          const reveal = url.searchParams.get('reveal') === '1';
-          const only = String(url.searchParams.get('key') ?? '').trim();
-
-          // 读取当前值：config 走点路径，file 走 state 下的 json
-          const readValue = (item) => {
-            try {
-              if (item.where === 'config') {
-                const file = readJsonSafe(path.join(ROOT, 'config.json'), null);
-                if (!file) return { ok: false, value: '', error: 'config.json 读取失败' };
-                let cur = file;
-                for (const k of item.path.split('.')) {
-                  cur = cur?.[k];
-                  if (cur === undefined) break;
-                }
-                return { ok: true, value: cur == null ? '' : String(cur) };
-              }
-              const file = readJsonSafe(path.join(STATE_DIR, item.file), null);
-              if (!file) return { ok: true, value: '' }; // 文件不存在 = 未配置，不是错误
-              const v = file[item.path];
-              return { ok: true, value: v == null ? '' : String(v) };
-            } catch (error) {
-              return { ok: false, value: '', error: String(error?.message ?? error) };
-            }
-          };
-
-          const items = (only ? CREDENTIAL_ITEMS.filter((it) => it.key === only) : CREDENTIAL_ITEMS)
-            .map((item) => {
-              const r = readValue(item);
-              const configured = !!r.value;
-              return {
-                key: item.key,
-                label: item.label,
-                group: item.group,
-                kind: item.kind,
-                restart: item.restart === true,
-                doc: item.doc,
-                // 明文下发规则（2026-10-20 用户要求「连接这部分不要脱敏，直接显示明文」）：
-                //   - kind='text'（代理地址等**非秘密**）：直接给明文，不然用户没法确认填得对不对。
-                //   - kind='secret'（真正的 key / cookie）：默认只给脱敏预览；点眼睛时
-                //     （reveal=1 且指定了 key）才给那一条的明文。
-                //   整表 reveal 仍然不允许——那会让所有密钥一次性进浏览器内存。
-                value: item.kind === 'text'
-                  ? (r.ok ? r.value : '')
-                  : ((reveal && only) ? (r.ok ? r.value : '') : ''),
-                configured,
-                // 连接类不需要脱敏预览（前端直接显示明文）
-                preview: configured && item.kind !== 'text' ? maskValue(r.value) : '',
-                ...(r.ok ? {} : { error: r.error })
-              };
-            });
-
-          sendJson({ ok: true, items });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/credentials') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const item = CREDENTIAL_ITEMS.find((it) => it.key === key);
-          if (!item) { sendJson({ ok: false, error: `未知配置项：${key}` }, 400); return; }
-          if (typeof body.value !== 'string') { sendJson({ ok: false, error: 'value 必须是字符串' }, 400); return; }
-          // 换行/首尾空白几乎都是复制时带进来的，直接裁掉（这些值里不会含换行）
-          const value = String(body.value).replace(/[\r\n]+/g, '').trim();
-
-          // 基本形态校验：宁可在保存时拒绝，也不要存进去后再去排查"为什么连不上"
-          if (item.kind === 'secret' && value && value.length < 6) {
-            sendJson({ ok: false, error: '这个值太短了，确认没复制错吗？' }, 400);
-            return;
-          }
-          if (item.key === 'imagesProxy' || item.key === 'githubShotProxy' ||
-              item.key === 'webSearchProxy' || item.key === 'xMonitorProxy') {
-            if (value && !/^https?:\/\/[^\s]+$/i.test(value)) {
-              sendJson({ ok: false, error: '代理地址应形如 http://127.0.0.1:7897' }, 400);
-              return;
-            }
-          }
-          if (item.key === 'consoleToken' && value && value.length < 16) {
-            sendJson({ ok: false, error: '控制台令牌至少 16 位' }, 400);
-            return;
-          }
-
-          try {
-            if (item.where === 'config') {
-              const configFile = path.join(ROOT, 'config.json');
-              // fail-fast：配置损坏时绝不回写，否则可能把整个 config 清空
-              const file = readJsonSafe(configFile, null, true);
-              const segs = item.path.split('.');
-              let cur = file;
-              for (let i = 0; i < segs.length - 1; i++) {
-                if (!cur[segs[i]] || typeof cur[segs[i]] !== 'object') cur[segs[i]] = {};
-                cur = cur[segs[i]];
-              }
-              cur[segs[segs.length - 1]] = value;
-              atomicWriteJson(configFile, file);
-              // 同步内存：改完立即生效的那些项（restart=false）立刻能用
-              let mem = cfg;
-              for (let i = 0; i < segs.length - 1; i++) {
-                mem[segs[i]] = mem[segs[i]] ?? {};
-                mem = mem[segs[i]];
-              }
-              mem[segs[segs.length - 1]] = value;
-              // 反查器构造时就把 apiKey 抓进闭包了，改了要重建才生效
-              if (item.key === 'reverseSearchApiKey') {
-                try { reverseSearcher.setApiKey?.(value); } catch { /* 旧实现没有该方法时忽略 */ }
-              }
-            } else {
-              const file = path.join(STATE_DIR, item.file);
-              const obj = readJsonSafe(file, null) ?? {};
-              if (value) obj[item.path] = value;
-              else delete obj[item.path];
-              atomicWriteJson(file, obj);
-              // 凭据模块在内存里缓存了 cookie（bili.js / pixiv-auth.js 都是），
-              // 存完就地重读一次，用户不必为了试一个值反复重启桥接。
-              if (item.file === 'pixiv-auth.json') {
-                try { applyPixivAuth('控制台保存'); } catch { /* 重读失败不该让保存算失败 */ }
-              }
-            }
-
-            log(`[配置] 已更新 ${item.key}${value ? `（${value.length} 字符）` : '（清空）'}${item.restart ? '，需重启生效' : ''}`);
-            sendJson({
-              ok: true,
-              key: item.key,
-              configured: !!value,
-              preview: value ? maskValue(value) : '',
-              restart: item.restart === true,
-              // 明确告诉前端"现在生效了没有"，避免用户以为白填了
-              applied: item.restart !== true
-            });
-          } catch (error) {
-            log(`[配置] 写入 ${item.key} 失败：${error?.message ?? error}`);
-            sendJson({ ok: false, error: `保存失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/config') {
-          sendJson({ ok: true, config: cfg.socialV2 ?? {} });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/config') {
-          const body = await readBody();
-          const configFile = path.join(ROOT, 'config.json');
-          const file = readJsonSafe(configFile, null, true);
-          const current = file.socialV2 ?? {};
-          const merged = { ...current, ...body };
-          // 子对象必须是非 null 对象；null/数组/基本类型会覆盖默认值导致工具开关被绕过，这里直接保留当前值。
-          for (const sub of ['tools', 'wake', 'send', 'wait', 'proactive', 'sticker', 'feedback', 'context']) {
-            if (body[sub] !== undefined && (body[sub] === null || typeof body[sub] !== 'object' || Array.isArray(body[sub]))) {
-              merged[sub] = current[sub] ?? {};
-            }
-          }
-          if (merged.autoReplyCheckMs !== undefined) {
-            const n = Number(merged.autoReplyCheckMs);
-            merged.autoReplyCheckMs = Number.isFinite(n) ? Math.max(1000, Math.round(n)) : (current.autoReplyCheckMs ?? 30000);
-          }
-          // tools：只接受布尔开关
-          // 从唯一来源派生（src/tool-flags.js），避免手写清单与真实工具漂移。
-          // fixed 项（无条件注册的只读工具）不接受开关，前端也不会提交。
-          const toolFlags = TOOL_FLAGS.filter((x) => x.fixed !== true).map((x) => x.flag);
-          if (body.tools && typeof body.tools === 'object') {
-            merged.tools = { ...(current.tools ?? {}), ...body.tools };
-            for (const k of toolFlags) {
-              if (typeof merged.tools[k] !== 'boolean') merged.tools[k] = current.tools?.[k] !== false;
-            }
-          }
-          // wake：数值与字符串数组归一化
-          if (body.wake && typeof body.wake === 'object') {
-            merged.wake = { ...(current.wake ?? {}), ...body.wake };
-            for (const k of ['sleepMinMs', 'sleepMaxMs', 'recommendedSleepMinMs', 'recommendedSleepMaxMs', 'recommendedProbability', 'batchWindowMs', 'maxWakePerMinute', 'maxWakePerHour', 'noActionLimit', 'maxWakeConfigReminders', 'preSleepWaitMs', 'preSleepReplyGraceMs']) {
-              if (merged.wake[k] !== undefined) {
-                const n = Number(merged.wake[k]);
-                merged.wake[k] = Number.isFinite(n) ? n : current.wake?.[k] ?? 0;
-                // 毫秒/次数类字段统一非负取整；概率字段单独 clamp。
-                if (k !== 'recommendedProbability') merged.wake[k] = Math.max(0, Math.round(merged.wake[k]));
-              }
-            }
-            if (merged.wake.recommendedProbability !== undefined) merged.wake.recommendedProbability = Math.min(1, Math.max(0, Number(merged.wake.recommendedProbability) || 0));
-            if (merged.wake.preSleepWaitEnabled !== undefined) merged.wake.preSleepWaitEnabled = merged.wake.preSleepWaitEnabled === true;
-            if (merged.wake.recommendedDefaultInfinite !== undefined) merged.wake.recommendedDefaultInfinite = merged.wake.recommendedDefaultInfinite === true;
-            if (merged.wake.recommendedPoke !== undefined) merged.wake.recommendedPoke = merged.wake.recommendedPoke === true;
-            if (merged.wake.recommendedKeywords !== undefined) {
-              merged.wake.recommendedKeywords = (Array.isArray(merged.wake.recommendedKeywords) ? merged.wake.recommendedKeywords : String(merged.wake.recommendedKeywords).split(/[,，\s]+/)).map(String).filter(Boolean);
-            }
-            if (merged.wake.defaultMode !== 'active') merged.wake.defaultMode = 'diving';
-            if (merged.wake.recommendedHint !== undefined) merged.wake.recommendedHint = String(merged.wake.recommendedHint ?? '');
-          }
-          // send：数值归一化
-          if (body.send && typeof body.send === 'object') {
-            merged.send = { ...(current.send ?? {}), ...body.send };
-            for (const k of ['burstMaxMessages', 'burstIntervalMinMs', 'burstIntervalMaxMs', 'longGapProbability', 'longGapMinMs', 'longGapMaxMs', 'maxSendPerMinute', 'maxSendPerHour', 'maxMessageChars', 'maxGapMs', 'gapBaseMs', 'gapPerCharMs']) {
-              if (merged.send[k] !== undefined) {
-                const n = Number(merged.send[k]);
-                merged.send[k] = Number.isFinite(n) ? n : current.send?.[k] ?? 0;
-                // 次数/毫秒/字符数统一非负取整；概率字段单独 clamp。
-                if (k !== 'longGapProbability') merged.send[k] = Math.max(0, Math.round(merged.send[k]));
-              }
-            }
-            if (merged.send.longGapProbability !== undefined) merged.send.longGapProbability = Math.min(1, Math.max(0, Number(merged.send.longGapProbability) || 0));
-            if (merged.send.burstEnabled !== undefined) merged.send.burstEnabled = merged.send.burstEnabled === true;
-            if (merged.send.recommendedHint !== undefined) merged.send.recommendedHint = String(merged.send.recommendedHint ?? '');
-            // autoAt：概率 0~1，时间/次数非负取整。子对象是浅合并进来的，
-            // 不归一化的话控制台传字符串（"0.5"）或负数会直接进判定逻辑。
-            if (body.send.autoAt && typeof body.send.autoAt === 'object' && !Array.isArray(body.send.autoAt)) {
-              const cur = current.send?.autoAt ?? {};
-              const next = { ...cur, ...body.send.autoAt };
-              next.enabled = next.enabled === true;
-              const prob = Number(next.probability);
-              next.probability = Number.isFinite(prob) ? Math.min(1, Math.max(0, prob)) : (cur.probability ?? DEFAULT_AUTO_AT.probability);
-              for (const k of ['windowMs', 'cooldownMs', 'maxPerHour']) {
-                const n = Number(next[k]);
-                next[k] = Number.isFinite(n) ? Math.max(0, Math.round(n)) : (cur[k] ?? DEFAULT_AUTO_AT[k]);
-              }
-              merged.send.autoAt = next;
-            }
-          }
-          // wait：数值归一化
-          if (body.wait && typeof body.wait === 'object') {
-            merged.wait = { ...(current.wait ?? {}), ...body.wait };
-            for (const k of ['defaultMs', 'minMs', 'maxMs', 'defaultQuietMs', 'minQuietAfterNewMs', 'maxQuietMs', 'turnMaxCount', 'turnMaxMs']) {
-              if (merged.wait[k] !== undefined) {
-                const n = Number(merged.wait[k]);
-                merged.wait[k] = Number.isFinite(n) ? Math.max(0, Math.round(n)) : current.wait?.[k] ?? 5000;
-              }
-            }
-            if (merged.wait.maxQuietMs !== undefined) merged.wait.maxQuietMs = Math.min(15000, Math.max(0, merged.wait.maxQuietMs));
-            if (merged.wait.turnMaxCount !== undefined) merged.wait.turnMaxCount = Math.min(20, Math.max(1, merged.wait.turnMaxCount));
-            if (merged.wait.turnMaxMs !== undefined) merged.wait.turnMaxMs = Math.min(600000, Math.max(5000, merged.wait.turnMaxMs));
-          }
-          // tts：语音合成参数（2026-10-22 用户要求「触发概率、每小时上限、模型设置、
-          // 字数等设成可变参数并提供修改按钮」）。
-          //
-          // 这里逐项 clamp，不做"信任前端"那套：
-          //   - probability 必须在 0~1（有人会填 5 表示 5%，得救回来）；
-          //   - maxPerHour / maxChars 有上下界（0 条 = 禁用；字数太大语速劝退）；
-          //   - enabled 只接受布尔，避免 "false" 字符串被当成真值。
-          if (body.tts && typeof body.tts === 'object' && !Array.isArray(body.tts)) {
-            merged.tts = { ...(current.tts ?? {}), ...body.tts };
-            const t = merged.tts;
-            const prev = current.tts ?? {};
-            if (t.enabled !== undefined) t.enabled = t.enabled === true;
-            // 概率：接受 0~1 的小数；也容忍 0~100 的百分数写法（>1 时按百分数折算）
-            if (t.probability !== undefined) {
-              let p = Number(t.probability);
-              if (!Number.isFinite(p)) p = Number(prev.probability ?? TTS_DEFAULT_PROBABILITY);
-              if (p > 1) p = p / 100;
-              t.probability = Math.min(1, Math.max(0, Math.round(p * 1000) / 1000));
-            }
-            if (t.maxPerHour !== undefined) {
-              const n = Number(t.maxPerHour);
-              t.maxPerHour = Number.isFinite(n) ? Math.min(60, Math.max(0, Math.round(n))) : (Number(prev.maxPerHour) || 3);
-            }
-            if (t.maxChars !== undefined) {
-              const n = Number(t.maxChars);
-              t.maxChars = Number.isFinite(n) ? Math.min(300, Math.max(10, Math.round(n))) : (Number(prev.maxChars) || 140);
-            }
-            // 模型设置：路径与音色名只做字符串化 + 去空白；不校验存在性——
-            // 路径可能暂时不可达（外接盘没插），不该因此拒绝保存其它参数。
-            // voiceId/weightsId/refMode 是音色预设选择（voices.json），
-            // 与手写路径二选一；有 voiceId 时以预设为准。
-            for (const k of ['dir', 'gptModel', 'sovitsModel', 'refAudio', 'refText', 'refLang', 'voiceName', 'device', 'voiceId', 'weightsId', 'refMode']) {
-              if (t[k] !== undefined) t[k] = String(t[k] ?? '').trim();
-            }
-            if (t.isHalf !== undefined) t.isHalf = t.isHalf !== false;
-            if (t.cpuThreads !== undefined) {
-              const n = Number(t.cpuThreads);
-              t.cpuThreads = Number.isFinite(n) ? Math.min(32, Math.max(1, Math.round(n))) : (Number(prev.cpuThreads) || 8);
-            }
-            // 韵律/响度参数（2026-10-22 方案 B）：都是请求级参数，改完即时生效。
-            // 必须用小数 clamp（ttsNum 会取整，speed 0.95 会被弄成 1）。
-            const clampDec = (k, min, max, dflt) => {
-              if (t[k] === undefined) return;
-              const n = Number(t[k]);
-              t[k] = Number.isFinite(n)
-                ? Math.min(max, Math.max(min, Math.round(n * 1000) / 1000))
-                : dflt;
-            };
-            clampDec('speed', 0.8, 1.2, 1.0);
-            clampDec('fragmentInterval', 0.1, 0.6, 0.3);
-            clampDec('temperature', 0.5, 1.2, 0.9);
-            clampDec('topK', 5, 30, 15);
-            clampDec('topP', 0.7, 1.0, 0.95);
-            clampDec('volumeGainDb', -12, 12, 0);
-            if (t.textSplitMethod !== undefined) {
-              const s = String(t.textSplitMethod ?? '').trim();
-              t.textSplitMethod = ['cut1', 'cut5'].includes(s) ? s : 'cut5';
-            }
-            if (t.punctuate !== undefined) t.punctuate = t.punctuate !== false && t.punctuate !== 'false';
-          }
-          // proactive：主动机会参数
-          if (body.proactive && typeof body.proactive === 'object') {
-            merged.proactive = { ...(current.proactive ?? {}), ...body.proactive };
-            for (const k of ['checkIntervalMinMs', 'checkIntervalMaxMs', 'idleThresholdMs', 'probability']) {
-              if (merged.proactive[k] !== undefined) {
-                const n = Number(merged.proactive[k]);
-                merged.proactive[k] = Number.isFinite(n) ? n : current.proactive?.[k] ?? 0;
-                // 毫秒类字段统一非负取整；概率字段单独 clamp。
-                if (k !== 'probability') merged.proactive[k] = Math.max(0, Math.round(merged.proactive[k]));
-              }
-            }
-            if (merged.proactive.enabled !== undefined) merged.proactive.enabled = merged.proactive.enabled === true;
-            if (merged.proactive.probability !== undefined) merged.proactive.probability = Math.min(1, Math.max(0, Number(merged.proactive.probability) || 0));
-          }
-          // sticker：表情包体系参数归一化
-          if (body.sticker && typeof body.sticker === 'object') {
-            merged.sticker = { ...(current.sticker ?? {}), ...body.sticker };
-            if (merged.sticker.enabled !== undefined) merged.sticker.enabled = merged.sticker.enabled === true;
-            for (const k of ['syncTtlMs', 'maxListCount', 'promptMaxStickers']) {
-              if (merged.sticker[k] !== undefined) {
-                const n = Number(merged.sticker[k]);
-                merged.sticker[k] = Number.isFinite(n) ? Math.max(0, Math.round(n)) : current.sticker?.[k] ?? 0;
-              }
-            }
-            if (merged.sticker.maxListCount !== undefined) merged.sticker.maxListCount = Math.min(500, Math.max(1, merged.sticker.maxListCount));
-            if (merged.sticker.promptMaxStickers !== undefined) merged.sticker.promptMaxStickers = Math.min(30, Math.max(1, merged.sticker.promptMaxStickers));
-            if (merged.sticker.includeInPrompt !== undefined) merged.sticker.includeInPrompt = merged.sticker.includeInPrompt === true;
-            // 主动要求发表情（2026-10-22）：参数来自控制台，这里逐项 clamp。
-            // 概率同 TTS 的约定——接受 0~1，也容忍 0~100 的百分数写法。
-            if (merged.sticker.autoNudge !== undefined) merged.sticker.autoNudge = merged.sticker.autoNudge === true;
-            if (merged.sticker.autoNudgeProbability !== undefined) {
-              let p = Number(merged.sticker.autoNudgeProbability);
-              if (!Number.isFinite(p)) p = Number(current.sticker?.autoNudgeProbability ?? 0.33);
-              if (p > 1) p = p / 100;
-              merged.sticker.autoNudgeProbability = Math.min(1, Math.max(0, Math.round(p * 1000) / 1000));
-            }
-            if (merged.sticker.autoNudgeMinGapMs !== undefined) {
-              const n = Number(merged.sticker.autoNudgeMinGapMs);
-              merged.sticker.autoNudgeMinGapMs = Number.isFinite(n) ? Math.max(0, Math.round(n)) : (Number(current.sticker?.autoNudgeMinGapMs) || 180000);
-            }
-            if (merged.sticker.autoNudgeMaxPerHour !== undefined) {
-              const n = Number(merged.sticker.autoNudgeMaxPerHour);
-              merged.sticker.autoNudgeMaxPerHour = Number.isFinite(n) ? Math.min(60, Math.max(0, Math.round(n))) : (Number(current.sticker?.autoNudgeMaxPerHour) ?? 6);
-            }
-            if (merged.sticker.autoNudgeCandidates !== undefined) {
-              const n = Number(merged.sticker.autoNudgeCandidates);
-              merged.sticker.autoNudgeCandidates = Number.isFinite(n) ? Math.min(4, Math.max(1, Math.round(n))) : (Number(current.sticker?.autoNudgeCandidates) || 3);
-            }
-            if (body.sticker.collect && typeof body.sticker.collect === 'object') {
-              merged.sticker.collect = { ...(current.sticker?.collect ?? {}), ...body.sticker.collect };
-              if (merged.sticker.collect.enabled !== undefined) merged.sticker.collect.enabled = merged.sticker.collect.enabled === true;
-              for (const k of ['maxPerMinute', 'maxPerHour', 'maxRemarkChars']) {
-                if (merged.sticker.collect[k] !== undefined) {
-                  const n = Number(merged.sticker.collect[k]);
-                  merged.sticker.collect[k] = Number.isFinite(n) ? Math.max(0, Math.round(n)) : current.sticker?.collect?.[k] ?? 0;
-                }
-              }
-            }
-          }
-          // comply：群友点单的照做判定参数归一化
-          if (body.comply && typeof body.comply === 'object') {
-            merged.comply = { ...(current.comply ?? {}), ...body.comply };
-            if (merged.comply.enabled !== undefined) merged.comply.enabled = merged.comply.enabled === true;
-            for (const k of ['ttlMs', 'cooldownMs', 'maxPerHour']) {
-              if (merged.comply[k] !== undefined) {
-                const n = Number(merged.comply[k]);
-                merged.comply[k] = Number.isFinite(n) ? Math.max(0, Math.round(n)) : current.comply?.[k] ?? 0;
-              }
-            }
-            if (merged.comply.probability !== undefined) {
-              merged.comply.probability = Math.min(1, Math.max(0, Number(merged.comply.probability) || 0));
-            }
-          } else if (body.comply === undefined && merged.comply === undefined) {
-            // 旧配置没有该块时补默认，保证 qq_get_prompt/判定能读到。
-            merged.comply = current.comply ?? {};
-          }
-          // gifFrames：动图抽帧拼图参数归一化
-          if (body.gifFrames && typeof body.gifFrames === 'object') {
-            merged.gifFrames = { ...(current.gifFrames ?? {}), ...body.gifFrames };
-            if (merged.gifFrames.enabled !== undefined) merged.gifFrames.enabled = merged.gifFrames.enabled === true;
-            for (const k of ['timeoutMs']) {
-              if (merged.gifFrames[k] !== undefined) {
-                const n = Number(merged.gifFrames[k]);
-                merged.gifFrames[k] = Number.isFinite(n) ? Math.max(0, Math.round(n)) : current.gifFrames?.[k] ?? 0;
-              }
-            }
-            if (merged.gifFrames.maxFrames !== undefined) {
-              const n = Number(merged.gifFrames.maxFrames);
-              merged.gifFrames.maxFrames = Number.isFinite(n) ? Math.min(20, Math.max(2, Math.round(n))) : (current.gifFrames?.maxFrames ?? 20);
-            }
-            if (merged.gifFrames.tileWidth !== undefined) {
-              const n = Number(merged.gifFrames.tileWidth);
-              merged.gifFrames.tileWidth = Number.isFinite(n) ? Math.min(640, Math.max(80, Math.round(n))) : (current.gifFrames?.tileWidth ?? 320);
-            }
-          }
-          // media：单条消息图片总量上限等
-          if (body.media && typeof body.media === 'object') {
-            merged.media = { ...(current.media ?? {}), ...body.media };
-            if (merged.media.maxMessageBytes !== undefined) {
-              const n = Number(merged.media.maxMessageBytes);
-              // 下限 1MB：再小会让常见表情包都发不出去；上限 64MB：避免把内存打爆。
-              merged.media.maxMessageBytes = Number.isFinite(n)
-                ? Math.min(64 * 1024 * 1024, Math.max(1024 * 1024, Math.round(n)))
-                : (current.media?.maxMessageBytes ?? 8 * 1024 * 1024);
-            }
-          }
-          // errorNotice：上游报错拦截（节流窗口 / 文案 / 是否私聊管理员 / 是否在群里发提示）
-          if (body.errorNotice && typeof body.errorNotice === 'object') {
-            merged.errorNotice = { ...(current.errorNotice ?? {}), ...body.errorNotice };
-            if (merged.errorNotice.windowMs !== undefined) {
-              const n = Number(merged.errorNotice.windowMs);
-              // 下限 0（每次必发，调试用）；上限 1 小时：再长会让限流提示形同关闭。
-              merged.errorNotice.windowMs = Number.isFinite(n)
-                ? Math.min(60 * 60 * 1000, Math.max(0, Math.round(n)))
-                : (current.errorNotice?.windowMs ?? 3 * 60 * 1000);
-            }
-            if (Array.isArray(merged.errorNotice.messages)) {
-              const msgs = merged.errorNotice.messages.map((m) => String(m ?? '').trim()).filter(Boolean);
-              // 空数组会让「随机取一条」无从取值，回退到默认文案
-              merged.errorNotice.messages = msgs.length ? msgs : DEFAULT_ERROR_MESSAGES;
-            }
-            // inGroup 默认 false（报错不进群）。只有显式传 true 才打开群内提示。
-            if (merged.errorNotice.inGroup !== undefined) {
-              merged.errorNotice.inGroup = merged.errorNotice.inGroup === true;
-            }
-          }
-          // images：图库参数归一化（sources 逐层合并，避免外层 spread 覆盖丢默认）
-          if (body.images && typeof body.images === 'object') {
-            merged.images = { ...(current.images ?? {}), ...body.images };
-            if (merged.images.enabled !== undefined) merged.images.enabled = merged.images.enabled === true;
-            if (merged.images.annotateSource !== undefined) merged.images.annotateSource = merged.images.annotateSource === true;
-            for (const k of ['maxFiles', 'maxTotalBytes', 'maxBytesPerFile', 'fetchPerRun', 'cooldownMs', 'sendCooldownMs', 'maxSendPerHour']) {
-              if (merged.images[k] !== undefined) {
-                const n = Number(merged.images[k]);
-                merged.images[k] = Number.isFinite(n) ? Math.max(0, Math.round(n)) : current.images?.[k] ?? 0;
-              }
-            }
-            if (merged.images.libDir !== undefined) merged.images.libDir = String(merged.images.libDir ?? '');
-            if (body.images.sources && typeof body.images.sources === 'object') {
-              const cur = current.images?.sources ?? {};
-              merged.images.sources = { ...cur };
-              for (const [name, sc] of Object.entries(body.images.sources)) {
-                if (!sc || typeof sc !== 'object') continue;
-                merged.images.sources[name] = { ...(cur[name] ?? {}), ...sc };
-                const one = merged.images.sources[name];
-                if (one.enabled !== undefined) one.enabled = one.enabled === true;
-                if (one.limit !== undefined) {
-                  const n = Number(one.limit);
-                  one.limit = Number.isFinite(n) ? Math.min(100, Math.max(1, Math.round(n))) : 20;
-                }
-                if (one.tags !== undefined) {
-                  one.tags = (Array.isArray(one.tags) ? one.tags : String(one.tags).split(/[,，\s]+/)).map(String).filter(Boolean);
-                }
-              }
-            }
-          }
-          // feedback：数值/布尔归一化
-          if (body.feedback && typeof body.feedback === 'object') {
-            merged.feedback = { ...(current.feedback ?? {}), ...body.feedback };
-            if (merged.feedback.maxLength !== undefined) {
-              const n = Number(merged.feedback.maxLength);
-              merged.feedback.maxLength = Number.isFinite(n) ? Math.max(1, Math.round(n)) : current.feedback?.maxLength ?? 500;
-            }
-            if (merged.feedback.notifyOwnerOnError !== undefined) merged.feedback.notifyOwnerOnError = merged.feedback.notifyOwnerOnError === true;
-          }
-          // context：数值归一化
-          if (body.context && typeof body.context === 'object') {
-            merged.context = { ...(current.context ?? {}), ...body.context };
-            for (const k of ['recentLimit', 'unreadLimit', 'contextWindow']) {
-              if (merged.context[k] !== undefined) {
-                const n = Number(merged.context[k]);
-                merged.context[k] = Number.isFinite(n) ? Math.max(1, Math.round(n)) : current.context?.[k] ?? 20;
-              }
-            }
-          }
-          if (merged.enabled !== undefined) merged.enabled = merged.enabled === true;
-          if (merged.provideRecommendations !== undefined) merged.provideRecommendations = merged.provideRecommendations === true;
-          if (merged.agentPreset !== undefined) merged.agentPreset = String(merged.agentPreset ?? '');
-          file.socialV2 = merged;
-          atomicWriteJson(configFile, file);
-          cfg.socialV2 = { ...(cfg.socialV2 ?? {}), ...merged };
-          // 仅当“会影响默认唤醒配置”的字段变化时，才同步到仍使用默认配置的现有会话。
-          // 避免只改发送/等待/工具开关时，意外重置正在等待的潜水/唤醒计划。
-          const WAKE_DEFAULT_KEYS = [
-            'defaultMode', 'recommendedDefaultInfinite',
-            'recommendedSleepMinMs', 'recommendedSleepMaxMs',
-            'recommendedProbability', 'recommendedKeywords',
-            'recommendedAtMention', 'recommendedNameMention', 'recommendedQuestion', 'recommendedPoke',
-            'sleepMinMs', 'sleepMaxMs', 'batchWindowMs'
-          ];
-          const wakeDefaultChanged = body.wake && typeof body.wake === 'object' &&
-            WAKE_DEFAULT_KEYS.some((k) => Object.prototype.hasOwnProperty.call(body.wake, k));
-          if (wakeDefaultChanged) refreshAllDefaultWakeConfigsV2();
-          log('控制台：二代仿真配置已更新');
-          sendJson({ ok: true, config: cfg.socialV2 });
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/activity') {
-          sendJson({ ok: true, paused: socialV2.paused });
-          return;
-        }
-        // 活动日志改版：按“消息”聚合状态，而不是只追加一行文本。
-        // 前端每秒拉一次，状态由当前 unread / pending / answeredSeqs 实时推导：
-        // 未读 → 处理中/待回复 → 已回复/已读；自己发出的消息显示已发送/语音已发。
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/activity-feed') {
-          const limit = Math.min(200, Math.max(20, Number(url.searchParams.get('limit')) || 120));
-          const rows = [];
-          const cleanDisplay = (v, n) => String(v ?? '').replace(/[ --]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
-          const keyOfMsg = (m) => (m?.messageId != null && String(m.messageId) !== 'null')
-            ? `id:${m.messageId}`
-            : `seq:${Number(m?.seq) || 0}`;
-          for (const [key, st] of socialV2.conversations.entries()) {
-            if (!/^(group|private):\d+$/.test(key)) continue;
-            const recent = Array.isArray(st.recentMessages) ? st.recentMessages.slice(-20) : [];
-            if (!recent.length) continue;
-            const callers = findCallersV2(key, st);
-            const pendingKeys = new Set();
-            const answeredKeys = new Set();
-            for (const m of callers.pending) { pendingKeys.add(keyOfMsg(m)); if (m.seq) pendingKeys.add(`seq:${Number(m.seq)}`); }
-            for (const m of callers.answered) { answeredKeys.add(keyOfMsg(m)); if (m.seq) answeredKeys.add(`seq:${Number(m.seq)}`); }
-            const unreadSeqs = new Set((Array.isArray(st.unread) ? st.unread : []).map((m) => Number(m?.seq)).filter(Number.isFinite));
-            const unreadIds = new Set((Array.isArray(st.unread) ? st.unread : []).map((m) => m?.messageId != null ? String(m.messageId) : '').filter(Boolean));
-            const busy = isConversationBusyV2(key, st);
-            const displayName = contextDisplayName(key) || '';
-            const keyLabel = key.replace(/^group:/, '群 ').replace(/^private:/, '私聊 ');
-            for (const m of recent) {
-              if (!m) continue;
-              const text = cleanDisplay(m.text ?? m.plain ?? '', 240);
-              const isSelf = !!m.isSelf;
-              const isVoice = !!(m.isVoice || /^\[语音\]/.test(text));
-              const mk = keyOfMsg(m);
-              const inUnread = !isSelf && ((m.seq && unreadSeqs.has(Number(m.seq)))
-                || (m.messageId != null && unreadIds.has(String(m.messageId))));
-              let status = 'read';
-              let label = '已读';
-              if (isSelf) {
-                status = isVoice ? 'voice-sent' : 'sent';
-                label = isVoice ? '语音已发' : '已发送';
-              } else if (pendingKeys.has(mk)) {
-                status = busy ? 'processing' : 'pending';
-                label = busy ? '处理中' : '待回复';
-              } else if (answeredKeys.has(mk)) {
-                status = 'replied';
-                label = '已回复';
-              } else if (inUnread) {
-                status = 'unread';
-                label = '未读';
-              }
-              rows.push({
-                key,
-                session: cleanDisplay(displayName || keyLabel, 80),
-                sessionKey: keyLabel,
-                time: Number(m.time) || 0,
-                sender: isSelf ? '我' : cleanDisplay(m.sender || '未知', 60),
-                userId: m.userId != null ? String(m.userId) : '',
-                text,
-                isSelf,
-                isVoice,
-                status,
-                label,
-                seq: Number(m.seq) || 0,
-                messageId: m.messageId != null ? String(m.messageId) : ''
-              });
-            }
-          }
-          rows.sort((a, b) => b.time - a.time);
-          const counts = rows.reduce((acc, r) => {
-            acc[r.status] = (acc[r.status] || 0) + 1;
-            return acc;
-          }, { pending: 0, processing: 0, replied: 0, unread: 0, read: 0, sent: 0, 'voice-sent': 0 });
-          sendJson({ ok: true, rows: rows.slice(0, limit), counts, generatedAt: Date.now() });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/activity') {
-          const body = await readBody();
-          const paused = body.paused === true;
-          socialV2.paused = paused;
-          if (paused) {
-            clearAllSocialV2Timers();
-            log('控制台：二代 AI 已暂停（唤醒/等待任务已停止）');
-          } else {
-            log('控制台：二代 AI 已恢复');
-            for (const key of socialV2.conversations.keys()) {
-            setupSleepTimerV2(key);
-            scheduleProactiveCheckV2(key);
-          }
-          }
-          saveSocialV2State();
-          sendJson({ ok: true, paused: socialV2.paused });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/reset') {
-          sessionEpoch++;
-          sessionPromises.clear();
-          clearAllSocialV2Timers();
-          drainAllPromptQueues('二代状态已重置');
-          for (const key of [...socialV2.conversations.keys()]) {
-            const sid = state.sessions[key];
-            if (sid) {
-              delete state.sessions[key];
-              reverse.delete(sid);
-              collectors.delete(sid);
-              v2TurnStartAt.delete(sid);
-              toolCallNames.delete(sid);
-              pendingSendToolCalls.delete(sid);
-              sendToolSucceededSessions.delete(sid);
-            }
-            const removedV2 = socialV2.conversations.get(key);
-            if (removedV2?.agentToken) KNOWN_AGENT_TOKENS.delete(removedV2.agentToken);
-            socialV2.conversations.delete(key);
-            seenForwardIds.delete(key);
-          }
-          pendingWakeKeys.clear();
-          clearAllPendingWakeLeases();
-          wakeConfigUpdatedKeys.clear();
-          markReadCalledKeys.clear();
-          wakeConfigMissCount.clear();
-          socialV2.paused = false;
-          try { atomicWriteJson(SOCIAL_V2_FILE, { conversations: {} }); } catch (error) { log('重置二代状态：写空状态文件失败:', error?.message ?? error); }
-          log('控制台：二代 AI 状态已重置（会话、定时器、唤醒配置已清空，工具日志保留）');
-          sendJson({ ok: true });
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/state') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('socialState')) { sendJson({ ok: false, error: '工具未启用：qq_social_state' }, 403); return; }
-          const st = getSocialV2State(key);
-          sendJson({
-            ok: true,
-            key,
-            wakeConfig: st.wakeConfig,
-            wakeSafety: computeWakeSafetyV2(st.wakeConfig),
-            unreadCount: st.unread.length,
-            recentCount: st.recentMessages.length,
-            lastWakeReason: st.lastWakeReason,
-            lastAiReplyAt: st.lastAiReplyAt
-          });
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/prompt') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('getPrompt')) { sendJson({ ok: false, error: '工具未启用：qq_get_prompt' }, 403); return; }
-          const st = getSocialV2State(key);
-          // 让 prompt 里的表情摘要尽量新鲜：按 TTL 同步一次 QQ 收藏表情（失败不阻塞）。
-          if (cfg.socialV2?.sticker?.enabled !== false) {
-            try { await syncStickerLibrary(false); } catch {}
-          }
-          const roleState = readRoleState();
-          const toolMap = {
-            getPrompt: 'qq_get_prompt',
-            getUnread: 'qq_get_unread_messages',
-            getRecent: 'qq_get_recent_messages',
-            socialState: 'qq_social_state',
-            sendGroup: 'qq_send_group_message',
-            sendPrivate: 'qq_send_private_message',
-            reply: 'qq_reply',
-            sendBurst: 'qq_send_burst',
-            sendMessage: 'qq_send_message',
-            waitMessages: 'qq_wait_for_messages',
-            feedback: 'qq_report_feedback',
-            getMyRecent: 'qq_get_my_recent_messages',
-            getMessageDetail: 'qq_get_message_detail',
-            getActiveMembers: 'qq_get_active_members',
-            setWakeConfig: 'qq_set_wake_config',
-            markRead: 'qq_mark_read',
-            memory: 'qq_memory_append / qq_memory_query / qq_memory_remove / qq_memory_clear',
-            slangQuery: 'qq_slang_query',
-            slangSubmit: 'qq_slang_submit',
-            getImages: 'qq_get_message_images',
-            getForwardMsg: 'qq_get_forward_msg',
-            sendPoke: 'qq_send_poke',
-            sendImage: 'qq_send_image',
-            checkImage: 'qq_check_image',
-            refreshImageLib: 'qq_refresh_image_lib',
-            listStickers: 'qq_list_stickers',
-            getStickerImage: 'qq_get_sticker_image',
-            sendSticker: 'qq_send_sticker',
-            setStickerRemark: 'qq_set_sticker_remark',
-            deleteSticker: 'qq_delete_sticker',
-            stickerNote: 'qq_sticker_note',
-            collectSticker: 'qq_collect_sticker',
-            getSelfImage: 'qq_get_self_image',
-            getFeatureMenu: 'qq_send_feature_menu',
-            groupFiles: 'qq_list_group_files',
-            reverseSearch: 'qq_reverse_search'
-          };
-          const tools = cfg.socialV2?.tools ?? {};
-          const stickerToolFlags = new Set(['listStickers', 'getStickerImage', 'sendSticker', 'setStickerRemark', 'stickerNote', 'collectSticker', 'deleteSticker']);
-          const enabledTools = [];
-          for (const [flag, name] of Object.entries(toolMap)) {
-            if (tools[flag] !== false && !(stickerToolFlags.has(flag) && !stickerEnabled())) enabledTools.push(name);
-          }
-          sendJson({
-            ok: true,
-            key,
-            time: new Date().toISOString(),
-            role: { name: roleState.role ?? null, hint: currentMode === 'reserved2' ? currentRoleHintV2() : currentRoleHint() },
-            recommended: cfg.socialV2?.provideRecommendations === false ? null : {
-              wake: cfg.socialV2?.wake ?? {},
-              send: cfg.socialV2?.send ?? {},
-              wait: cfg.socialV2?.wait ?? {},
-              proactive: cfg.socialV2?.proactive ?? {},
-              comply: cfg.socialV2?.comply ?? {}
-            },
-            enabledTools,
-            unreadCount: st.unread.length,
-            recentCount: st.recentMessages.length,
-            currentWakeConfig: st.wakeConfig,
-            wakeSafety: computeWakeSafetyV2(st.wakeConfig),
-            memory: formatMemoryV2(st),
-            participation: formatParticipationV2(st),
-            slang: {
-              enabled: cfg.slang?.enabled !== false,
-              entries: confirmedSlangListV2(),
-              block: buildSlangContext(slangEntries, cfg.slang?.injectMax ?? 8)
-            },
-            stickers: {
-              enabled: cfg.socialV2?.sticker?.enabled !== false,
-              total: stickerEntries.length,
-              context: cfg.socialV2?.sticker?.includeInPrompt !== false ? buildStickerContext(stickerEntries, cfg.socialV2?.sticker?.promptMaxStickers ?? 8) : '',
-              strategy: cfg.socialV2?.sticker?.includeInPrompt !== false ? buildStickerStrategyHint() : ''
-            }
-          });
-          return;
-        }
-        // ── 群文件只读分类（见 group-files.js）──────────────────────────────
-        // 只读：列文件、统计、搜索。**不删除/移动/上传/改名** ——
-        // 那些写操作 API 确实存在且会真实执行（已实测 delete_group_file），
-        // 但群文件里的 docx/pdf 删了不可恢复，不做进工具。
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/group-files') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const keyMatch = /^group:(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: '群文件只适用于群会话（key 格式 group:群号）' }, 400); return; }
-          if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: '读取群文件必须携带 agent token' }, 403); return; }
-          if (!agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (!v2ToolEnabled('groupFiles')) { sendJson({ ok: false, error: '工具未启用：qq_list_group_files' }, 403); return; }
-          const groupId = Number(keyMatch[1]);
-          try {
-            // 取列表（走 OneBot，与其它只读查询同一通道）
-            // 注意：SDK 的 call() 已经解包（returns response.data）且出错会 throw，
-            // 所以这里直接读 .files，不要再套一层 .data（那是原始 HTTP 的形状）。
-            const raw = await bot.getGroupRootFiles(groupId);
-            const files = (raw && raw.files) || [];
-            const mode = String(url.searchParams.get('mode') ?? 'summary');
-            if (mode === 'search') {
-              const q = {
-                keyword: url.searchParams.get('keyword') || '',
-                category: url.searchParams.get('category') || '',
-                ext: url.searchParams.get('ext') || '',
-                uploader: url.searchParams.get('uploader') || '',
-                minBytes: Number(url.searchParams.get('minBytes')) || 0,
-                maxBytes: Number(url.searchParams.get('maxBytes')) || 0,
-                limit: Number(url.searchParams.get('limit')) || 20
-              };
-              const r = searchGroupFiles(files, q);
-              sendJson({ ok: true, key, mode, query: q, ...r });
-              return;
-            }
-            const summary = summarizeGroupFiles(files, { recentDays: Number(url.searchParams.get('recentDays')) || 7 });
-            sendJson({ ok: true, key, mode: 'summary', summary, text: formatSummary(summary) });
-          } catch (error) {
-            log(`群文件读取失败 ${key}: ${error?.message ?? error}`);
-            sendJson({ ok: false, error: `群文件读取失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/group-file-stats') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const keyMatch = /^group:(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: '群文件只适用于群会话（key 格式 group:群号）' }, 400); return; }
-          if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: '读取群文件必须携带 agent token' }, 403); return; }
-          if (!agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (!v2ToolEnabled('groupFiles')) { sendJson({ ok: false, error: '工具未启用：qq_group_file_stats' }, 403); return; }
-          try {
-            // 容量信息：让模型能回答"群文件满了吗"这类问题
-            const info = await bot.getGroupFileSystemInfo(Number(keyMatch[1]));
-            const d = info ?? {};   // SDK 已解包
-            const used = Number(d.used_space) || 0;
-            const total = Number(d.total_space) || 0;
-            sendJson({
-              ok: true,
-              key,
-              fileCount: Number(d.file_count) || 0,
-              limitCount: Number(d.limit_count) || 0,
-              usedSpace: used,
-              totalSpace: total,
-              usedText: humanSize(used),
-              totalText: humanSize(total),
-              usedPercent: total > 0 ? Math.round(used / total * 100) : null
-            });
-          } catch (error) {
-            sendJson({ ok: false, error: `容量读取失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/unread') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 30));
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('getUnread')) { sendJson({ ok: false, error: '工具未启用：qq_get_unread_messages' }, 403); return; }
-          const st = getSocialV2State(key);
-          sendJson({ ok: true, key, unreadCount: st.unread.length, messages: st.unread.slice(-limit) });
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/recent') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 20));
-          const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('getRecent')) { sendJson({ ok: false, error: '工具未启用：qq_get_recent_messages' }, 403); return; }
-          const st = getSocialV2State(key);
-          const start = Math.max(0, st.recentMessages.length - offset - limit);
-          const end = Math.max(0, st.recentMessages.length - offset);
-          sendJson({ ok: true, key, messages: st.recentMessages.slice(start, end) });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/mark-read') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('markRead')) { sendJson({ ok: false, error: '工具未启用：qq_mark_read' }, 403); return; }
-          const st = getSocialV2State(key);
-          // 硬拦截：未读里有人在叫它（@ 它的任一别名 / 引用它），而它这一轮还没发过言时，
-          // 不允许直接已读收尾。实测模型会一边把「@大肥鱼 speak」「@大肥鱼 夸一夸…」当
-          // 「没人叫我」忽略掉，一边 wait 完就 mark_read 走人，导致催它的人永远等不到回应
-          // （提示词和 preset 都写了「被 @ 必须回」，但它仍会违反，所以必须有桥接侧硬约束）。
-          {
-            const callerMsgs = findCallersV2(key, st);
-            // 只看 pending（还没答过的 @）。answered 是「已经回过的那条 @」——用
-            // qq_send_message 不引用回复时它不会被移出未读（只有带 replyToMessageId 的
-            // 发送才清理），于是会长期留在列表里。原先判 callerMsgs.length 把这类旧 @
-            // 也算成「有人在叫你」，机器人明明已经把话说完了、想收尾时仍被拦下，
-            // 只能硬凑一句话。实测 2026-10-12 被逼出这样一条真发进群的：
-            //   「这两下 @ 我都应过了，管理员的「在的」、喊口号那个也拒了」
-            // —— 只是把自己的调度状态念了一遍。answered 不该构成拦截理由。
-            // —— 这里**不能**再叠 `repliedThisTurn`（本轮发过言就放行）。
-            // pending 的判定基准是 lastAiReplyAt（最后一次发言时间）：只要 @ 比它晚，
-            // 这条 @ 就是没答过的。而 repliedThisTurn 看的是「本轮有没有发过言」，
-            // 一个更早的回复也会让它为 true。实测 2026-10-22 20:18:59 的 @ 就是被它
-            // 放行的：机器人 20:14:38 发过言（那轮确实发过），20:20:51 wait 结束后
-            // mark_read 把这条 @ 一并标读，靠 backfill 4 分钟后才补回，用户以为没理人。
-            if (callerMsgs.pending.length) {
-              const brief = callerMsgs.pending
-                .slice(-3)
-                .map((m) => `${String(m.sender || '某人')}：${String(m.text || m.plain || '').slice(0, 30)}`)
-                .join('；');
-              sendJson({
-                ok: false,
-                error: `未读里有人在叫你，不能就这样已读收尾：${brief}。请先正面回应（优先用 qq_reply；用 qq_send_message 时带 replyToMessageId，桥接才能确认你回的是哪条）；如果这条你确实办不到，就直接对群友说明办不到的原因——话说给对方听，不要报告自己的处理流程或调度状态。`,
-                callers: callerMsgs.pending.length
-              }, 400);
-              return;
-            }
-          }
-          // 如果当前已经是“潜水”唤醒配置，且最近还有对话/刚被唤醒，不允许用 mark_read 直接回到潜水；
-          // 必须先等够沉睡前观察窗口，避免“聊两句又去潜水”。
-          if (isSleepingConfigV2(st.wakeConfig) && preSleepWaitBlockedV2(st, key)) {
-            const preSleepMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
-            const remaining = Math.max(0, preSleepMs - ((st.lastIncomingAt || 0) ? Date.now() - st.lastIncomingAt : 0));
-            const remainMin = Math.ceil(remaining / 60000);
-            sendJson({
-              ok: false,
-              error: `还不能通过 qq_mark_read 直接回到潜水：还需等待约 ${remainMin} 分钟无新消息，或调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察。如果等待期间有人发新消息，请先查看返回的 newMessages；判断不需要你参与就可以直接收尾沉睡，若你参与了则需下次再等观察窗口。`,
-              preSleepWaitMs: preSleepMs,
-              preSleepWaitRemainingMs: remaining
-            }, 400);
-            return;
-          }
-          const markedCount = st.unread.length;
-          // 未读清理：**该清的要清干净**，否则会永久滞留并导致重复回答。
-          //
-          // 历史与两个坑：
-          //   1. 原先这里写的是 `filter((m) => !pendingSeqs.has(seq))`——与它自己的注释
-          //      （"保留命中排队 seq 的未读"）**正好相反**：它把排队中的消息**删掉**、
-          //      留下其余全部。实测后果：11 条未读被反复"保留"，mark_read 每次都报
-          //      "已读 0 条，保留 11 条"，于是**每一轮唤醒模型都看到同样那 11 条**，
-          //      里面 4 条早前的 @ 被当成待办逐条补答 → 同一条消息被回复 3~4 次。
-          //   2. 之所以当初想"保留排队消息"，是为了避免"繁忙期间入队的 @ 被顺手标掉、
-          //      补发判定误判成已处理"（确有此事）。但正确做法是**只保留本轮唤醒之后
-          //      新到的**——那些才是没被任何回合看过的。
-          //
-          // 判据用 seq 而不是时间：seq 是本地自增、单调，比时钟可靠。
-          // 本轮唤醒后新到的消息 seq 一定大于唤醒时的水位。
-          const wakeSeqAt = Number(st.wakeSeqAt) || 0;
-          if (wakeSeqAt > 0) {
-            st.unread = st.unread.filter((m) => Number(m?.seq) > wakeSeqAt);
-          } else {
-            // 拿不到水位（老状态/异常）时保守清空：宁可清掉也不让它永久滞留
-            // ——滞留的代价是"无限重复回答"，比偶尔漏一条更严重。
-            st.unread = [];
-          }
-          // 水位用掉即清，避免下一轮误用它去清刚到的消息。
-          st.wakeSeqAt = 0;
-          const keptUnread = st.unread.length;
-          st.lastActionAt = Date.now();
-          st.wakeConfig.noActionCount = 0;
-          // 防止“有限潜水被 timeout 唤醒后 sleepUntil 被清空、又 mark_read 收尾”导致无定时器无触发条件的静默态。
-          if (!st.wakeConfig.infinite && !st.wakeConfig.sleepUntil) {
-            st.wakeConfig.infinite = true;
-          }
-          ensureWakeableV2(st, { key });
-          st.wakeConfig.confirmedAt = Date.now();
-          st.wakeConfig.confirmedBy = 'mark_read';
-          markReadCalledKeys.add(key);
-          saveSocialV2State();
-          log(`[reserved2] 控制台/工具标记 ${key} 未读已读：${markedCount - keptUnread} 条${keptUnread ? `，保留 ${keptUnread} 条待补发唤醒的消息` : ''}，已确认下一次唤醒配置`);
-          sendJson({ ok: true, key, markedCount, wakeGuaranteed: computeWakeSafetyV2(st.wakeConfig).guaranteed, wakeSafety: computeWakeSafetyV2(st.wakeConfig), wakeConfig: st.wakeConfig });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/wake-config') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('setWakeConfig')) { sendJson({ ok: false, error: '工具未启用：qq_set_wake_config' }, 403); return; }
-          const st = getSocialV2State(key);
-          const input = body.config && typeof body.config === 'object' && !Array.isArray(body.config) ? body.config : {};
-          const current = st.wakeConfig;
-          const inputTriggers = input.triggers && typeof input.triggers === 'object' && !Array.isArray(input.triggers) ? input.triggers : {};
-          const normalizeTriggerBool = (name, fallback) => {
-            if (name in inputTriggers) return inputTriggers[name] === true;
-            return fallback;
-          };
-          const rawKeywords = inputTriggers.keywords;
-          const nextKeywords = rawKeywords !== undefined
-            ? (Array.isArray(rawKeywords)
-                ? rawKeywords.map((k) => String(k ?? '').trim()).filter(Boolean).slice(0, 50).map((k) => k.slice(0, 100))
-                : [])
-            : (Array.isArray(current.triggers.keywords) ? current.triggers.keywords.slice(0, 50).map((k) => String(k).slice(0, 100)) : []);
-          const next = {
-            ...current,
-            mode: input.mode === 'active' ? 'active' : input.mode === 'diving' ? 'diving' : current.mode,
-            infinite: typeof input.infinite === 'boolean' ? input.infinite : current.infinite,
-            sleepUntil: current.sleepUntil,
-            triggers: {
-              ...current.triggers,
-              ...inputTriggers,
-              atMention: normalizeTriggerBool('atMention', current.triggers.atMention === true),
-              nameMention: normalizeTriggerBool('nameMention', current.triggers.nameMention === true),
-              question: normalizeTriggerBool('question', current.triggers.question === true),
-              anyMessage: normalizeTriggerBool('anyMessage', current.triggers.anyMessage === true),
-              poke: normalizeTriggerBool('poke', current.triggers.poke === true),
-              keywords: nextKeywords
-            },
-            batchWindowMs: Number.isFinite(Number(input.batchWindowMs)) && Number(input.batchWindowMs) >= 1000
-              ? Math.min(3600000, Math.round(Number(input.batchWindowMs)))
-              : current.batchWindowMs
-          };
-          // 从 active 切回 diving 时，若 AI 没显式保留 anyMessage，则清除，避免“潜水=每条都唤醒”的语义矛盾。
-          if (next.mode === 'diving' && !('anyMessage' in inputTriggers)) {
-            next.triggers.anyMessage = false;
-          }
-          if (next.mode === 'active') {
-            next.infinite = true;
-            next.sleepUntil = null;
-            next.triggers.anyMessage = true;
-          }
-          if (typeof input.infinite === 'boolean' && next.mode !== 'active') next.infinite = input.infinite;
-          if (next.infinite) {
-            next.sleepUntil = null;
-          } else if (input.sleepUntil) {
-            const d = new Date(String(input.sleepUntil));
-            if (!Number.isNaN(d.getTime())) next.sleepUntil = d.toISOString();
-          } else if (Number.isFinite(Number(input.sleepMs))) {
-            let ms = Math.max(0, Math.round(Number(input.sleepMs)));
-            const minMs = Math.max(0, Number(cfg.socialV2?.wake?.sleepMinMs) || 0);
-            const maxMs = Number(cfg.socialV2?.wake?.sleepMaxMs) || 0;
-            if (ms < minMs) ms = minMs;
-            if (maxMs > 0 && ms > maxMs) ms = maxMs;
-            next.sleepUntil = new Date(Date.now() + ms).toISOString();
-          } else if (!next.sleepUntil && !next.infinite) {
-            // 既没有无限也没有时间：使用推荐默认有限时长
-            const recMin = Number(cfg.socialV2?.wake?.recommendedSleepMinMs) || 300000;
-            const recMax = Number(cfg.socialV2?.wake?.recommendedSleepMaxMs) || 7200000;
-            const ms = recMin + Math.random() * Math.max(0, recMax - recMin);
-            next.sleepUntil = new Date(Date.now() + Math.round(ms)).toISOString();
-          }
-          // 对有限 sleepUntil 也做 min/max clamp，防止绕过 sleepMaxMs
-          if (!next.infinite && next.sleepUntil) {
-            const maxMs = Number(cfg.socialV2?.wake?.sleepMaxMs) || 0;
-            const minMs = Math.max(0, Number(cfg.socialV2?.wake?.sleepMinMs) || 0);
-            let until = Date.parse(next.sleepUntil);
-            if (Number.isFinite(until)) {
-              if (minMs > 0 && until < Date.now() + minMs) until = Date.now() + minMs;
-              if (maxMs > 0 && until > Date.now() + maxMs) until = Date.now() + maxMs;
-              next.sleepUntil = new Date(until).toISOString();
-            }
-          }
-          // 归一化概率
-          if (next.triggers.probability !== undefined) {
-            next.triggers.probability = Math.min(1, Math.max(0, Number(next.triggers.probability) || 0));
-          }
-          // 归一化拍一拍触发（只接受布尔，防脏字符串被当成 true）
-          if (input.triggers && typeof input.triggers === 'object' && 'poke' in input.triggers) {
-            next.triggers.poke = input.triggers.poke === true;
-          }
-          // 归一化“指定成员”触发：只保留正整数 QQ 号，去重，限制数量；
-          // null/undefined/非法值统一清空，避免“null”被当成有效唤醒条件绕过防永眠。
-          next.triggers.speakerIds = normalizeSpeakerIdsV2(next.triggers.speakerIds);
-          // 私聊不适用“指定成员发言醒来”：清除以免误导/脏数据（私聊仍按原有逻辑每次消息都唤醒）。
-          if (key.startsWith('private:')) {
-            next.triggers.speakerIds = [];
-          }
-          // 防止 AI 永眠：无限期潜水必须至少有一个可触发条件
-          if (next.infinite) {
-            const tr = next.triggers ?? {};
-            const hasTrigger = tr.atMention || tr.nameMention || tr.poke || (Array.isArray(tr.keywords) && tr.keywords.length > 0) || tr.question || tr.anyMessage || (Number(tr.probability) > 0) || (Array.isArray(tr.speakerIds) && tr.speakerIds.length > 0);
-            if (!hasTrigger) {
-              sendJson({ ok: false, error: '无限期潜水必须至少保留一个唤醒条件（@/名字/拍一拍/关键词/提问/anyMessage/概率>0），否则 AI 可能永眠' }, 400);
-              return;
-            }
-          }
-          // 硬拦截（与 qq_mark_read 同规则）：未读里有人叫它、而本轮还没回应时，
-          // 不允许直接设置潜水/下一次唤醒就走人——否则催它的人永远等不到回应。
-          // 判据同样只看 pending：已经回过的那条 @ 不构成拦截理由（详见 qq_mark_read 处的说明）。
-          if (isSleepingConfigV2(next)) {
-            const callerMsgs2 = findCallersV2(key, st);
-            // 与 qq_mark_read 同理：pending 已按 lastAiReplyAt 判过，
-            // 不能再叠「本轮发过言」——早于新 @ 的回复也会让那个条件成立。
-            if (callerMsgs2.pending.length) {
-              const brief2 = callerMsgs2.pending
-                .slice(-3)
-                .map((m) => `${String(m.sender || '某人')}：${String(m.text || m.plain || '').slice(0, 30)}`)
-                .join('；');
-              sendJson({
-                ok: false,
-                error: `未读里有人在叫你，不能先潜水走人：${brief2}。请先正面回应（优先用 qq_reply；用 qq_send_message 时带 replyToMessageId，桥接才能确认你回的是哪条），回应后再设置下一次唤醒；如果这条你确实办不到，就直接对群友说明办不到的原因——话说给对方听，不要报告自己的处理流程或调度状态。`,
-                callers: callerMsgs2.pending.length
-              }, 400);
-              return;
-            }
-          }
-          // 沉睡前强制观察窗口：除非对方明确结束、或已经安静/等待足够时间，否则不允许 AI 聊两句就设置潜水。
-          if (isSleepingConfigV2(next) && preSleepWaitBlockedV2(st, key)) {
-            const preSleepMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
-            const remaining = Math.max(0, preSleepMs - ((st.lastIncomingAt || 0) ? Date.now() - st.lastIncomingAt : 0));
-            const remainMin = Math.ceil(remaining / 60000);
-            sendJson({
-              ok: false,
-              error: `还不能立刻设置潜水/下一次唤醒：还需等待约 ${remainMin} 分钟无新消息，或调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察。如果等待期间有人发新消息，请先查看返回的 newMessages；判断不需要你参与就可以直接设置并沉睡，若你参与了则需下次再等观察窗口。`,
-              preSleepWaitMs: preSleepMs,
-              preSleepWaitRemainingMs: remaining
-            }, 400);
-            return;
-          }
-          st.wakeConfig = next;
-          st.wakeConfig.lastWakeAt = st.wakeConfig.lastWakeAt || 0;
-          st.wakeConfig.wakeCount = st.wakeConfig.wakeCount || 0;
-          st.wakeConfig.noActionCount = 0;
-          st.wakeConfig.confirmedAt = Date.now();
-          st.wakeConfig.confirmedBy = 'set_wake_config';
-          st.lastActionAt = Date.now();
-          // 已成功设置下一次唤醒：本轮沉睡前观察标记作废，下次想再睡需重新走 5 分钟观察。
-          st.preSleepWaitSatisfiedAt = 0;
-          st.preSleepWaitObservedAt = 0;
-          st.preSleepWaitAccumMs = 0;
-          saveSocialV2State();
-          wakeConfigUpdatedKeys.add(key);
-          wakeConfigMissCount.delete(key);
-          if (st.pendingWakeTimer) {
-            clearTimeout(st.pendingWakeTimer);
-            st.pendingWakeTimer = null;
-          }
-          cancelReplyCheckV2(key); // AI 已主动设置新的唤醒配置，取消回复检查
-          setupSleepTimerV2(key);
-          log(`[reserved2] 更新唤醒配置 ${key}: mode=${next.mode} infinite=${next.infinite} sleepUntil=${next.sleepUntil ?? 'null'}`);
-          sendJson({ ok: true, key, wakeConfig: next, wakeSafety: computeWakeSafetyV2(next) });
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/states') {
-          const list = [];
-          for (const [key, st] of socialV2.conversations) {
-            // 诊断：把 isConversationBusyV2 的四个判据分别透出，便于定位「虚假繁忙」卡在哪一项
-            const sid = state.sessions[key];
-            const q = promptQueues.get(key);
-            list.push({
-              key,
-              wakeConfig: st.wakeConfig,
-              unreadCount: st.unread.length,
-              recentCount: st.recentMessages.length,
-              lastWakeReason: st.lastWakeReason,
-              lastAiReplyAt: st.lastAiReplyAt,
-              noActionCount: st.wakeConfig.noActionCount || 0,
-              busy: isConversationBusyV2(key, st),
-              busyBy: {
-                pendingWakeTimer: !!st.pendingWakeTimer,
-                pendingWakeKeys: pendingWakeKeys.has(key),
-                promptQueue: !!(q && (q.running || q.queue.length > 0)),
-                promptQueueRunning: !!(q && q.running),
-                promptQueueLen: q?.queue?.length ?? 0,
-                v2TurnStartAt: !!(sid && v2TurnStartAt.has(sid)),
-                collectors: !!(sid && collectors.has(sid))
-              }
-            });
-          }
-          sendJson({ ok: true, conversations: list });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/wake') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const reason = String(body.reason ?? 'admin').trim() || 'admin';
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
-            sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403);
-            return;
-          }
-          const st = getSocialV2State(key);
-          if (st.pendingWakeTimer) {
-            clearTimeout(st.pendingWakeTimer);
-            st.pendingWakeTimer = null;
-          }
-          if (!st.bootstrapSent) st.bootstrapSent = true;
-          saveSocialV2State();
-          sendWakePromptV2(key, reason);
-          log(`控制台：手动唤醒 ${key}（${reason}）`);
-          sendJson({ ok: true, key, reason });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/send-burst') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const messages = stripLeadingMetaMarkers(normalizeMessagesInput(body.messages))
-            .map((m) => String(m ?? '').trim())
-            .filter(Boolean);
-          const replyToMessageId = body.replyToMessageId;
-          if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '') {
-            sendJson({ ok: false, error: 'qq_send_burst 暂不支持引用，请使用 qq_reply' }, 400);
-            return;
-          }
-          if (!key || !messages.length) {
-            sendJson({ ok: false, error: 'key 和 messages 不能为空' }, 400);
-            return;
-          }
-          const sendCfgBurst = cfg.socialV2?.send ?? {};
-          if (sendCfgBurst.burstEnabled === false && messages.length > 1) {
-            sendJson({ ok: false, error: '已禁用多条发送，请合并为一条消息' }, 403);
-            return;
-          }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('sendBurst')) { sendJson({ ok: false, error: '工具未启用：qq_send_burst' }, 403); return; }
-          if (currentMode !== 'reserved2') {
-            sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403);
-            return;
-          }
-          if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403); return; }
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) {
-            sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400);
-            return;
-          }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
-            sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403);
-            return;
-          }
-          if (shouldBlockSilentReply(key)) {
-            sendJson({ ok: false, error: '静默模式已开启，当前不允许发送' }, 403);
-            return;
-          }
-          const sendCfg = cfg.socialV2?.send ?? {};
-          const maxMsgs = Math.max(1, Number(sendCfg.burstMaxMessages) || 8);
-          const maxChars = Math.max(1, Number(sendCfg.maxMessageChars) || 500);
-          if (messages.length > maxMsgs) {
-            sendJson({ ok: false, error: `最多发送 ${maxMsgs} 条` }, 400);
-            return;
-          }
-          for (const msg of messages) {
-            if (msg.length > maxChars) {
-              sendJson({ ok: false, error: `单条消息不能超过 ${maxChars} 字` }, 400);
-              return;
-            }
-            if (SENSITIVE_RE.test(msg)) {
-              sendJson({ ok: false, error: '消息含敏感信息，已阻止发送' }, 403);
-              return;
-            }
-          }
-          try {
-            const st = getSocialV2State(key);
-            const now = Date.now();
-            const maxPerMinute = Number(sendCfg.maxSendPerMinute) || 0;
-            const maxPerHour = Number(sendCfg.maxSendPerHour) || 0;
-            const recentMinute = (st.sendTimes || []).filter((t) => now - t < 60000).length;
-            const recentHour = (st.sendTimes || []).filter((t) => now - t < 3600000).length;
-            if ((maxPerMinute > 0 && recentMinute + messages.length > maxPerMinute) || (maxPerHour > 0 && recentHour + messages.length > maxPerHour)) {
-              sendJson({ ok: false, error: '发送频率超限，请稍后再试' }, 429);
-              return;
-            }
-            // 先预占发送额度，避免并发绕过限频
-            for (let i = 0; i < messages.length; i++) st.sendTimes.push(now);
-            if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
-            const delays = computeGapsV2(messages, 'auto', undefined, undefined, sendCfg);
-            const sentMessages = await sendMessagesV2(key, messages, delays);
-            recordSentMessagesV2(key, sentMessages);
-            st.lastAiReplyAt = now;
-            st.lastActionAt = now;
-            st.wakeConfig.noActionCount = 0;
-            saveSocialV2State();
-            log(`[reserved2] 工具分条发送 ${key}: 成功 ${sentMessages.length}/${messages.length} 条`);
-            appendActivity(`${key} [reserved2] 工具分条发送：成功 ${sentMessages.length}/${messages.length} 条`);
-            if (sentMessages.length > 0) scheduleReplyCheckV2(key);
-            const burstHint = messages.length >= 3 ? '你已经连发了多条，确认是必要的吗？真人很少一口气补完。' : undefined;
-            const spaceWarn = findCjkSpaceWarning(messages);
-            const splitWarn = findSplitBoundaryWarning(messages);
-            sendJson({ ok: true, key, sent: sentMessages.length, failed: messages.length - sentMessages.length, ...(burstHint ? { hint: burstHint } : {}), ...(spaceWarn ? { warn: spaceWarn } : {}), ...(splitWarn ? { splitWarn } : {}) });
-          } catch (error) {
-            if (error?.sent?.length) {
-              recordSentMessagesV2(key, error.sent);
-              log(`[reserved2] 工具分条发送部分成功 ${error.sent.length}/${messages.length} 条，已记录已发消息`);
-            }
-            // 失败/未发出的消息回滚预占的发送额度，避免假 429。
-            const sentCount = Array.isArray(error?.sent) ? error.sent.length : 0;
-            const failedCount = Math.max(0, messages.length - sentCount);
-            for (let i = 0; i < failedCount; i++) {
-              const idx = st.sendTimes.indexOf(now);
-              if (idx >= 0) st.sendTimes.splice(idx, 1);
-            }
-            if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
-            saveSocialV2State();
-            sendJson({ ok: false, error: error?.message ?? String(error) }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/send-message') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const rawMessages = normalizeMessagesInput(body.messages);
-          const isRawString = typeof body.messages === 'string' && rawMessages.length === 1;
-          // 剥掉模型误写在开头的元标记（如 `[[这是玩笑]]正文`）。
-          // 放在归一化之后：归一化负责把 JSON 数组字符串拆成多条，剥标记针对的是最终的文本。
-          const messages = stripLeadingMetaMarkers(rawMessages).map((m) => String(m ?? '').trim()).filter(Boolean);
-          const replyToMessageId = body.replyToMessageId;
-          const atUserId = body.atUserId ?? null;
-          // 二代不再按空格自动分条：字符串就是一条消息；数组模式原样使用调用方间隔。
-          const gapMode = (isRawString && messages.length > 1) ? 'auto' : (body.gapMode === 'fixed' || body.gapMode === 'byLength' ? body.gapMode : 'auto');
-          const gapMs = Number(body.gapMs);
-          const gaps = Array.isArray(body.gaps) ? body.gaps.map(Number) : [];
-          if (!key || !messages.length) {
-            sendJson({ ok: false, error: 'key 和 messages 不能为空' }, 400);
-            return;
-          }
-          const sendCfgBurst = cfg.socialV2?.send ?? {};
-          if (sendCfgBurst.burstEnabled === false && messages.length > 1) {
-            sendJson({ ok: false, error: '已禁用多条发送，请合并为一条消息' }, 403);
-            return;
-          }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('sendMessage')) { sendJson({ ok: false, error: '工具未启用：qq_send_message' }, 403); return; }
-          if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
-          if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403); return; }
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
-            sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403);
-            return;
-          }
-          if (kind === 'private' && atUserId) {
-            sendJson({ ok: false, error: '私聊不需要 @' }, 400);
-            return;
-          }
-          if (shouldBlockSilentReply(key)) {
-            sendJson({ ok: false, error: '静默模式已开启，当前不允许发送' }, 403);
-            return;
-          }
-          if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '' && !isSymbolicReplyRef(replyToMessageId) && !/^-?[1-9]\d*$/.test(String(replyToMessageId).trim())) {
-            sendJson({ ok: false, error: 'replyToMessageId 必须是非零整数（消息 id 可能为负数），或传 latest/上一条 表示引用最近一条别人的消息' }, 400);
-            return;
-          }
-          const sendCfg = cfg.socialV2?.send ?? {};
-          const maxMsgs = Math.max(1, Number(sendCfg.burstMaxMessages) || 8);
-          const maxChars = Math.max(1, Number(sendCfg.maxMessageChars) || 500);
-          if (messages.length > maxMsgs) {
-            sendJson({ ok: false, error: `最多发送 ${maxMsgs} 条` }, 400);
-            return;
-          }
-          for (const msg of messages) {
-            if (msg.length > maxChars) {
-              sendJson({ ok: false, error: `单条消息不能超过 ${maxChars} 字` }, 400);
-              return;
-            }
-            if (SENSITIVE_RE.test(msg)) {
-              sendJson({ ok: false, error: '消息含敏感信息，已阻止发送' }, 403);
-              return;
-            }
-          }
-          const delays = computeGapsV2(messages, gapMode, gapMs, gaps, sendCfg);
-          // 干跑：只验证引用解析结果，不真发、不占用发送额度。用于排查「引用会引到哪条」，不打扰群。
-          if (body.dryRun === true) {
-            const stDry = getSocialV2State(key);
-            const resolvedDry = (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '')
-              ? await resolveReplyTargetV2(stDry, kind, id, String(replyToMessageId).trim())
-              : null;
-            sendJson({
-              ok: !!resolvedDry || replyToMessageId == null || String(replyToMessageId).trim() === '',
-              key,
-              dryRun: true,
-              wouldSend: messages,
-              replyToMessageId: resolvedDry ? resolvedDry.messageId : null,
-              quoted: resolvedDry ? resolvedDry.info : null
-            });
-            return;
-          }
-          // 先做发送频率检查并预占额度，再解析引用目标，避免未限流的引用查询打爆 OneBot。
-          const st = getSocialV2State(key);
-          const now = Date.now();
-          const maxPerMinute = Number(sendCfg.maxSendPerMinute) || 0;
-          const maxPerHour = Number(sendCfg.maxSendPerHour) || 0;
-          const recentMinute = (st.sendTimes || []).filter((t) => now - t < 60000).length;
-          const recentHour = (st.sendTimes || []).filter((t) => now - t < 3600000).length;
-          if ((maxPerMinute > 0 && recentMinute + messages.length > maxPerMinute) || (maxPerHour > 0 && recentHour + messages.length > maxPerHour)) {
-            sendJson({ ok: false, error: '发送频率超限，请稍后再试' }, 429);
-            return;
-          }
-          // 先预占发送额度，避免并发绕过限频
-          for (let i = 0; i < messages.length; i++) st.sendTimes.push(now);
-          if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
-          let quotedInfo = null;
-          let actualReplyToMessageId = replyToMessageId;
-          if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '') {
-            const resolved = await resolveReplyTargetV2(st, kind, id, String(replyToMessageId).trim());
-            if (!resolved) {
-              // 引用解析失败：回滚已预占的发送额度
-              for (let i = 0; i < messages.length; i++) {
-                const idx = st.sendTimes.indexOf(now);
-                if (idx >= 0) st.sendTimes.splice(idx, 1);
-              }
-              saveSocialV2State();
-              sendJson({ ok: false, error: '无法解析被引用消息，请确认 message id 正确且属于当前会话（可用 qq_get_message_detail 查看）' }, 400);
-              return;
-            }
-            quotedInfo = resolved.info;
-            actualReplyToMessageId = resolved.messageId;
-          }
-          try {
-            const sentMessages = await sendMessagesV2(key, messages, delays, actualReplyToMessageId, atUserId, { quoted: quotedInfo });
-            recordSentMessagesV2(key, sentMessages);
-            st.lastAiReplyAt = now;
-            st.lastActionAt = now;
-            st.wakeConfig.noActionCount = 0;
-            // 同 reply 端点：已回复的那条立即移出未读，避免本轮/下一轮重复回答同一条。
-            if (sentMessages.length > 0 && quotedInfo?.messageId != null) {
-              const before = st.unread.length;
-              st.unread = st.unread.filter((m) => String(m?.messageId ?? '') !== String(quotedInfo.messageId));
-              if (st.unread.length !== before) {
-                log(`[reserved2] ${key} 已回复的消息从未读移除 1 条（余 ${st.unread.length}）`);
-              }
-            }
-            // 记录这次明确引用回复的目标 seq：只有它算“已答”。
-            if (sentMessages.length > 0 && quotedInfo?.messageId != null) {
-              const targetEntry = st.recentMessages.find((m) => m && String(m.messageId) === String(quotedInfo.messageId));
-              const targetSeq = Number(quotedInfo.seq) || Number(targetEntry?.seq) || 0;
-              if (targetSeq) {
-                const set = new Set((Array.isArray(st.answeredSeqs) ? st.answeredSeqs : []).map(Number).filter(Number.isFinite));
-                set.add(targetSeq);
-                st.answeredSeqs = [...set].slice(-200);
-              }
-            }
-            saveSocialV2State();
-            log(`[reserved2] 工具统一发送 ${key}: 成功 ${sentMessages.length}/${messages.length} 条`);
-            appendActivity(`${key} [reserved2] 工具统一发送：成功 ${sentMessages.length}/${messages.length} 条`);
-            if (sentMessages.length > 0) scheduleReplyCheckV2(key);
-            const burstHint = messages.length >= 3 ? '你已经连发了多条，确认是必要的吗？真人很少一口气补完。' : undefined;
-            const spaceWarn = findCjkSpaceWarning(messages);
-            const splitWarn = findSplitBoundaryWarning(messages);
-            sendJson({ ok: true, key, sent: sentMessages.length, failed: messages.length - sentMessages.length, delays, quoted: quotedInfo, ...(burstHint ? { hint: burstHint } : {}), ...(spaceWarn ? { warn: spaceWarn } : {}), ...(splitWarn ? { splitWarn } : {}) });
-          } catch (error) {
-            if (error?.sent?.length) {
-              recordSentMessagesV2(key, error.sent);
-              log(`[reserved2] 工具统一发送部分成功 ${error.sent.length}/${messages.length} 条，已记录已发消息`);
-            }
-            // 失败/未发出的消息回滚预占的发送额度，避免假 429。
-            const sentCount = Array.isArray(error?.sent) ? error.sent.length : 0;
-            const failedCount = Math.max(0, messages.length - sentCount);
-            for (let i = 0; i < failedCount; i++) {
-              const idx = st.sendTimes.indexOf(now);
-              if (idx >= 0) st.sendTimes.splice(idx, 1);
-            }
-            if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
-            saveSocialV2State();
-            sendJson({ ok: false, error: error?.message ?? String(error) }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/send-poke') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const targetUserId = String(body.targetUserId ?? body.userId ?? '').trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
-          if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: 'reserved2 模式发送拍一拍必须携带 agent token' }, 403); return; }
-          if (!agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (!v2ToolEnabled('sendPoke')) { sendJson({ ok: false, error: '工具未启用：qq_send_poke' }, 403); return; }
-          if (socialV2.paused) { sendJson({ ok: false, error: '二代 AI 已暂停，不能发送拍一拍' }, 403); return; }
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
-            sendJson({ ok: false, error: '当前模式不允许操作该会话' }, 403);
-            return;
-          }
-          if (shouldBlockSilentReply(key)) { sendJson({ ok: false, error: '静默模式已开启，当前不允许拍一拍' }, 403); return; }
-          if (kind === 'group' && !targetUserId) {
-            sendJson({ ok: false, error: '群聊拍一拍必须指定 targetUserId（QQ 号 / 昵称 / latest）' }, 400);
-            return;
-          }
-          // 目标解析：允许 latest（最近戳我的人）或对方昵称，由桥接在本会话消息里换算成 QQ 号。
-          //
-          // 为什么必须支持（2026-10-22 事故）：模型被要求"有人戳你就回拍"，但唤醒提示里
-          // 只有对方**名字**、没有 QQ 号；它于是复用上下文里残留的旧号，反复拍同一个人，
-          // 群里被问「怎么一直戳我」。给它一条不依赖数字的路（同 replyToMessageId: latest 的思路），
-          // 比在提示词里反复强调"别填错"可靠得多。
-          if (kind === 'group') {
-            const peek = getSocialV2State(key);
-            const resolved = resolvePokeTarget({
-              ref: targetUserId,
-              unread: peek.unread,
-              recentMessages: peek.recentMessages
-            });
-            if (!resolved.ok) {
-              if (resolved.reason === 'ambiguous') {
-                const cands = (resolved.candidates || []).map((c) => `${c.sender}(${c.userId})`).join('、');
-                sendJson({ ok: false, error: `昵称「${targetUserId}」在本会话对应多人：${cands}。请直接传 QQ 号` }, 400);
-                return;
-              }
-              if (resolved.reason === 'not-found') {
-                sendJson({
-                  ok: false,
-                  error: isSymbolicPokeRef(targetUserId)
-                    ? '最近没有戳你的人，无法用 latest；请传 QQ 号或对方昵称'
-                    : `本会话里找不到「${targetUserId}」对应的 QQ 号，请传数字 QQ 号，或传 latest（最近戳你的人）`
-                }, 400);
-                return;
-              }
-              sendJson({ ok: false, error: 'targetUserId 不能为空' }, 400);
-              return;
-            }
-            if (resolved.reason !== 'numeric') {
-              log(`[拍一拍] ${key} 目标解析：${targetUserId} → ${resolved.userId}${resolved.sender ? `（${resolved.sender}）` : ''}，来源=${resolved.reason}`);
-              targetUserId = resolved.userId;
-            }
-          }
-          if (targetUserId && !/^[1-9]\d*$/.test(targetUserId)) {
-            sendJson({ ok: false, error: 'targetUserId 必须是正整数 QQ 号' }, 400);
-            return;
-          }
-          const st = getSocialV2State(key);
-          const sendCfg = cfg.socialV2?.send ?? {};
-          const now = Date.now();
-          const maxPerMinute = Number(sendCfg.maxSendPerMinute) || 0;
-          const maxPerHour = Number(sendCfg.maxSendPerHour) || 0;
-          const recentMinute = (st.sendTimes || []).filter((t) => now - t < 60000).length;
-          const recentHour = (st.sendTimes || []).filter((t) => now - t < 3600000).length;
-          if ((maxPerMinute > 0 && recentMinute + 1 > maxPerMinute) || (maxPerHour > 0 && recentHour + 1 > maxPerHour)) {
-            sendJson({ ok: false, error: '发送频率超限，请稍后再试' }, 429);
-            return;
-          }
-          st.sendTimes.push(now);
-          if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
-          try {
-            if (kind === 'group') {
-              await bot.raw('group_poke', { group_id: id, user_id: Number(targetUserId) });
-            } else {
-              // 私聊拍一拍：send_poke 自动路由到当前私聊对象
-              await bot.raw('send_poke', { user_id: id });
-            }
-            st.lastActionAt = now;
-            st.lastAiReplyAt = now;
-            st.wakeConfig.noActionCount = 0;
-            // 自己的拍一拍记成**名字**并明确「你拍了拍」，不再写裸 QQ 号。
-            //
-            // 两个原因（2026-10-22 事故）：
-            //   ① 裸号会被模型当成"可复用的目标"——上下文里唯一的数字就是它，
-            //      下次要拍别人时没有号，就顺手拿这个顶上，反复拍同一个人；
-            //   ② 写成「我拍了拍」时模型认不出那是自己的动作，群友问「怎么一直戳我」，
-            //      它反而答「戳你的人不是鱼」。
-            let targetName = targetUserId;
-            if (kind === 'group') {
-              try {
-                targetName = (await resolveGroupMemberName(id, targetUserId)) || targetUserId;
-              } catch { /* 查不到名字就退回号，不影响发送 */ }
-            }
-            const pokeText = kind === 'group'
-              ? `[拍一拍] 你拍了拍 ${targetName}`
-              : '[拍一拍] 你拍了拍对方';
-            st.recentMessages.push({
-              messageId: null,
-              sender: '我',
-              text: pokeText,
-              plain: pokeText,
-              tail: pokeText,
-              kind: 'poke',
-              quoteTargetIsSelf: false,
-              isOwner: true,
-              ownerLabel: '我',
-              isSelf: true,
-              media: [],
-              hasMedia: false,
-              forwardIds: [],
-              hasForward: false,
-              poke: { targetId: targetUserId || String(id), targetIsSelf: false, groupId: kind === 'group' ? String(id) : null },
-              time: Date.now()
-            });
-            const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
-            if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
-            st.preSleepWaitSatisfiedAt = 0;
-            st.preSleepWaitObservedAt = 0;
-            st.preSleepWaitAccumMs = 0;
-            saveSocialV2State();
-            log(`[reserved2] 工具拍一拍 ${key}${kind === 'group' ? ' -> ' + targetUserId : ''}`);
-            appendActivity(`${key} [reserved2] 工具拍一拍${kind === 'group' ? ' -> ' + targetUserId : ''}`);
-            sendJson({ ok: true, key, kind, targetUserId: targetUserId || String(id) });
-          } catch (error) {
-            const idx = st.sendTimes.indexOf(now);
-            if (idx >= 0) st.sendTimes.splice(idx, 1);
-            if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
-            log(`[reserved2] 工具拍一拍失败 ${key}:`, error?.message ?? error);
-            sendJson({ ok: false, error: `拍一拍失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        // ── 图库（reserved2）：按需取图发送 ────────────────────────────────
-        // 发图预检：毫秒级告知「会立刻发」还是「要现拉等一会儿」。
-        // 模型先调这个，就能在要等的时候先回一句「等我找找」再发图，避免闷头等十几秒。
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/image-preflight') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('sendImage')) { sendJson({ ok: false, error: '工具未启用：qq_send_image' }, 403); return; }
-          const rawTags = url.searchParams.get('tags') ?? '';
-          const tags = rawTags ? rawTags.split(/[,，\s]+/).map((t) => t.trim()).filter(Boolean) : [];
-          const rawSources = url.searchParams.get('sources') ?? '';
-          const pf = imagePreflightV2(tags, rawSources, key);
-          const gate = imageSendAllowed(key);
-          // 已发图会被定期删除，所以「本地有」= 有**没发过的**图。
-          // 这里把 TTL 说清楚，避免模型以为"本地永远有"而误判等待时间。
-          const ttlMin = Math.round((Number(cfg.socialV2?.images?.sentTtlMs) || 0) / 60000);
-          const srcFilter = normalizeSourceFilter(rawSources);
-          sendJson({
-            ok: true,
-            key,
-            tags,
-            ...(srcFilter.requested ? { sources: srcFilter.valid } : {}),
-            // 说明这个源限制是哪来的：模型自己传的，还是桥接从群主的话里识别的。
-            // 后者要告诉模型，免得它以为"怎么只有一个站的图"。
-            ...(srcFilter.requested && !normalizeSourceFilter(rawSources).requested
-              ? { sourcesNote: `图源限制来自群主的话（${srcFilter.valid.join('/') || srcFilter.unavailable.join('/')}），桥接已自动应用，发图时不用重复传 sources。` }
-              : {}),
-            ...pf,
-            sendAllowed: gate.ok,
-            ...(gate.ok ? {} : { sendBlockedReason: gate.error }),
-            ...(ttlMin > 0 ? { sentTtlMinutes: ttlMin } : {}),
-            // 指定的源不可用时要说清楚，否则模型/群主不明白为什么查不到
-            ...(srcFilter.unavailable.length ? { unavailableSources: srcFilter.unavailable } : {}),
-            advice: srcFilter.requested && !srcFilter.valid.length
-              ? `群主要求的图源（${srcFilter.unavailable.join('/')}）当前不可用，所以查不到任何图（也不会退回其他站点，因为那不符合要求）。可用图源：${Object.entries(cfg.socialV2?.images?.sources ?? {}).filter(([, v]) => v?.enabled === true).map(([k]) => k).join('/') || '无'}。请告诉群主这个站点目前用不了。`
-              : pf.willWait
-                ? `本地没有匹配的图（发过的图会在 ${ttlMin > 0 ? `${ttlMin} 分钟后被清理` : '下次清理时移除'}，所以库里主要是不重复的新图），这次发图需要现去图站拉取（可能 5~30 秒）${srcFilter.valid.length ? `，且只会在 ${srcFilter.valid.join('/')} 上找` : ''}。建议先用 qq_send_message 回一句（例如「等我找找」）再调用 qq_send_image，这样不会让对方干等；拉取期间你无法回应新消息。`
-                : `本地有 ${pf.count} 张匹配的图${srcFilter.valid.length ? `（仅统计 ${srcFilter.valid.join('/')}）` : ''}，会立刻发出（约 0.1 秒），可以直接调用 qq_send_image。`
-          });
-          return;
-        }
-        // ── 按需拉取 X（Twitter）帖子并直接发到当前会话 ─────────────────────
-        // 由 MCP 工具 qq_fetch_x_posts 调用：群友点名要看某个 X 账号的帖子时触发。
-        // 参数：handle（账号，可带 @）、count（条数）、date（YYYY-MM-DD 指定某天）、
-        //       lastHours（最近 N 小时）。拉取 → 翻译 → 渲染成卡片 → 发图。
-        // X 登录凭据自检：查 state/x-auth.json 是否可用、能否连上 X（不泄露凭据值）。
-        // 凭据会因改密码/登出而失效，出问题时先打这个端点定位。
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/x-auth-check') {
-          if (req.headers['x-agent-token']) { sendJson({ ok: false, error: '该接口仅控制台可用' }, 403); return; }
-          const st = xMonitor.describeAuth();
-          if (!st.available) { sendJson({ ok: false, ...st, hint: '按记忆 x-monitor 登录态的说明取 auth_token/ct0 写入 state/x-auth.json' }); return; }
-          // 真的发一次请求验证（凭据存在≠有效）
-          try {
-            const probe = await xMonitor.verifyAuth();
-            sendJson({ ok: probe.ok, ...st, ...probe });
-          } catch (e) {
-            sendJson({ ok: false, ...st, error: `自检失败：${e?.message ?? e}` });
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/fetch-x-posts') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const handleRaw = String(body.handle ?? '').trim();
-          if (!key || !handleRaw) { sendJson({ ok: false, error: 'key 和 handle 不能为空' }, 400); return; }
-          if (!/^(group|private):\d+$/.test(key)) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-
-          const account = handleRaw.replace(/^@/, '').trim();
-          if (!/^[A-Za-z0-9_]{1,15}$/.test(account)) {
-            sendJson({ ok: false, error: `账号名不合法：${handleRaw}（X 账号只能含字母/数字/下划线，最多 15 位）` }, 400);
-            return;
-          }
-
-          const count = Math.max(1, Math.min(5, Number(body.count) || 1));
-          // 时间条件三选一：date（某一天）/ lastHours（最近 N 小时）/ 默认（最新几条）
-          let sinceMs = 0;
-          let untilMs = 0;
-          let rangeNote = '';
-          if (body.date) {
-            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(body.date).trim());
-            if (!m) { sendJson({ ok: false, error: 'date 格式应为 YYYY-MM-DD' }, 400); return; }
-            const start = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0, 0);
-            const end = new Date(start.getTime() + 24 * 3600 * 1000);
-            sinceMs = start.getTime();
-            untilMs = end.getTime();
-            rangeNote = `${m[1]}-${m[2]}-${m[3]} 当天`;
-          } else if (Number(body.lastHours) > 0) {
-            const h = Math.min(24 * 30, Number(body.lastHours));
-            sinceMs = Date.now() - h * 3600 * 1000;
-            rangeNote = `最近 ${h} 小时`;
-          }
-          // 未来日期：直接拒绝（避免空转一圈）
-          if (sinceMs && sinceMs > Date.now()) {
-            sendJson({ ok: false, error: `指定的时间还没到（${String(body.date ?? '')}），换个日期或说“最新”` }, 400);
-            return;
-          }
-
-          log(`[x-monitor] 按需拉取 @${account}（${rangeNote || '最新'}，${count} 条）→ ${key}${body.dryRun === true ? '（干跑）' : ''}`);
-          let result;
-          try {
-            result = await xMonitor.fetchAndRender(account, { count, sinceMs, untilMs });
-          } catch (e) {
-            sendJson({ ok: false, error: `拉取失败：${e?.message ?? e}` }, 500);
-            return;
-          }
-
-          if (!result.ok) {
-            // 400 而非 404：「那天没发帖 / 翻不到那么远」是查询条件没有结果，
-            // 不是接口不存在。404 会让调用方误以为是路由问题。
-            sendJson({
-              ok: false,
-              error: result.errors.join('；') || '没有拉到帖子',
-              user: result.user,
-              fetched: 0,
-              oldestMs: result.oldestMs || 0
-            }, 400);
-            return;
-          }
-
-          // 发图（每张一条消息，与真人发图节奏一致）
-          // dryRun：只拉取+渲染、不发送。排障时用，避免测试消息打扰群（踩过：以为传 send:false
-          // 能拦住，实际端点不认这个参数，结果真发到群里了）。
-          const dryRun = body.dryRun === true;
-          let sentCount = 0;
-          let sentVideos = 0;
-          const sendErrors = [];
-          for (const item of result.posts) {
-            if (dryRun) break;
-            try {
-              const dir = path.join(STATE_DIR, 'x-monitor');
-              fs.mkdirSync(dir, { recursive: true });
-              const file = path.join(dir, `x-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.png`);
-              fs.writeFileSync(file, item.image.buffer);
-              try {
-                await onebotSendImageFile(key, file, { post: item.post });
-              } finally {
-                setTimeout(() => { try { fs.unlinkSync(file); } catch {} }, 60000).unref?.();
-              }
-              sentCount += 1;
-              await sleep(700);   // 多条之间留点间隔，避免像刷屏
-            } catch (e) {
-              sendErrors.push(`${item.post.id}: ${e?.message ?? e}`);
-            }
-            // 视频必须**单独一条消息**发（SnowLuma 的 assertVideoSendPolicy：
-            // video 段必须唯一且是消息里唯一的段），所以放在卡片之后另发，不与文字/图片同条。
-            if (item.video?.file) {
-              try {
-                await sleep(500);
-                await onebotSendVideoFile(key, item.video.file, { post: item.post });
-                sentVideos += 1;
-                await sleep(700);
-              } catch (e) {
-                sendErrors.push(`${item.post.id} 视频: ${e?.message ?? e}`);
-              }
-            }
-          }
-
-          const skippedNote = result.videoSkipped?.length
-            ? `；跳过 ${result.videoSkipped.length} 个超限视频（${result.videoSkipped.map((v) => v.reason).join('；')}）`
-            : '';
-          log(`[x-monitor] @${account} 拉取完成：${dryRun ? `干跑（未发送）${result.posts.length} 条` : `发出 ${sentCount}/${result.posts.length} 张图、${sentVideos} 个视频`}${skippedNote}${sendErrors.length ? `，失败 ${sendErrors.length}` : ''}`);
-          sendJson({
-            ok: dryRun ? result.posts.length > 0 : sentCount > 0,
-            dryRun: dryRun || undefined,
-            user: result.user,
-            fetched: result.posts.length,
-            sent: sentCount,
-            sentVideos,
-            videoSkipped: result.videoSkipped ?? [],
-            posts: result.posts.map((p) => ({
-              id: p.post.id,
-              url: p.post.url,
-              createdAt: p.post.createdAt,
-              createdAtMs: p.post.createdAtMs,
-              pinnedSkipped: result.pinnedSkipped,
-              hasVideo: !!p.video,
-              videoBytes: p.video?.bytes ?? 0,
-              videoSize: p.video ? `${p.video.width}x${p.video.height}` : '',
-              videoDurationMs: p.video?.durationMs ?? 0,
-              summary: String(p.post.text || '').replace(/\s+/g, ' ').slice(0, 120)
-            })),
-            errors: [...result.errors, ...sendErrors].slice(0, 5)
-          });
-          return;
-        }
-
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/send-image') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
-          if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: 'reserved2 模式发图必须携带 agent token' }, 403); return; }
-          if (!agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (!v2ToolEnabled('sendImage')) { sendJson({ ok: false, error: '工具未启用：qq_send_image' }, 403); return; }
-          if (socialV2.paused) { sendJson({ ok: false, error: '二代 AI 已暂停，不能发图' }, 403); return; }
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
-            sendJson({ ok: false, error: '当前模式不允许操作该会话' }, 403);
-            return;
-          }
-          if (shouldBlockSilentReply(key)) { sendJson({ ok: false, error: '静默模式已开启，当前不允许发图' }, 403); return; }
-          const tags = Array.isArray(body.tags) ? body.tags.map(String) : (body.tags ? String(body.tags).split(/[,，\s]+/) : []);
-          // mode → 排序与时间窗。「日榜」用 age:<2day + order:score 近似
-          // （图站没有真正的 pixiv 式日榜；近两日按热度是最接近的语义）。
-          const modeMap = {
-            hot: { order: 'score', maxAgeDays: 0 },
-            daily: { order: 'score', maxAgeDays: 2 },
-            new: { order: 'new', maxAgeDays: 0 },
-            random: { order: 'random', maxAgeDays: 0 }
-          };
-          const mode = modeMap[String(body.mode ?? 'hot')] ?? modeMap.hot;
-          try {
-            const r = await sendImageV2(key, { tags, replyToMessageId: body.replyToMessageId, sources: body.sources, ...mode });
-            const st = getSocialV2State(key);
-            // 记入会话时间线，让 AI 与后续上下文知道「我刚发了张图」
-            st.recentMessages.push({
-              messageId: null,
-              sender: '我',
-              text: `[图片] 已发送一张图（${r.entry.source}${r.entry.artist ? ' / ' + r.entry.artist : ''}）`,
-              plain: '[图片]',
-              tail: '[图片]',
-              quoteTargetIsSelf: false,
-              isOwner: true,
-              ownerLabel: '我',
-              isSelf: true,
-              media: [],
-              hasMedia: false,
-              forwardIds: [],
-              hasForward: false,
-              time: Date.now()
-            });
-            const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
-            if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
-            st.lastAiReplyAt = Date.now();
-            st.lastActionAt = Date.now();
-            st.wakeConfig.noActionCount = 0;
-            saveSocialV2State();
-            log(`[图库] 工具发图 ${key}：${r.entry.id}`);
-            appendActivity(`${key} [图库] 已发送图片（${r.entry.source}）`);
-            // tagCorrections：告知调用方「你要的词被换成了别的标签」。
-            // 模型据此自查：若换后的标签跨了作品/角色，应主动说明或更正，别当查到了就完事。
-            sendJson({
-              ok: true,
-              key,
-              source: r.entry.source,
-              artist: r.entry.artist,
-              page: r.entry.page,
-              annotation: r.annotation,
-              ...(r.tagCorrections?.length
-                ? {
-                    tagCorrections: r.tagCorrections.map((c) => `${c.from} → ${c.to}（${c.postCount} 张）`),
-                    notice: `注意：你给的标签「${r.tagCorrections.map((c) => c.from).join('、')}」在上游不存在，已自动改用「${r.tagCorrections.map((c) => c.to).join('、')}」。如果这与你想要的角色/作品不符（例如名字相近但是不同作品），请告诉群友你实际发的是什么，别默认它就是要的那张。`
-                  }
-                : {})
-            });
-          } catch (error) {
-            log(`[图库] 工具发图失败 ${key}: ${error?.message ?? error}`);
-            sendJson({ ok: false, error: `${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/archive-image') {
-          const body = await readBody();
-          // 同 refresh-image-lib 的鉴权：管理员可直接调，AI 必须带合法 agent token。
-          let allowed = !req.headers['x-agent-token'];
-          let vkey = '';
-          if (req.headers['x-agent-token']) {
-            vkey = String(body.key ?? '').trim();
-            allowed = !!vkey && agentTokenOk(vkey, req.headers['x-agent-token']) && v2SessionAllowed(vkey) && v2ToolEnabled('archiveImage');
-          }
-          if (!allowed) { sendJson({ ok: false, error: '无权收藏图片' }, 403); return; }
-          if (!imagesEnabled()) { sendJson({ ok: false, error: '图库未启用' }, 403); return; }
-          // 目标：显式 id，或本会话「最近发出的那张」
-          let entry = null;
-          const wantId = String(body.id ?? '').trim();
-          if (wantId) entry = imageStore.getById(wantId);
-          if (!entry && vkey) {
-            const last = lastSentImage.get(vkey);
-            if (last) entry = imageStore.getById(last.id) ?? last.entry ?? null;
-          }
-          if (!entry) { sendJson({ ok: false, error: wantId ? `图库中没有 ${wantId}` : '未指定 id，且本会话最近没发过图' }, 404); return; }
-          try {
-            const r = await archiveImage(entry);
-            log(`[图库] 已收藏原图 ${entry.id} → ${r.path}（${(r.bytes / 1024).toFixed(0)}KB${r.skipped ? '，此前已存过' : ''}）`);
-            appendActivity(`${vkey || 'admin'} [图库] 收藏原图 ${entry.id}（${(r.bytes / 1024).toFixed(0)}KB）`);
-            sendJson({
-              ok: true,
-              id: entry.id,
-              path: r.path,
-              originalUrl: r.url,
-              bytes: r.bytes,
-              alreadySaved: !!r.skipped,
-              note: r.skipped
-                ? `此前已收藏过，文件在 ${r.path}`
-                : `已把原图保存到 ${r.path}（${(r.bytes / 1024).toFixed(0)}KB）`
-            });
-          } catch (error) {
-            log(`[图库] 收藏原图失败 ${entry.id}: ${error?.message ?? error}`);
-            sendJson({ ok: false, id: entry.id, error: `收藏失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        // 反向搜图（以图搜图）：拿一张图去 SauceNAO 反查出处（谁画的、来自哪个站）。
-        // 参数：messageId（群友发的那条消息，取其图）或 id（图库里某张）；两者都没有则用
-        // 本会话「最近发出的那张」。与 /image-source 的区别：那个只查**图库已有条目**的元数据，
-        // 这个能对**任意一张图**做全站反查（含群友发的外来图）。
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/reverse-search') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          if (key && req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (key && req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (key && req.headers['x-agent-token'] && !v2ToolEnabled('reverseSearch')) { sendJson({ ok: false, error: '工具未启用：qq_reverse_search' }, 403); return; }
-          if (cfg.imageReverseSearch?.enabled === false) { sendJson({ ok: false, error: '反向搜图已关闭（imageReverseSearch.enabled）' }, 403); return; }
-          const avail = reverseSearcher.available();
-          if (!avail.ok) { sendJson({ ok: false, error: avail.reason, needKey: true }, 400); return; }
-
-          const wantMsgId = String(url.searchParams.get('messageId') ?? '').trim();
-          const wantId = String(url.searchParams.get('id') ?? '').trim();
-          let buffer = null;
-          let from = '';
-          if (wantMsgId && key) {
-            const media = await findMessageMediaAsync(key, wantMsgId);
-            if (!media.length) { sendJson({ ok: false, error: '这条消息里没有图片/表情' }, 404); return; }
-            const imgs = await fetchMediaData(media.slice(0, 1));
-            const first = imgs.find((x) => x?.data);
-            if (!first) { sendJson({ ok: false, error: '图片读取失败（可能已过期或取不到原图）' }, 404); return; }
-            buffer = Buffer.from(first.data, 'base64');
-            from = `消息 ${wantMsgId}`;
-          } else {
-            let entry = wantId ? imageStore.getById(wantId) : null;
-            if (!entry && key) {
-              const last = lastSentImage.get(key);
-              if (last) entry = imageStore.getById(last.id) ?? last.entry ?? null;
-            }
-            if (!entry) { sendJson({ ok: false, error: wantId ? `图库中没有 ${wantId}` : '请给 messageId（群友发的图）或 id（图库图）' }, 404); return; }
-            buffer = imageStore.readBuffer(entry);
-            if (!buffer) { sendJson({ ok: false, error: '图库文件读取失败' }, 500); return; }
-            from = `图库 ${entry.id}`;
-          }
-
-          const r = await reverseSearcher.search(buffer, {
-            db: Number(cfg.imageReverseSearch?.db) || 999,
-            minsim: Number(cfg.imageReverseSearch?.minsim) || 50,
-            numres: Number(cfg.imageReverseSearch?.numres) || 5
-          });
-          if (!r.ok) { sendJson({ ok: false, error: r.error }, r.quota ? 429 : 502); return; }
-          const top = r.results?.[0];
-          sendJson({
-            ok: true,
-            from,
-            cached: !!r.cached,
-            count: r.results.length,
-            results: r.results,
-            note: top
-              ? `最匹配：${top.site || '未知站点'}（相似度 ${top.similarity.toFixed(1)}%）`
-                + (top.creator ? `，作者 ${top.creator}` : '')
-                + (top.urls?.length ? `，出处 ${top.urls[0]}` : '')
-              : '没找到相似度足够高的来源（可能是原创/改图/冷门作品）',
-            stats: reverseSearcher.stats()
-          });
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/image-source') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          if (key && req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (key && req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (key && req.headers['x-agent-token'] && !v2ToolEnabled('imageSource')) { sendJson({ ok: false, error: '工具未启用：qq_image_source' }, 403); return; }
-          // 目标：显式给 id，或用本会话「最近发出的那张」（模型通常不知道图库 id）
-          let entry = null;
-          const wantId = String(url.searchParams.get('id') ?? '').trim();
-          if (wantId) entry = imageStore.getById(wantId);
-          if (!entry && key) {
-            const last = lastSentImage.get(key);
-            if (last) entry = imageStore.getById(last.id) ?? last.entry ?? null;
-          }
-          if (!entry) {
-            sendJson({ ok: false, error: wantId ? `图库中没有 ${wantId}` : '本会话最近没有发出过图，也请传 id' }, 404);
-            return;
-          }
-          const sp = sourcePageOf(entry);
-          sendJson({
-            ok: true,
-            id: entry.id,
-            source: entry.source || '',
-            artist: entry.artist || '',
-            artistId: entry.artistId || '',
-            // originUrl：画师原始发布处；sourcePage：图源站条目页
-            originUrl: entry.page || '',
-            sourcePage: sp,
-            tags: Array.isArray(entry.tags) ? entry.tags.slice(0, 40) : [],
-            rating: entry.rating || '',
-            width: entry.width || 0,
-            height: entry.height || 0,
-            note: sp
-              ? `这是在 ${entry.source} 上查这张图的页面：${sp}${entry.page && entry.page !== sp ? `；画师原始发布处：${entry.page}` : ''}`
-              : '该图没有可推导的图源站点页面'
-          });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/react-message') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          // 鉴权同 send-image：reserved2 下 AI 必须带 agent token
-          if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: 'reserved2 模式贴表情必须携带 agent token' }, 403); return; }
-          if (!agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (!v2ToolEnabled('reactMessage')) { sendJson({ ok: false, error: '工具未启用：qq_react_message' }, 403); return; }
-          if (cfg.socialV2?.emojiReact?.enabled === false) { sendJson({ ok: false, error: '贴表情功能已关闭（socialV2.emojiReact.enabled）' }, 403); return; }
-          if (socialV2.paused) { sendJson({ ok: false, error: '二代 AI 已暂停，不能贴表情' }, 403); return; }
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          const kind = keyMatch[1];
-          const convId = Number(keyMatch[2]);
-          if (!Number.isFinite(convId) || convId <= 0 || !modeAllowed(key, kind, convId, cfg, currentMode)) {
-            sendJson({ ok: false, error: '当前模式不允许操作该会话' }, 403);
-            return;
-          }
-          // QQ 的表情回应**只支持群聊**（实测私聊报 "emoji reactions are not supported
-          // on private messages"）。提前拦掉并说清原因，别让模型以为是自己参数错了。
-          if (kind !== 'group') {
-            sendJson({ ok: false, error: 'QQ 的表情回应只支持群消息，私聊不支持（这不是参数问题，无需重试）' }, 400);
-            return;
-          }
-          const rawId = String(body.messageId ?? body.id ?? '').trim();
-          if (!rawId) { sendJson({ ok: false, error: 'messageId 不能为空（用 qq_get_unread_messages 里的 messageId）' }, 400); return; }
-          const emojiId = String(body.emojiId ?? '').trim();
-          const v = validateEmojiId(emojiId, emojiCatalogIds());
-          if (!v.ok) {
-            sendJson({ ok: false, error: v.reason, ...(v.hint ? { hint: v.hint } : {}) }, 400);
-            return;
-          }
-          const set = body.set !== false; // 默认贴；传 set:false 撤销
-          // 限流：模型可能一时兴起连贴一串。撤销不计入限流（那是修正行为）。
-          if (set) {
-            const gate = emojiReactGate.check(key);
-            if (!gate.allow) { sendJson({ ok: false, error: gate.reason, rateLimited: true }, 429); return; }
-          }
-          const ok = await setEmojiLike(convId, rawId, emojiId, set);
-          if (!ok) {
-            sendJson({ ok: false, error: '贴表情失败（消息可能太旧、已不在 QQ 消息缓存里；请对较新的消息贴）' }, 502);
-            return;
-          }
-          const named = REACTION_EMOJIS.find((e) => String(e.id) === emojiId);
-          log(`[表情] ${key} ${set ? '贴了' : '撤销了'}「${named?.name || emojiId}」（msg ${rawId}）`);
-          appendActivity(`${key} [表情] ${set ? '贴' : '撤销'}${named?.name || emojiId}`);
-          sendJson({ ok: true, key, messageId: rawId, emojiId, emojiName: named?.name || '', set });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/reject-image') {
-          const body = await readBody();
-          // 同 refresh-image-lib 的鉴权：管理员可直接调，AI 必须带合法 agent token。
-          let allowed = !req.headers['x-agent-token'];
-          let vkey = '';
-          if (req.headers['x-agent-token']) {
-            vkey = String(body.key ?? '').trim();
-            allowed = !!vkey && agentTokenOk(vkey, req.headers['x-agent-token']) && v2SessionAllowed(vkey) && v2ToolEnabled('rejectImage');
-          }
-          if (!allowed) { sendJson({ ok: false, error: '无权删除图库图片' }, 403); return; }
-          if (!imagesEnabled()) { sendJson({ ok: false, error: '图库未启用' }, 403); return; }
-          // 目标：显式给 id；不传则用本会话「最近发出的那张」（AI 通常不知道图库 id）
-          let targetId = String(body.id ?? '').trim();
-          if (!targetId && vkey) targetId = lastSentImage.get(vkey)?.id ?? '';
-          if (!targetId) { sendJson({ ok: false, error: '没有可删除的目标（未指定 id，且本会话最近没发过图）' }, 400); return; }
-          const r = imageStore.reject(targetId, { reason: String(body.reason ?? 'AI 判定不合适') });
-          if (vkey && lastSentImage.get(vkey)?.id === targetId) lastSentImage.delete(vkey);
-          log(`[图库] 删除并拒绝 ${targetId}（${r.existed ? '已从库中移除' : '条目原本不在库'}，原因：${body.reason ?? '未说明'}）`);
-          appendActivity(`${vkey || 'admin'} [图库] 删除图 ${targetId}（${String(body.reason ?? '').slice(0, 30)}）`);
-          sendJson({ ok: true, id: targetId, removed: r.existed, freedBytes: r.freedBytes ?? 0, note: '该图已加入拒绝名单，之后不会再被拉取或发出' });
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/image-stats') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          if (key && req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          sendJson({
-            ok: true,
-            enabled: imagesEnabled(),
-            libDir: imageStore.libDir,
-            ...imageStore.stats(),
-            fetchedAt: imageFetchedAt || null,
-            sources: Object.fromEntries(
-              Object.entries(cfg.socialV2?.images?.sources ?? {}).map(([n, c]) => [n, { enabled: c?.enabled === true, limit: c?.limit ?? 20 }])
-            )
-          });
-          return;
-        }
-        // ── 取图额度总览（控制台「12c 取图额度」卡片）──────────────────────
-        //
-        // 用户要求（2026-10-20）：「取图 API 额度能不能在控制台中加一个显示」。
-        //
-        // 这里把**三类互相独立的上限**放在一起，因为它们都会以"取不到图"的形式
-        // 表现，但原因完全不同，混在一起排查会走错方向：
-        //   ① 图库容量（maxFiles / maxTotalBytes）——满了会淘汰旧图，不代表不能用
-        //   ② 拉取冷却（cooldownMs）——两次"补货"之间的最小间隔，冷却中预检会 willWait
-        //   ③ SauceNAO 反查额度（每天 100 次 / 30 秒 1 次）——**真正的上游免费额度**，
-        //      用完了当天就没法反查（这是唯一"会真的用完"的）
-        // 另外附各图源的启用状态，因为"某个源没开"也会被误当成额度问题。
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/image-quota') {
-          const ic = cfg.socialV2?.images ?? {};
-          const now = Date.now();
-          const enabled = imagesEnabled();
-
-          // 图库容量
-          let lib = null;
-          try { lib = imageStore.stats(); } catch { lib = null; }
-
-          // 拉取冷却：imageFetchedAt 是"上次成功拉取"的时刻
-          const cooldownMs = Math.max(0, Number(ic.cooldownMs) || 0);
-          const sinceFetch = imageFetchedAt ? now - imageFetchedAt : Infinity;
-          const cooling = cooldownMs > 0 && imageFetchedAt > 0 && sinceFetch < cooldownMs;
-
-          // 反查额度（唯一真正的"API 额度"）
-          const rs = reverseSearcher.stats();
-
-          // 各图源开关：pixiv/yandere 默认关，容易和"额度用完"混淆
-          const srcCfg = ic.sources ?? {};
-          const sources = Object.keys(srcCfg).map((name) => ({
-            name,
-            enabled: srcCfg[name]?.enabled === true,
-            limit: Number(srcCfg[name]?.limit) || 0,
-            hasProxy: !!String(srcCfg[name]?.proxy || ic.proxy || '').trim()
-          }));
-
-          // 每会话发送限频（同会话冷却 / 每小时上限）——也不是"额度"，但会拦发图
-          sendJson({
-            ok: true,
-            enabled,
-            library: lib,
-            fetch: {
-              cooldownMs,
-              lastFetchedAt: imageFetchedAt || 0,
-              cooling,
-              remainMs: cooling ? Math.max(0, cooldownMs - sinceFetch) : 0,
-              fetching: !!imageFetching,
-              fetchPerRun: Math.max(1, Number(ic.fetchPerRun) || 20)
-            },
-            reverseSearch: {
-              hasKey: rs.hasKey,
-              usedToday: rs.usedToday,
-              dailyMax: rs.dailyMax,
-              remainingToday: rs.remainingToday,
-              windowMax: rs.windowMax,
-              windowUsed: rs.windowUsed,
-              windowResetMs: rs.windowResetMs,
-              cached: rs.cached
-            },
-            send: {
-              cooldownMs: Math.max(0, Number(ic.sendCooldownMs) || 0),
-              maxSendPerHour: Math.max(0, Number(ic.maxSendPerHour) || 0)
-            },
-            sources
-          });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/refresh-image-lib') {
-          const body = await readBody();
-          // 管理员可直接刷；AI 必须带合法 agent token（允许它自己按需补图，但受限频）。
-          let allowed = !req.headers['x-agent-token'];
-          if (req.headers['x-agent-token']) {
-            const key = String(body.key ?? '').trim();
-            allowed = !!key && agentTokenOk(key, req.headers['x-agent-token']) && v2SessionAllowed(key) && v2ToolEnabled('refreshImageLib');
-          }
-          if (!allowed) { sendJson({ ok: false, error: '无权刷新图库' }, 403); return; }
-          if (!imagesEnabled()) { sendJson({ ok: false, error: '图库未启用：请在 config.json 设置 socialV2.images.enabled=true' }, 403); return; }
-          try {
-            const r = await refreshImageLib({
-              force: body.force === true && !req.headers['x-agent-token'],
-              tags: Array.isArray(body.tags) ? body.tags.map(String) : undefined,
-              order: body.order,
-              maxAgeDays: body.maxAgeDays,
-              limit: body.limit,
-              sources: Array.isArray(body.sources) ? body.sources.map(String) : undefined
-            });
-            if (r.cooled) {
-              sendJson({ ok: true, cooled: true, remainMs: r.remainMs, total: imageStore.count() });
-            } else {
-              sendJson({ ok: true, added: r.added, skipped: r.skipped, total: r.total, errors: (r.errors ?? []).slice(0, 5) });
-            }
-          } catch (error) {
-            sendJson({ ok: false, error: `${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        // ── 表情包体系（reserved2） ──────────────────────────────────────
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/sticker-image') {
-          if (!stickerEnabled()) { sendJson({ ok: false, error: '表情包体系已关闭' }, 403); return; }
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const stickerId = String(url.searchParams.get('stickerId') ?? '').trim();
-          if (!key || !stickerId) { sendJson({ ok: false, error: 'key 和 stickerId 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('getStickerImage')) { sendJson({ ok: false, error: '工具未启用：qq_get_sticker_image' }, 403); return; }
-          try {
-            const entry = await getStickerImageData(stickerId);
-            const fetched = await safeFetchBuffer(entry.url, MAX_MEDIA_BYTES);
-            const dims = getImageDimensions(fetched.buffer);
-            if (dims && dims.width * dims.height > MAX_MEDIA_PIXELS) {
-              sendJson({ ok: false, error: `表情图片像素超限（${dims.width}x${dims.height}），已拒绝` }, 400);
-              return;
-            }
-            const mimeType = mimeFromBuffer(fetched.buffer) || mimeFromUrl(entry.url);
-            sendJson({
-              ok: true,
-              key,
-              sticker: {
-                id: entry.id,
-                desc: entry.desc || '',
-                localNote: entry.localNote || '',
-                tags: entry.tags || [],
-                url: entry.url,
-                md5: entry.md5
-              },
-              image: { mimeType, data: fetched.buffer.toString('base64') }
-            });
-          } catch (error) {
-            sendJson({ ok: false, error: `获取表情图片失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/self-image') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('getSelfImage')) { sendJson({ ok: false, error: '工具未启用：qq_get_self_image' }, 403); return; }
-          // publish=1：**顺便把形象图发到当前会话**（用户要求「别人问及自拍时把自拍图片一并发出去」）。
-          //
-          // 为什么由桥接发、而不是让模型再调一次 qq_send_image：
-          //   qq_send_image 只会从图库里挑图，拿不到这张本地形象图；
-          //   而且分两步会让模型「看了图却忘了发」，或被问「发张自拍」时只描述长相。
-          //   一次做完「放进视觉上下文 + 发到群里」才是能用的语义。
-          const publish = ['1', 'true', 'yes'].includes(String(url.searchParams.get('publish') ?? '').toLowerCase());
-          const selfPath = path.join(ROOT, 'assets', 'deepseek娘.png');
-          try {
-            if (!fs.existsSync(selfPath)) { sendJson({ ok: false, error: '未找到 AI 形象图片 assets/deepseek娘.png' }, 404); return; }
-            const buf = fs.readFileSync(selfPath);
-            const mimeType = mimeFromBuffer(buf) || 'image/png';
-            const image = { mimeType, data: buf.toString('base64') };
-
-            // 发图前照例过一遍准入与静默：不能因为「是自拍」就绕过暂停/静默/模式限制
-            let sent = null;
-            let sendError = '';
-            if (publish) {
-              if (currentMode !== 'reserved2') {
-                sendError = '该接口仅 reserved2 模式可用';
-              } else if (socialV2.paused) {
-                sendError = '二代 AI 已暂停，不能发图';
-              } else if (shouldBlockSilentReply(key)) {
-                sendError = '静默模式已开启，当前不允许发图';
-              } else {
-                try {
-                  const r = await onebotSendImageFile(key, buf, { label: '［自拍］' });
-                  sent = r?.message_id ?? true;
-                  // 记进会话时间线：模型与后续上下文要知道"我刚发了张自拍"
-                  const st = getSocialV2State(key);
-                  st.recentMessages.push({
-                    messageId: null,
-                    sender: '我',
-                    text: '[图片] 发了张自己的形象图',
-                    plain: '[图片]',
-                    tail: '[图片]',
-                    quoteTargetIsSelf: false,
-                    isOwner: true,
-                    ownerLabel: '我',
-                    isSelf: true,
-                    media: [],
-                    hasMedia: false,
-                    forwardIds: [],
-                    hasForward: false,
-                    time: Date.now()
-                  });
-                  const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
-                  if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
-                  st.lastAiReplyAt = Date.now();
-                  st.lastActionAt = Date.now();
-                  st.wakeConfig.noActionCount = 0;
-                  saveSocialV2State();
-                  appendActivity(`${key} [自拍] 已发送形象图`);
-                  log(`[自拍] 已发送形象图 → ${key}`);
-                } catch (error) {
-                  // 发失败不算致命：图仍然给模型（它至少能照着描述），但要如实告知
-                  sendError = String(error?.message ?? error);
-                  log(`[自拍] 发送失败 ${key}：${sendError}`);
-                }
-              }
-            }
-
-            sendJson({
-              ok: true,
-              key,
-              image,
-              published: publish,
-              sent: sent || undefined,
-              // 没发出去时给模型一句可转述的话，避免它以为已经发了
-              sendError: sendError || undefined
-            });
-          } catch (error) {
-            sendJson({ ok: false, error: `读取 AI 形象图片失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        // 功能菜单图：群友问「你会啥/能干嘛」时，渲染并**直接发到当前会话**。
-        //
-        // 为什么由桥接发而不是把 base64 还给模型：模型没有"发送任意图片"的能力
-        // （qq_send_image 只认图库里的图，拿不到这张实时渲染的菜单），
-        // 让工具一次做完"渲染 + 发送"才符合模型能用得上的语义。
-        //
-        // 渲染走 Chrome 无头截图（见 feature-menu-render.js），按内容指纹缓存，
-        // 反复问只渲染一次。失败时如实报错，不退回让模型自己编功能清单。
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/send-feature-menu') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          // agent token 是**必需**的，不是可选（与 send-image 同规则）。
-          // 早期写法是 `if (agentToken && !agentTokenOk(...))`，那样空 token 会跳过所有校验：
-          // 因为控制台鉴权在 consoleToken 留空时不拦，任何能访问 3100 的人都能触发发群。
-          if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: '发送功能菜单必须携带 agent token' }, 403); return; }
-          if (!agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (!v2ToolEnabled('getFeatureMenu')) { sendJson({ ok: false, error: '工具未启用：qq_send_feature_menu' }, 403); return; }
-          if (socialV2.paused) { sendJson({ ok: false, error: 'AI 已暂停，当前不允许发送' }, 403); return; }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
-            sendJson({ ok: false, error: '当前模式不允许向该会话发送' }, 403);
-            return;
-          }
-          if (shouldBlockSilentReply(key)) { sendJson({ ok: false, error: '静默模式已开启，当前不允许发送' }, 403); return; }
-          try {
-            const force = url.searchParams.get('refresh') === '1';
-            const r = await renderFeatureMenu({ force, config: cfg, roleName: readRoleState().role || '', log: (m) => log(m) });
-            if (!r.ok) { sendJson({ ok: false, error: r.error }, 500); return; }
-            // 图库目录下不碰：菜单是桥接自有产物，放 state/feature-menu 缓存目录里直接发
-            await onebotSendImageFile(key, r.file, { label: '群友功能菜单' });
-            log(`[功能菜单] 已发送到 ${key}（${Math.round(r.bytes / 1024)}KB${r.cached ? '，缓存' : '，新渲染'}）`);
-            appendActivity(`${key} [功能菜单] 已发送功能菜单图`);
-            sendJson({ ok: true, key, cached: r.cached, bytes: r.bytes });
-          } catch (error) {
-            log(`功能菜单发送失败：${error?.message ?? error}`);
-            sendJson({ ok: false, error: `功能菜单发送失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        // ── GitHub 仓库首页截图（2026-10-20 用户要求）─────────────────────────
-        //
-        // 「解析 GitHub 链接并把仓库首页整个截图并发送」。
-        //
-        // 为什么自己截图而不是抓 API：群友要的是**看到页面长什么样**（Star 数、
-        // 文件列表、README 排版、语言占比条），这些只有渲染后的页面有。
-        // GitHub API 只给元数据，画不出首页。
-        //
-        // 为什么分段发：实测首页整页约 15400px，一张 1400×15400 的图在 QQ 里
-        // 会被等比压成灰色细线（文字 1~2 像素高，完全看不清）。按 2400px 切段，
-        // 每段仍是 1400 宽、文字清晰，按顺序看就是完整页面。
-        //
-        // 网络：实测直连 github.com 会 ECONNRESET，必须走代理（见下面 proxy 取值）。
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/github-shot') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const raw = String(body.url ?? body.text ?? '').trim();
-          const gs = cfg.socialV2?.githubShot ?? {};
-          if (gs.enabled === false) { sendJson({ ok: false, error: 'GitHub 截图功能已关闭（socialV2.githubShot.enabled）' }, 400); return; }
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          // agent token 必需（与 send-image / send-feature-menu 同规则）：
-          // 这是个会往群里发东西的写操作，不能靠"控制台没设令牌"就放行。
-          if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: 'GitHub 截图必须携带 agent token' }, 403); return; }
-          if (!agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (!v2ToolEnabled('githubShot')) { sendJson({ ok: false, error: '工具未启用：qq_github_shot' }, 403); return; }
-          if (socialV2.paused) { sendJson({ ok: false, error: 'AI 已暂停，当前不允许发送' }, 403); return; }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
-            sendJson({ ok: false, error: '当前模式不允许向该会话发送' }, 403);
-            return;
-          }
-          if (shouldBlockSilentReply(key)) { sendJson({ ok: false, error: '静默模式已开启，当前不允许发送' }, 403); return; }
-
-          // 解析：允许直接贴链接，也允许贴一段含链接的消息文本
-          const candidate = parseGitHubUrl(raw) ? raw : (extractGitHubUrl(raw) || raw);
-          const info = parseGitHubUrl(candidate);
-          if (!info) {
-            sendJson({ ok: false, error: '识别不出 GitHub 仓库（支持 https://github.com/owner/repo、owner/repo；不支持 /issues、/tree 等子页面，会归到仓库首页）' }, 400);
-            return;
-          }
-
-          // 同一仓库同一会话 30 秒内不重复截（群友常连发两次链接）
-          const shotKey = `${key}|${info.url}`;
-          const lastAt = gitHubShotTimes.get(shotKey) || 0;
-          if (Date.now() - lastAt < 30000) {
-            sendJson({ ok: false, error: '刚截过这个仓库，30 秒内不重复发（避免刷屏）' }, 429);
-            return;
-          }
-
-          try {
-            const proxy = String(gs.proxy || cfg.socialV2?.images?.proxy || '').trim();
-            const shot = await screenshotGitHubRepo(info, {
-              proxy,
-              width: 1400,
-              sliceHeight: Math.max(0, Number(gs.sliceHeight) || 2400),
-              maxHeight: Math.max(1000, Number(gs.maxHeight) || 12000),
-              waitMs: Math.max(0, Number(gs.waitMs) || 3500),
-              timeoutMs: Math.max(10000, Number(gs.timeoutMs) || 90000)
-            });
-
-            const slices = Array.isArray(shot.slices) && shot.slices.length
-              ? shot.slices
-              : [{ buffer: shot.buffer, mimeType: shot.mimeType, height: shot.height, fromY: 0 }];
-
-            // 先发一句说明（含页数），群友知道后面还有几张
-            const label = info.repo ? `${info.owner}/${info.repo}` : info.owner;
-            const note = slices.length > 1
-              ? `GitHub ${label} 首页（整页 ${Math.round(shot.height)}px，分 ${slices.length} 张发）`
-              : `GitHub ${label} 首页`;
-            try { await sendToQQ(key, note); } catch { /* 说明发失败不影响截图 */ }
-
-            let sentCount = 0;
-            for (const s of slices) {
-              try {
-                await onebotSendImageFile(key, s.buffer, { label: `［GitHub］${label}` });
-                sentCount += 1;
-              } catch (error) {
-                log(`[GitHub] 第 ${sentCount + 1} 张发送失败：${error?.message ?? error}`);
-                break; // 后面几张大概率也会失败（限频/断线），别硬刷
-              }
-            }
-            if (!sentCount) throw new Error('截图已生成但一张都没发出去');
-
-            gitHubShotTimes.set(shotKey, Date.now());
-            // 只留最近 200 条，避免无限增长
-            while (gitHubShotTimes.size > 200) {
-              const oldest = gitHubShotTimes.keys().next().value;
-              if (oldest === undefined) break;
-              gitHubShotTimes.delete(oldest);
-            }
-
-            // 记进会话时间线：后续上下文要知道"我刚发过这个仓库的截图"
-            const st = getSocialV2State(key);
-            st.recentMessages.push({
-              messageId: null,
-              sender: '我',
-              text: `[图片] 发了 GitHub ${label} 首页截图（${sentCount} 张）`,
-              plain: '[图片]',
-              tail: '[图片]',
-              quoteTargetIsSelf: false,
-              isOwner: true,
-              ownerLabel: '我',
-              isSelf: true,
-              media: [],
-              hasMedia: false,
-              forwardIds: [],
-              hasForward: false,
-              time: Date.now()
-            });
-            const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
-            if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
-            st.lastAiReplyAt = Date.now();
-            st.lastActionAt = Date.now();
-            saveSocialV2State();
-
-            log(`[GitHub] 已发送 ${label} 首页截图 ${sentCount}/${slices.length} 张（整页 ${shot.height}px${shot.truncated ? '，已截断' : ''}）`);
-            appendActivity(`${key} [GitHub] 已发送 ${label} 首页截图 ${sentCount} 张`);
-            sendJson({
-              ok: true,
-              repo: label,
-              url: info.url,
-              sent: sentCount,
-              slices: slices.length,
-              height: shot.height,
-              contentHeight: shot.contentHeight,
-              truncated: shot.truncated,
-              // 让模型知道"还差最后一张没发"之类的情况
-              note: sentCount < slices.length ? `只发出 ${sentCount}/${slices.length} 张（后面的发送失败）` : undefined
-            });
-          } catch (error) {
-            const msg = String(error?.message ?? error);
-            log(`[GitHub] 截图失败 ${info.url}：${msg}`);
-            // 直连失败是最常见的原因，直接点明，省得模型瞎猜
-            const hint = /ECONNRESET|ECONNREFUSED|ETIMEDOUT|net::ERR/i.test(msg)
-              ? '（GitHub 在本机直连不通，需要在 config.json 的 socialV2.githubShot.proxy 或 socialV2.images.proxy 配置代理）'
-              : '';
-            sendJson({ ok: false, error: `截图失败：${msg}${hint}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/sticker-note') {
-          if (!stickerEnabled()) { sendJson({ ok: false, error: '表情包体系已关闭' }, 403); return; }
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const stickerId = String(body.stickerId ?? '').trim();
-          if (!key || !stickerId) { sendJson({ ok: false, error: 'key 和 stickerId 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('stickerNote')) { sendJson({ ok: false, error: '工具未启用：qq_sticker_note' }, 403); return; }
-          const note = body.note !== undefined && body.note !== null ? String(body.note).trim().slice(0, 200) : undefined;
-          const tags = body.tags !== undefined && body.tags !== null ? (Array.isArray(body.tags) ? body.tags.map(String).map((s) => s.trim()).filter(Boolean).slice(0, 20) : []) : undefined;
-          const usage = body.usage !== undefined && body.usage !== null ? String(body.usage).trim().slice(0, 200) : undefined;
-          const entry = applyStickerNoteV2(stickerId, note, tags, usage);
-          if (!entry) { sendJson({ ok: false, error: `找不到表情 ${stickerId}` }, 404); return; }
-          log(`[sticker] 更新表情本地认知 ${key}: ${entry.id}`);
-          sendJson({ ok: true, key, sticker: entry });
-          return;
-        }
-        // 删除收藏表情（写操作，默认关闭 —— 与 set-sticker-remark 同级）。
-        // 之所以默认关：上游 delete_custom_face 不校验 emoji_id，
-        // 开放后模型一旦传错就会静默删掉别的表情（详见 deleteStickerV2 注释）。
-        // 开启方式：config.json 的 socialV2.tools.deleteSticker = true。
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/sticker-delete') {
-          if (!stickerEnabled()) { sendJson({ ok: false, error: '表情包体系已关闭' }, 403); return; }
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const stickerId = String(body.stickerId ?? '').trim();
-          if (!key || !stickerId) { sendJson({ ok: false, error: 'key 和 stickerId 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('deleteSticker')) { sendJson({ ok: false, error: '工具未启用：qq_delete_sticker' }, 403); return; }
-          if (socialV2.paused) { sendJson({ ok: false, error: 'AI 已暂停，当前不允许执行写操作' }, 403); return; }
-          // **仅管理员可用**（2026-10-15 用户要求）：群里群友和管理员共用一个会话，
-          // 上面的 v2SessionAllowed 只验证"这个会话在白名单里"，不能说明"刚说话的是管理员"。
-          // 所以还要按最近一条入站消息的发送者判定，非管理员直接拒绝。
-          if (!isOwnerTurn(key)) {
-            log(`[sticker] 拒绝删除表情：请求者不是管理员（${key}）`);
-            sendJson({ ok: false, error: '删除收藏表情仅管理员可用。如果确实需要删，请让管理员来说。' }, 403);
-            return;
-          }
-          try {
-            const r = await deleteStickerV2(stickerId);
-            log(`[sticker] 删除收藏表情 ${key}: ${r.id}（${r.desc}）回读确认=${r.verifiedGone ? '已消失' : '未确认'}`);
-            appendActivity(`${key} [表情] 已删除收藏表情${r.desc ? `「${r.desc}」` : ''}`);
-            sendJson({ ok: true, key, deleted: { id: r.id, md5: r.md5, desc: r.desc }, verifiedGone: r.verifiedGone });
-          } catch (error) {
-            sendJson({ ok: false, error: `删除表情失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/sticker-remark') {
-          if (!stickerEnabled()) { sendJson({ ok: false, error: '表情包体系已关闭' }, 403); return; }
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const stickerId = String(body.stickerId ?? '').trim();
-          if (!key || !stickerId) { sendJson({ ok: false, error: 'key 和 stickerId 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('setStickerRemark')) { sendJson({ ok: false, error: '工具未启用：qq_set_sticker_remark' }, 403); return; }
-          // 与删除同理：改的是 QQ 账号上的官方备注，**仅管理员可用**。
-          if (!isOwnerTurn(key)) {
-            log(`[sticker] 拒绝改备注：请求者不是管理员（${key}）`);
-            sendJson({ ok: false, error: '修改收藏表情备注仅管理员可用。' }, 403);
-            return;
-          }
-          try {
-            const entry = await setStickerRemarkV2(stickerId, String(body.remark ?? ''));
-            log(`[sticker] 修改 QQ 收藏表情备注 ${key}: ${entry.id} -> ${entry.desc}`);
-            sendJson({ ok: true, key, sticker: entry });
-          } catch (error) {
-            sendJson({ ok: false, error: `修改备注失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        // 语音消息（GPT-SoVITS）：模型主动发一条语音。
-        //
-        // 用户反馈（2026-10-22）：群友说「你发个语音」，机器人回「语音我发不出来呀」。
-        // 原因是之前只有"桥接按概率把普通回复换成语音"，**模型无从得知、也无法主动调用**。
-        // 这个端点让 qq_send_voice 真正能发。
-        //
-        // 与"概率语音"共用一个引擎与缓存；区别是这里**不受概率限制**——
-        // 群友明确要听，就该发。但仍受每小时上限约束（防止一次要十句）。
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/send-voice') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const text = String(body.text ?? '').trim();
-          if (!key || !text) { sendJson({ ok: false, error: 'key 和 text 不能为空' }, 400); return; }
-          if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: '发送语音必须携带 agent token' }, 403); return; }
-          if (!agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (!v2ToolEnabled('sendVoice')) { sendJson({ ok: false, error: '工具未启用：qq_send_voice' }, 403); return; }
-          if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
-          if (!ttsEngine || !ttsEngine.available()) {
-            sendJson({ ok: false, error: '语音合成不可用（未启用、未加载完成或探测失败；见控制台「17b 语音合成」）' }, 503);
-            return;
-          }
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
-            sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403);
-            return;
-          }
-          if (shouldBlockSilentReply(key)) { sendJson({ ok: false, error: '静默模式已开启，当前不允许发送' }, 403); return; }
-          const limitChars = Math.max(20, Number(cfg.socialV2?.tts?.maxChars) || 140);
-          if (text.length > limitChars) {
-            sendJson({ ok: false, error: `语音最多 ${limitChars} 字（念太长没人听）；这句有 ${text.length} 字，请精简或改用文字` }, 400);
-            return;
-          }
-          // 念出来没有意义的内容直接挡掉（与概率语音同一套规则）
-          if (/https?:\/\/|www\.|```/.test(text)) {
-            sendJson({ ok: false, error: '这条内容含链接或代码，念出来没用；请改用文字发送' }, 400);
-            return;
-          }
-          const st = getSocialV2State(key);
-          const now = Date.now();
-          const hist = (Array.isArray(st.ttsTimes) ? st.ttsTimes : []).filter((x) => now - Number(x) < 3600000);
-          const maxPerHour = ttsNum(cfg.socialV2?.tts?.maxPerHour, 3, 0, 60);
-          if (maxPerHour > 0 && hist.length >= maxPerHour) {
-            sendJson({ ok: false, error: `这个会话一小时最多 ${maxPerHour} 条语音，已经发完了；这条先用文字吧` }, 429);
-            return;
-          }
-          try {
-            const r = await ttsEngine.speak(text);
-            if (!r.ok) { sendJson({ ok: false, error: `合成失败：${r.error}` }, 500); return; }
-            await onebotSendVoiceFile(key, r.file, { text });
-            st.ttsTimes = [...hist, Date.now()].slice(-200);
-            st.lastTtsAt = Date.now();
-            // 主动语音也是一次真实发言：更新回复时间，并把 [语音] 标记写回
-            // recentMessages/journal，避免模型下一轮不知道刚才发的是语音。
-            st.lastAiReplyAt = Date.now();
-            st.lastActionAt = st.lastAiReplyAt;
-            st.wakeConfig.noActionCount = 0;
-            recordSentMessagesV2(key, [{ text, isVoice: true }]);
-            saveSocialV2State();
-            log(`[TTS] 主动发语音（${r.cached ? '缓存' : `${r.synthSec ?? '?'}s 合成`}，${r.durSec}s，${text.length} 字）→ ${key}`);
-            appendActivity(`${key} [TTS] 主动发了一条语音（${r.durSec}s）`);
-            sendJson({ ok: true, key, durSec: r.durSec, cached: !!r.cached, chars: text.length });
-          } catch (error) {
-            log(`[TTS] 主动发语音失败：${error?.message ?? error}`);
-            sendJson({ ok: false, error: `发送失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/send-sticker') {
-          if (!stickerEnabled()) { sendJson({ ok: false, error: '表情包体系已关闭' }, 403); return; }
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const stickerId = String(body.stickerId ?? '').trim();
-          const caption = String(body.message ?? body.caption ?? '').trim();
-          const replyToMessageId = body.replyToMessageId;
-          const atUserId = body.atUserId ?? null;
-          if (!key || !stickerId) { sendJson({ ok: false, error: 'key 和 stickerId 不能为空' }, 400); return; }
-          // 仿真常识：表情消息只能是一张表情，不能在同一气泡里附带文字说明。
-          if (caption) {
-            sendJson({ ok: false, error: '表情消息不能附带文字；请先用 qq_send_message / qq_reply 把想说的话作为单独气泡发送，再单独 qq_send_sticker 发表情' }, 400);
-            return;
-          }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('sendSticker')) { sendJson({ ok: false, error: '工具未启用：qq_send_sticker' }, 403); return; }
-          if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
-          if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403); return; }
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
-            sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403);
-            return;
-          }
-          if (kind === 'private' && atUserId) { sendJson({ ok: false, error: '私聊不需要 @' }, 400); return; }
-          if (shouldBlockSilentReply(key)) { sendJson({ ok: false, error: '静默模式已开启，当前不允许发送' }, 403); return; }
-          if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '' && !isSymbolicReplyRef(replyToMessageId) && !/^-?[1-9]\d*$/.test(String(replyToMessageId).trim())) {
-            sendJson({ ok: false, error: 'replyToMessageId 必须是非零整数（消息 id 可能为负数），或传 latest/上一条 表示引用最近一条别人的消息' }, 400);
-            return;
-          }
-          let quotedInfo = null;
-          let actualReplyToMessageId = replyToMessageId;
-          if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '') {
-            const stForReply = getSocialV2State(key);
-            const resolved = await resolveReplyTargetV2(stForReply, kind, id, String(replyToMessageId).trim());
-            if (!resolved) {
-              sendJson({ ok: false, error: '无法解析被引用消息，请确认 message id 正确且属于当前会话（可用 qq_get_message_detail 查看）' }, 400);
-              return;
-            }
-            quotedInfo = resolved.info;
-            actualReplyToMessageId = resolved.messageId;
-          }
-          const sendCfg = cfg.socialV2?.send ?? {};
-          const now = Date.now();
-          try {
-            const st = getSocialV2State(key);
-            const maxPerMinute = Number(sendCfg.maxSendPerMinute) || 0;
-            const maxPerHour = Number(sendCfg.maxSendPerHour) || 0;
-            const recentMinute = (st.sendTimes || []).filter((t) => now - t < 60000).length;
-            const recentHour = (st.sendTimes || []).filter((t) => now - t < 3600000).length;
-            if ((maxPerMinute > 0 && recentMinute + 1 > maxPerMinute) || (maxPerHour > 0 && recentHour + 1 > maxPerHour)) {
-              sendJson({ ok: false, error: '发送频率超限，请稍后再试' }, 429);
-              return;
-            }
-            st.sendTimes.push(now);
-            if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
-            const sent = await sendStickerV2(key, stickerId, {
-              replyToMessageId: actualReplyToMessageId,
-              atUserId
-            });
-            // 记录到二代会话的 recentMessages，让 AI 知道自己发过这个表情
-            const label = sent.entry?.desc || sent.entry?.localNote || '表情包';
-            const text = `[表情包:${label}]`;
-            st.recentMessages.push({
-              messageId: sent.messageId ? String(sent.messageId) : null,
-              sender: '我',
-              text: text.slice(0, 200),
-              plain: text.slice(0, 200),
-              quoteTargetIsSelf: false,
-              isOwner: true,
-              ownerLabel: '我',
-              isSelf: true,
-              media: [],
-              hasMedia: false,
-              forwardIds: [],
-              hasForward: false,
-              sticker: { id: sent.entry?.id || stickerId, desc: sent.entry?.desc || '', localNote: sent.entry?.localNote || '' },
-              time: Date.now()
-            });
-            const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
-            if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
-            // 表情频率控制用：记下"真发过"的时间与最近发过的 id。
-            // 注意与 stickerNudgeTimes（"要求过"的次数）是两笔账——
-            // 掷中但模型选择"跳过"时，不该算进"发过"，否则下次会被间隔误挡。
-            st.lastStickerAt = now;
-            st.recentStickers = [...(Array.isArray(st.recentStickers) ? st.recentStickers : []),
-              String(sent.entry?.md5 || sent.entry?.id || stickerId)].slice(-10);
-            st.lastAiReplyAt = now;
-            st.lastActionAt = now;
-            st.wakeConfig.noActionCount = 0;
-            st.preSleepWaitSatisfiedAt = 0;
-            st.preSleepWaitObservedAt = 0;
-            st.preSleepWaitAccumMs = 0;
-            saveSocialV2State();
-            scheduleReplyCheckV2(key);
-            log(`[sticker] 工具发送表情 ${key}: ${sent.entry?.id || stickerId}`);
-            appendActivity(`${key} [sticker] 工具发送表情：${label}`);
-            sendJson({ ok: true, key, sticker: sent.entry, sent: 1, failed: 0, quoted: quotedInfo });
-          } catch (error) {
-            const st = getSocialV2State(key);
-            const idx = st.sendTimes.indexOf(now);
-            if (idx >= 0) st.sendTimes.splice(idx, 1);
-            if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
-            saveSocialV2State();
-            log(`[sticker] 工具发送表情失败 ${key}: ${error?.message ?? error}`);
-            sendJson({ ok: false, error: `发送表情失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/collect-sticker') {
-          if (!stickerEnabled()) { sendJson({ ok: false, error: '表情包体系已关闭' }, 403); return; }
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const messageRef = String(body.messageId ?? body.seq ?? '').trim();
-          const remark = String(body.remark ?? '').trim();
-          if (!key || !messageRef) { sendJson({ ok: false, error: 'key 和 messageId/seq 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('collectSticker')) { sendJson({ ok: false, error: '工具未启用：qq_collect_sticker' }, 403); return; }
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          const st = getSocialV2State(key);
-          const collectCfg = cfg.socialV2?.sticker?.collect ?? {};
-          if (collectCfg.enabled === false) { sendJson({ ok: false, error: 'AI 收藏表情功能已关闭' }, 403); return; }
-          const now = Date.now();
-          const maxPerMinute = Math.max(0, Number(collectCfg.maxPerMinute) || 0);
-          const maxPerHour = Math.max(0, Number(collectCfg.maxPerHour) || 0);
-          const recentMinute = (st.stickerCollectTimes || []).filter((t) => now - t < 60000).length;
-          const recentHour = (st.stickerCollectTimes || []).filter((t) => now - t < 3600000).length;
-          if ((maxPerMinute > 0 && recentMinute + 1 > maxPerMinute) || (maxPerHour > 0 && recentHour + 1 > maxPerHour)) {
-            sendJson({ ok: false, error: '收藏表情太频繁了，请过一会儿再偷图' }, 429);
-            return;
-          }
-          // 先预占收藏次数，避免并发调用绕过限频；失败时回滚。
-          st.stickerCollectTimes = st.stickerCollectTimes || [];
-          st.stickerCollectTimes.push(now);
-          if (st.stickerCollectTimes.length > 500) st.stickerCollectTimes = st.stickerCollectTimes.slice(-500);
-          try {
-            const result = await collectStickerV2(key, messageRef, remark);
-            saveSocialV2State();
-            log(`[sticker] AI 收藏表情 ${key}: ${result.emojiId}${result.remark ? '（备注：' + result.remark + '）' : ''}`);
-            appendActivity(`${key} [sticker] AI 收藏表情：${result.remark || result.emojiId}`);
-            sendJson({ ok: true, key, sticker: result.entry, emojiId: result.emojiId, remark: result.remark });
-          } catch (error) {
-            const idx = st.stickerCollectTimes.indexOf(now);
-            if (idx >= 0) st.stickerCollectTimes.splice(idx, 1);
-            if (st.stickerCollectTimes.length > 500) st.stickerCollectTimes = st.stickerCollectTimes.slice(-500);
-            saveSocialV2State();
-            log(`[sticker] AI 收藏表情失败 ${key}: ${error?.message ?? error}`);
-            sendJson({ ok: false, error: `收藏表情失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        // ── 按需抓网页 / 找图 / 把图片存成 QQ 收藏表情 ────────────────────
-        // 模型侧工具：qq_crawl_web。所有抓取走 safe-fetch（禁内网、逐跳校验重定向），
-        // 不绕过登录/验证码；图片入库用 SnowLuma 的 add_custom_face。
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/crawl') {
-          const ccfg = { ...(cfg.socialV2?.crawl ?? {}) };
-          if (ccfg.enabled === false) { sendJson({ ok: false, error: '爬虫功能已关闭' }, 403); return; }
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('crawl')) { sendJson({ ok: false, error: '工具未启用：qq_crawl_web' }, 403); return; }
-          if (!/^(group|private):\d+$/.test(key)) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-
-          const st = getSocialV2State(key);
-          const now = Date.now();
-          const maxPerHour = Math.max(0, Number(ccfg.maxPerHour) || 0);
-          const crawlTimes = (Array.isArray(st.crawlTimes) ? st.crawlTimes : []).filter((t) => now - Number(t) < 3600000);
-          if (maxPerHour > 0 && crawlTimes.length >= maxPerHour) {
-            sendJson({ ok: false, error: `爬取太频繁了：每小时最多 ${maxPerHour} 次` }, 429);
-            return;
-          }
-          st.crawlTimes = [...crawlTimes, now].slice(-200);
-          saveSocialV2State();
-
-          const mode = ['text', 'images', 'stickers'].includes(String(body.mode))
-            ? String(body.mode)
-            : (body.saveStickers === true ? 'stickers' : 'auto');
-          const saveStickers = body.saveStickers === true || mode === 'stickers';
-          const dryRun = body.dryRun === true;
-          const maxStickersPerCall = Math.max(1, Math.min(5, Number(ccfg.maxStickersPerCall) || 3));
-          const maxImages = Math.max(1, Math.min(30, Number(ccfg.maxImages) || 10));
-          const limit = Math.max(1, Math.min(saveStickers ? maxStickersPerCall : maxImages, Number(body.limit) || (saveStickers ? maxStickersPerCall : maxImages)));
-          const query = String(body.query ?? '').trim();
-          const category = String(body.category ?? '').trim();
-          const targetUrl = String(body.url ?? '').trim();
-
-          try {
-            let result;
-            if (!targetUrl || isAigengtuUrl(targetUrl)) {
-              result = await crawlAigengtu({ query, category, limit });
-            } else {
-              result = await crawlUrl(targetUrl, { query, limit, maxText: 4000 });
-            }
-
-            if (!saveStickers) {
-              const blocked = !!result.needsLogin;
-              sendJson({
-                ok: !blocked,
-                kind: result.kind,
-                url: result.url,
-                title: result.title,
-                text: result.text,
-                images: (result.images || []).slice(0, limit),
-                needsLogin: blocked,
-                error: blocked ? '页面需要登录/验证或已经失效，无法读取内容' : undefined,
-                note: blocked
-                  ? '不要编造内容；如实告诉群友这个链接打不开（需要登录/验证或已失效）。'
-                  : (mode === 'images' ? '只返回了图片地址；需要变成 QQ 收藏表情时用 mode=stickers。' : '')
-              });
-              return;
-            }
-
-            if (cfg.socialV2?.sticker?.enabled === false) {
-              sendJson({ ok: false, error: '表情包体系已关闭，不能存表情' }, 403);
-              return;
-            }
-            const candidates = (result.images || []).slice(0, limit);
-            if (!candidates.length) {
-              sendJson({ ok: false, error: '没有找到可用图片', needsLogin: !!result.needsLogin }, 404);
-              return;
-            }
-
-            const maxPerDay = Math.max(0, Number(ccfg.stickerMaxPerDay) || 0);
-            const addTimes = (Array.isArray(st.stickerAddTimes) ? st.stickerAddTimes : []).filter((t) => now - Number(t) < 86400000);
-            if (maxPerDay > 0 && addTimes.length >= maxPerDay) {
-              sendJson({ ok: false, error: `今天存的表情太多了：每天最多 ${maxPerDay} 张` }, 429);
-              return;
-            }
-
-            const synced = await syncStickerLibrary(false);
-            const existingMd5 = new Set(
-              (synced?.entries ?? stickerEntries ?? [])
-                .map((e) => String(e?.md5 || '').trim().toLowerCase())
-                .filter(Boolean)
-            );
-            const cacheDir = path.join(STATE_DIR, 'sticker-cache');
-            const referer = result.kind === 'aigengtu' ? 'https://aigengtu.com/' : (result.url || targetUrl || '');
-            const maxBytes = Math.max(256 * 1024, Number(ccfg.maxBytes) || 5 * 1024 * 1024);
-            const added = [];
-            const skipped = [];
-            const errors = [];
-
-            for (const c of candidates) {
-              let tmp = null;
-              try {
-                tmp = await saveStickerImage(c.url, { dir: cacheDir, maxBytes, headers: referer ? { referer } : {} });
-                if (existingMd5.has(String(tmp.md5).toLowerCase())) {
-                  skipped.push({ url: c.url, md5: tmp.md5, name: c.name, reason: '已经收藏过' });
-                  continue;
-                }
-                if (dryRun) {
-                  added.push({ url: c.url, md5: tmp.md5, ext: tmp.ext, bytes: tmp.bytes, name: c.name, dryRun: true });
-                  continue;
-                }
-                const resp = await bot.request('add_custom_face', { file: tmp.path });
-                if (!resp || resp.status !== 'ok' || resp.retcode !== 0) {
-                  throw new Error(resp?.wording || resp?.message || `add_custom_face retcode=${resp?.retcode}`);
-                }
-                const emojiId = String(resp.data?.emoji_id || '');
-                if (!emojiId) throw new Error('add_custom_face 没返回 emoji_id');
-                if (c.name) {
-                  try {
-                    await bot.request('modify_custom_face', { emoji_id: emojiId, desc: String(c.name).slice(0, 20) });
-                  } catch { /* 备注失败不影响已入库 */ }
-                }
-                existingMd5.add(String(tmp.md5).toLowerCase());
-                st.stickerAddTimes = [...(Array.isArray(st.stickerAddTimes) ? st.stickerAddTimes : []).filter((t) => now - Number(t) < 86400000), Date.now()].slice(-200);
-                added.push({ url: c.url, md5: tmp.md5, ext: tmp.ext, bytes: tmp.bytes, name: c.name, emojiId });
-              } catch (error) {
-                errors.push({ url: c.url, name: c.name, error: String(error?.message ?? error) });
-              } finally {
-                if (tmp?.path) { try { fs.rmSync(tmp.path, { force: true }); } catch { /* 忽略 */ } }
-              }
-            }
-
-            if (added.length && !dryRun) {
-              try { await syncStickerLibrary(true); } catch { /* 同步失败不影响已入库 */ }
-            }
-            saveSocialV2State();
-            log(`[crawl] ${key} ${dryRun ? '试运行' : '存表情'}：新增 ${added.length}，跳过 ${skipped.length}，失败 ${errors.length}`);
-            appendActivity(`${key} [crawl] ${dryRun ? '试运行' : '存表情'}：${added.map((x) => x.name || x.emojiId).join('、').slice(0, 60) || '无新增'}`);
-            sendJson({
-              ok: added.length > 0 || skipped.length > 0,
-              kind: 'stickers',
-              dryRun,
-              added,
-              skipped,
-              errors,
-              text: result.text || '',
-              needsLogin: !!result.needsLogin,
-              note: dryRun ? '试运行：只下载和校验，没有写入 QQ 收藏表情。' : ''
-            });
-          } catch (error) {
-            log(`[crawl] ${key} 抓取失败：${error?.message ?? error}`);
-            sendJson({ ok: false, error: `抓取失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/sticker-list') {
-          if (!stickerEnabled()) { sendJson({ ok: false, error: '表情包体系已关闭' }, 403); return; }
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const query = String(url.searchParams.get('query') ?? '').trim();
-          const maxCount = Math.max(1, Number(cfg.socialV2?.sticker?.maxListCount) || 100);
-          const count = Math.min(500, Math.max(1, Math.min(Number(url.searchParams.get('count')) || 48, maxCount)));
-          let force = url.searchParams.get('refresh') === '1' || url.searchParams.get('refresh') === 'true';
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('listStickers')) { sendJson({ ok: false, error: '工具未启用：qq_list_stickers' }, 403); return; }
-          // AI 强制刷新加最小间隔，避免反复调用 OneBot 表情接口造成限频/负载。
-          if (req.headers['x-agent-token'] && force) {
-            const now = Date.now();
-            if (now - lastForcedAgentStickerSync < 10000) force = false;
-            else lastForcedAgentStickerSync = now;
-          }
-          try {
-            const synced = await syncStickerLibrary(force);
-            const list = formatStickerList(synced?.entries ?? stickerEntries, query, count);
-            sendJson({ ok: true, key, ...list, syncedAt: synced?.syncedAt ?? stickerSyncedAt, fromCache: synced?.fromCache ?? false });
-          } catch (error) {
-            sendJson({ ok: false, error: `获取表情列表失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        // 管理端表情库接口（控制台）
-        if (req.method === 'GET' && url.pathname === '/api/stickers') {
-          const query = String(url.searchParams.get('query') ?? '').trim();
-          const maxCount = Math.max(1, Number(cfg.socialV2?.sticker?.maxListCount) || 100);
-          const count = Math.min(500, Math.max(1, Math.min(Number(url.searchParams.get('count')) || 48, maxCount)));
-          const force = url.searchParams.get('refresh') === '1' || url.searchParams.get('refresh') === 'true';
-          try {
-            const synced = await syncStickerLibrary(force);
-            const list = formatStickerList(synced?.entries ?? stickerEntries, query, count);
-            sendJson({ ok: true, ...list, syncedAt: synced?.syncedAt ?? stickerSyncedAt, fromCache: synced?.fromCache ?? false });
-          } catch (error) {
-            sendJson({ ok: false, error: `获取表情失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/stickers/sync') {
-          try {
-            const synced = await syncStickerLibrary(true);
-            sendJson({ ok: true, total: synced?.entries?.length ?? stickerEntries.length, syncedAt: synced?.syncedAt ?? stickerSyncedAt });
-          } catch (error) {
-            sendJson({ ok: false, error: `同步表情失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/stickers/note') {
-          const body = await readBody();
-          const stickerId = String(body.stickerId ?? '').trim();
-          const note = body.note !== undefined && body.note !== null ? String(body.note).trim().slice(0, 200) : undefined;
-          const tags = body.tags !== undefined && body.tags !== null ? (Array.isArray(body.tags) ? body.tags.map(String).map((s) => s.trim()).filter(Boolean).slice(0, 20) : []) : undefined;
-          const usage = body.usage !== undefined && body.usage !== null ? String(body.usage).trim().slice(0, 200) : undefined;
-          if (!stickerId) { sendJson({ ok: false, error: 'stickerId 不能为空' }, 400); return; }
-          const entry = applyStickerNoteV2(stickerId, note, tags, usage);
-          if (!entry) { sendJson({ ok: false, error: `找不到表情 ${stickerId}` }, 404); return; }
-          sendJson({ ok: true, sticker: entry });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/stickers/remark') {
-          const body = await readBody();
-          const stickerId = String(body.stickerId ?? '').trim();
-          if (!stickerId) { sendJson({ ok: false, error: 'stickerId 不能为空' }, 400); return; }
-          try {
-            const entry = await setStickerRemarkV2(stickerId, String(body.remark ?? ''));
-            sendJson({ ok: true, sticker: entry });
-          } catch (error) {
-            sendJson({ ok: false, error: `修改备注失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/wait') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('waitMessages')) { sendJson({ ok: false, error: '工具未启用：qq_wait_for_messages' }, 403); return; }
-          if (socialV2.paused) {
-            const st = getSocialV2State(key);
-            sendJson({ ok: true, key, paused: true, arrived: false, timeout: false, waitedMs: 0, newMessages: [], unreadCount: st.unread.length });
-            return;
-          }
-          const waitCfg = cfg.socialV2?.wait ?? {};
-          const minNew = Math.max(1, Math.round(Number(body.minNewMessages) || 1));
-          const defaultMs = Number(waitCfg.defaultMs) || 30000;
-          const minMs = Math.max(100, Number(waitCfg.minMs) || 5000);
-          const maxMs = Math.max(minMs, Number(waitCfg.maxMs) || 600000);
-          const timeoutMs = Math.min(maxMs, Math.max(minMs, Math.round(Number(body.timeoutMs) || defaultMs)));
-          const waitTurnMaxCount = Math.max(1, Math.min(20, Math.round(Number(waitCfg.turnMaxCount) || WAIT_TURN_MAX_COUNT)));
-          const waitTurnMaxMs = Math.max(5000, Math.min(600000, Math.round(Number(waitCfg.turnMaxMs) || WAIT_TURN_MAX_MS)));
-          const st = getSocialV2State(key);
-          const sendWaitWrapUp = (why) => {
-            log(`[reserved2] wait 强制收尾 ${key}（${why}），要求模型立即结束回合`);
-            sendJson({
-              ok: true,
-              key,
-              arrived: false,
-              quiet: true,
-              quietMs: 0,
-              suggestedQuietMs: 0,
-              speakerLikelyDone: true,
-              lastMessageUnfinished: false,
-              timeout: true,
-              waitedMs: 0,
-              preSleepWaitSatisfied: false,
-              preSleepWaitObserved: false,
-              preSleepWaitMs: 0,
-              preSleepWaitRemainingMs: 0,
-              newMessages: [],
-              unreadCount: st.unread.length,
-              forceWrapUp: true,
-              wrapUpHint: `${FORCE_WRAPUP_HINT}（触发原因：${why}）`
-            });
-          };
-          // ── 单回合硬上限（优先于滑动窗口）──────────────────────────────
-          // 旧版只有 12 分钟/8 次的跨回合窗口：单回合 6 次、跨度 24 分钟，早期记录
-          // 过期后窗口永远凑不满 8 次。这里按 DSH turn 计时，最多 2 次/120s。
-          let waitTurnStat = null;
-          {
-            const sid = state.sessions[key];
-            const turnStart = sid ? (Number(v2TurnStartAt.get(sid)) || 0) : 0;
-            if (sid && turnStart) {
-              let stat = waitTurnTotals.get(sid);
-              if (!stat || stat.turnStart !== turnStart) {
-                stat = { turnStart, count: 0, totalMs: 0 };
-                waitTurnTotals.set(sid, stat);
-              }
-              if (stat.count >= waitTurnMaxCount || stat.totalMs >= waitTurnMaxMs) {
-                const why = stat.totalMs >= waitTurnMaxMs
-                  ? `本回合等待累计 ${Math.round(stat.totalMs / 1000)}s`
-                  : `本回合已等待 ${stat.count} 次`;
-                waitTurnTotals.delete(sid);
-                sendWaitWrapUp(why);
-                return;
-              }
-              stat.count += 1;
-              waitTurnStat = stat;
-            }
-            // 有界清理：避免长进程里 Map 无限增长
-            if (waitTurnTotals.size > 200) {
-              const nowTs = Date.now();
-              for (const [sid2, stat2] of waitTurnTotals) {
-                if (!stat2 || nowTs - Number(stat2.turnStart) > 30 * 60 * 1000) waitTurnTotals.delete(sid2);
-              }
-            }
-          }
-          // ── 值班循环硬上限（跨回合滑动窗口）───────────────────────────
-          // 起初按「单回合内 wait 次数」计数，但活跃群里的循环形态是
-          // 「唤醒→wait 60s→收尾结束回合→又被新消息唤醒→再 wait …」，
-          // 每个回合都正常 completed，单回合计数每回合重置，永远到不了上限——
-          // 表现为群里有人不停催（speak/戳），机器人却一直在「观察→收尾」，消息全排队。
-          // 因此改为滑动窗口：不管跨多少个回合，只要「最近 WINDOW 内 wait 满 MAX 次」
-          // 就强制收尾，让模型立即结束回合（配 wakeConfig 的潜水设置去过一会儿再看）。
-          {
-            const nowTs = Date.now();
-            const hist = (waitTurnStats.get(key) ?? []).filter((t) => nowTs - t < WAIT_WINDOW_MS);
-            hist.push(nowTs);
-            waitTurnStats.set(key, hist);
-            // 顺带清理过期条目，防止 Map 无限增长
-            if (waitTurnStats.size > 200) {
-              for (const [k, arr] of waitTurnStats) {
-                if (!arr.some((t) => nowTs - t < WAIT_WINDOW_MS)) waitTurnStats.delete(k);
-              }
-            }
-            if (hist.length > WAIT_WINDOW_MAX) {
-              const why = `最近 ${Math.round(WAIT_WINDOW_MS / 60000)} 分钟内已等待 ${hist.length - 1} 次`;
-              // 重置窗口：给下一轮一个干净起点，避免刚结束就再次触发
-              waitTurnStats.set(key, []);
-              sendWaitWrapUp(why);
-              return;
-            }
-          }
-          // 同一会话只允许一个长轮询等待，避免并发挂起耗尽 HTTP handler。
-          if (activeWaits.has(key)) {
-            sendJson({ ok: false, error: '该会话已有一个等待中的 qq_wait_for_messages，请等待它结束' }, 429);
-            return;
-          }
-          activeWaits.add(key);
-          // 占位标记必须用 finally 兜底释放：曾只挂在 req 'close' + 正常返回路径上，
-          // 一旦等待循环中途抛异常（消息处理/状态读写出错），标记就永久残留——
-          // 之后该会话所有 qq_wait_for_messages 都返回 429「已有一个等待中」，
-          // 模型反复重试全失败，表现为「机器人不理人」（实测私聊遇到）。
-          // keep-alive 连接下 req 'close' 也可能迟迟不触发，不能只依赖它。
-          let finishWait = () => activeWaits.delete(key);
-          req.on('close', () => finishWait());
-          try {
-          const minQuietAfterNewMs = Number.isFinite(Number(waitCfg.minQuietAfterNewMs)) ? Math.max(0, Number(waitCfg.minQuietAfterNewMs)) : 10000;
-          const suggestedQuietMs = Math.max(suggestQuietMsV2(st), minQuietAfterNewMs);
-          const rawQuietMs = body.quietMs != null ? Number(body.quietMs) : suggestedQuietMs;
-          // 收到新消息后至少再等 minQuietAfterNewMs（默认 10 秒），防止抢话；
-          // 即使 AI 传了 quietMs=0，也会被抬升到最小静默窗口。
-          // quietMs 单独封顶（默认 15s），不能拿 wait.maxMs 当静默上限——
-          // 旧实现让 timeout=120s + quietMs=75s 实际跑出 245s 的单次等待。
-          const configuredQuietCap = Number.isFinite(Number(waitCfg.maxQuietMs))
-            ? Math.max(0, Number(waitCfg.maxQuietMs))
-            : WAIT_QUIET_CAP_MS;
-          const maxQuietMs = Math.max(minQuietAfterNewMs, Math.min(WAIT_QUIET_CAP_MS, configuredQuietCap || WAIT_QUIET_CAP_MS));
-          const quietMs = Math.min(maxQuietMs, Math.max(minQuietAfterNewMs, Math.round(rawQuietMs) || 0));
-          if (st.pendingWakeTimer) {
-            clearTimeout(st.pendingWakeTimer);
-            st.pendingWakeTimer = null;
-          }
-          cancelReplyCheckV2(key); // AI 正在主动等待，取消回复检查定时器避免重复唤醒
-          const baseline = st.lastUnreadSeq || 0;
-          const start = Date.now();
-          let arrived = false;
-          let lastNewAt = 0;
-          let aborted = false;
-          req.on('close', () => { aborted = true; });
-          // 绝对截止：timeout + 一次 quiet 窗口（+1s 余量）。
-          // 旧实现允许 timeout + maxQuietMs + 5s，且每次新消息都重置 lastNewAt，
-          // 活跃群里单次 wait 可无限逼近 245s。
-          const waitDeadline = start + timeoutMs + quietMs + 1000;
-          while (Date.now() - start < timeoutMs && !aborted) {
-            let nowSeq = st.lastUnreadSeq || 0;
-            if (nowSeq - baseline >= minNew) {
-              arrived = true;
-              lastNewAt = Date.now();
-              // 已等到新消息：继续等到“最后一条新消息之后 quietMs 内不再有新消息”再返回。
-              // 但总时长绝不超过 waitDeadline，防止活跃群把 handler 无限挂起。
-              while (Date.now() - lastNewAt < quietMs && Date.now() < waitDeadline && !aborted) {
-                if ((st.lastUnreadSeq || 0) > nowSeq) {
-                  nowSeq = st.lastUnreadSeq || 0;
-                  lastNewAt = Date.now();
-                }
-                await sleep(200);
-              }
-              break;
-            }
-            await sleep(300);
-          }
-          const waitedMs = Date.now() - start;
-          if (waitTurnStat) waitTurnStat.totalMs += waitedMs;
-          const preSleepWaitMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
-          const preSleepRemainingMs = preSleepWaitBlockedV2(st, key)
-            ? Math.max(0, preSleepWaitMs - ((st.lastIncomingAt || 0) ? Date.now() - st.lastIncomingAt : 0))
-            : 0;
-          const quiet = arrived && quietMs > 0 && (Date.now() - lastNewAt >= quietMs);
-          // 判断这次等待是否是“沉睡前观察尝试”：AI 明确请求等满观察窗口（默认 5 分钟）。
-          // 只有这种尝试里等到新消息，才会把“已观察并看到新消息”标记下来，允许 AI 看过新消息后直接决定不参与并沉睡。
-          const preSleepAttempt = timeoutMs >= preSleepWaitMs;
-          // 只有“没等到新消息且总时长达到观察窗口”或“最后一条新消息之后安静满了观察窗口”才算满足沉睡前等待；
-          // 不能因为总时长到了但最后一条消息才刚过 10 秒就误判满足。
-          const preSleepSatisfiedNow = !arrived
-            ? waitedMs >= preSleepWaitMs
-            : (quiet && (Date.now() - lastNewAt) >= preSleepWaitMs);
-          if (preSleepSatisfiedNow) {
-            st.preSleepWaitSatisfiedAt = Date.now();
-            st.preSleepWaitObservedAt = 0;
-            st.preSleepWaitAccumMs = 0;
-          } else if (!arrived) {
-            // 短等待不累计：必须单次等满观察窗口（或实际安静时间已足够时由 preSleepWaitBlockedV2 放行）
-            st.preSleepWaitAccumMs = 0;
-          } else {
-            // 等待期间有新消息：
-            // - 如果这是一次 5 分钟沉睡前观察尝试，则标记“已观察”，AI 看过 newMessages 后可自行决定是否参与；
-            // - 否则只清空累计，不算完成沉睡前观察。
-            if (preSleepAttempt) {
-              st.preSleepWaitObservedAt = Date.now();
-            }
-            st.preSleepWaitAccumMs = 0;
-          }
-          saveSocialV2State();
-          const newMessages = arrived ? (Array.isArray(st.recentMessages) ? st.recentMessages : []).filter((m) => m && !m.isSelf && (m.seq || 0) > baseline) : [];
-          const lastNew = newMessages.length ? newMessages[newMessages.length - 1] : null;
-          const lastMessageUnfinished = lastNew ? looksLikeUnfinished(String(lastNew.tail || lastNew.plain || lastNew.text || '')) : false;
-          finishWait();
-          sendJson({
-            ok: true,
-            key,
-            arrived,
-            quiet,
-            quietMs,
-            suggestedQuietMs,
-            speakerLikelyDone: quiet,
-            lastMessageUnfinished,
-            timeout: !arrived || (quietMs > 0 && !quiet && Date.now() - start >= timeoutMs),
-            waitedMs,
-            preSleepWaitSatisfied: preSleepSatisfiedNow,
-            preSleepWaitObserved: !!st.preSleepWaitObservedAt,
-            preSleepWaitMs,
-            preSleepWaitRemainingMs: preSleepRemainingMs,
-            newMessages,
-            unreadCount: st.unread.length
-          });
-          } catch (error) {
-            // 等待途中异常：释放占位标记后再回错，避免该会话永久无法再 wait
-            log(`qq_wait_for_messages 异常 ${key}: ${error?.message ?? error}`);
-            sendJson({ ok: false, error: `等待消息失败：${error?.message ?? error}` }, 500);
-          } finally {
-            finishWait();
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/check-send') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const tool = String(body.tool ?? '').trim();
-          const token = String(body.token ?? '').trim();
-          if (!key || !tool || !token) {
-            sendJson({ ok: false, error: 'key/tool/token 不能为空' }, 400);
-            return;
-          }
-          if (!agentTokenOk(key, token)) {
-            sendJson({ ok: false, error: 'agent token 无效' }, 403);
-            return;
-          }
-          if (!v2SessionAllowed(key)) {
-            sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403);
-            return;
-          }
-          const flagMap = { sendGroup: 'sendGroup', sendPrivate: 'sendPrivate', reply: 'reply' };
-          const flag = flagMap[tool];
-          if (!flag) {
-            sendJson({ ok: false, error: 'tool 必须是 sendGroup/sendPrivate/reply' }, 400);
-            return;
-          }
-          if (!v2ToolEnabled(flag)) {
-            sendJson({ ok: false, error: `工具未启用：qq_${tool === 'sendGroup' ? 'send_group_message' : tool === 'sendPrivate' ? 'send_private_message' : 'reply'}` }, 403);
-            return;
-          }
-          sendJson({ ok: true, key, tool });
-          return;
-        }
-        // ── 工具调用日志 ─────────────────────────────────────────────────────
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/tool-log') {
-          const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 200));
-          sendJson({ ok: true, entries: readToolLog(limit) });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/tool-log/clear') {
-          if (req.headers['x-agent-token']) { sendJson({ ok: false, error: '该接口仅控制台可用' }, 403); return; }
-          try { fs.writeFileSync(TOOL_LOG_FILE, '', 'utf8'); } catch {}
-          log('控制台：工具调用日志已清空');
-          sendJson({ ok: true });
-          return;
-        }
-        // ── 反馈 / 自己消息 / 消息详情 / 活跃成员 ────────────────────────────
-        // 自检：在**运行中的桥接进程里**真实跑一次报错通知，验证「群里零消息 + 管理员收到私聊」。
-        // 用控制台令牌鉴权（不是 agent 令牌），只发私聊给 owner，不会打扰任何群。
-        // 排障用法：curl -H "x-console-token: <token>" "http://127.0.0.1:3100/api/socialV2/error-notify-selftest?key=group:123"
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/error-notify-selftest') {
-          if (req.headers['x-agent-token']) { sendJson({ ok: false, error: '该接口仅控制台可用' }, 403); return; }
-          const body = await readBody();
-          const key = String(body.key ?? '').trim() || 'group:0';
-          const title = String(body.title ?? '自检报错（可忽略）');
-          const detail = String(body.detail ?? '这是一条由控制台触发的自检通知，用于确认「报错只私聊管理员、不进群」的通道正常。');
-          const en = cfg.socialV2?.errorNotice ?? {};
-          const base = cfg.errorNotify ?? {};
-          const ownerQQ = String(cfg.ownerQQ ?? '').trim();
-          if (!ownerQQ) { sendJson({ ok: false, error: 'config.ownerQQ 为空，无法通知管理员' }, 400); return; }
-          if (en.notifyOwner === false || base.notifyOwner === false) {
-            sendJson({ ok: false, error: '管理员报错通知当前被关闭（socialV2.errorNotice.notifyOwner / errorNotify.notifyOwner）' }, 400);
-            return;
-          }
-          notifyOwnerOfError(key, title, detail, { 来源: '控制台自检' });
-          sendJson({
-            ok: true,
-            key,
-            sentTo: `private:${ownerQQ}`,
-            groupMessagesSent: 0,
-            config: { inGroup: en.inGroup === true, notifyOwner: true, windowMs: Number(base.windowMs) || 0 }
-          });
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/feedback') {
-          sendJson({ ok: true, entries: readFeedbackEntries() });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/feedback-clear') {
-          if (req.headers['x-agent-token']) { sendJson({ ok: false, error: '该接口仅控制台可用' }, 403); return; }
-          atomicWriteJson(FEEDBACK_FILE, []);
-          log('控制台：清空 AI 反馈');
-          sendJson({ ok: true });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/feedback') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const level = body.level === 'warning' || body.level === 'error' ? body.level : 'info';
-          const rawMessage = String(body.message ?? '').trim();
-          if (!key || !rawMessage) { sendJson({ ok: false, error: 'key 和 message 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('feedback')) { sendJson({ ok: false, error: '工具未启用：qq_report_feedback' }, 403); return; }
-          // 反馈限频：防止持有会话 token 的调用方刷磁盘/日志。
-          const fNow = Date.now();
-          const fTimes = feedbackTimes.get(key) || [];
-          const fRecentMinute = fTimes.filter((t) => fNow - t < 60000).length;
-          const fRecentHour = fTimes.filter((t) => fNow - t < 3600000).length;
-          if (fRecentMinute >= 5 || fRecentHour >= 20) {
-            sendJson({ ok: false, error: '反馈过于频繁，请稍后再试' }, 429);
-            return;
-          }
-          fTimes.push(fNow);
-          feedbackTimes.set(key, fTimes.slice(-100));
-          const maxLength = Math.max(1, Number(cfg.socialV2?.feedback?.maxLength) || 500);
-          const message = rawMessage.slice(0, maxLength);
-          appendFeedbackEntry({ id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8), key, level, message, time: new Date().toISOString() });
-          log(`[reserved2] AI 反馈 (${key}) [${level}]: ${message.slice(0, 80)}`);
-          appendActivity(`${key} [reserved2] AI 反馈 [${level}]：${message.slice(0, 80)}`);
-          if (cfg.socialV2?.feedback?.notifyOwnerOnError && level === 'error' && cfg.ownerQQ) {
-            log(`[reserved2] 错误级反馈，可通知 owner ${cfg.ownerQQ}（当前仅记录日志）`);
-          }
-          sendJson({ ok: true, key, level, message });
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/my-recent') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 10));
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('getMyRecent')) { sendJson({ ok: false, error: '工具未启用：qq_get_my_recent_messages' }, 403); return; }
-          const st = getSocialV2State(key);
-          const mine = st.recentMessages.filter((m) => m.isSelf).slice(-limit);
-          sendJson({ ok: true, key, messages: mine });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/record-sent') {
-          // 内部接口不对外开放：防止持有会话 token 的调用方伪造“我说过…”的历史记录。
-          sendJson({ ok: false, error: '该接口仅桥接内部使用，不接受外部调用' }, 403);
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/message-detail') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const messageId = String(url.searchParams.get('messageId') ?? '').trim();
-          if (!key || !messageId) { sendJson({ ok: false, error: 'key 和 messageId 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('getMessageDetail')) { sendJson({ ok: false, error: '工具未启用：qq_get_message_detail' }, 403); return; }
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          try {
-            const st = getSocialV2State(key);
-            const found = (st.recentMessages || []).find((m) => m && (String(m.seq) === messageId || (m.messageId && String(m.messageId) === messageId)));
-            const forwardFields = found ? {
-              forwardIds: Array.isArray(found.forwardIds) ? found.forwardIds : [],
-              hasForward: !!found.hasForward
-            } : {};
-            let info = null;
-            // 如果入参命中本地 seq 且本地存有真实 messageId，优先按 seq 展示，避免与真实 id 冲突。
-            if (found && found.messageId && String(found.messageId) !== messageId) {
-              info = {
-                sender: String(found.sender || ''),
-                text: String(found.text || found.plain || '').slice(0, 200),
-                userId: found.userId ? String(found.userId) : null,
-                messageId: String(found.messageId),
-                seq: found.seq
-              };
-            } else {
-              info = await resolveReplyInfo(kind, id, messageId);
-              if (!info && found) {
-                info = {
-                  sender: String(found.sender || ''),
-                  text: String(found.text || found.plain || '').slice(0, 200),
-                  userId: found.userId ? String(found.userId) : null,
-                  messageId: found.messageId ? String(found.messageId) : null,
-                  seq: found.seq
-                };
-              }
-            }
-            // 无论 info 来自本地还是 OneBot，只要本地有 found 就补充转发字段，避免提示词与实现不一致。
-            if (info && found) Object.assign(info, forwardFields);
-            sendJson({ ok: true, key, messageId, info });
-          } catch (error) {
-            sendJson({ ok: false, error: `获取消息详情失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        // ── 合并转发消息查询端点（MCP qq_get_forward_msg 走这里） ────────────
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/forward-message') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const id = String(url.searchParams.get('id') ?? '').trim();
-          const agentToken = String(req.headers['x-agent-token'] ?? '').trim();
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          if (!id) { sendJson({ ok: false, error: 'id 不能为空' }, 400); return; }
-          if (currentMode !== 'reserved2') {
-            sendJson({ ok: false, error: '合并转发查看仅 reserved2 模式可用' }, 403);
-            return;
-          }
-          if (!agentToken) {
-            sendJson({ ok: false, error: 'reserved2 模式读取合并转发必须携带 agent token' }, 403);
-            return;
-          }
-          if (!agentTokenOk(key, agentToken)) {
-            sendJson({ ok: false, error: 'agent token 无效' }, 403);
-            return;
-          }
-          const kind = keyMatch[1];
-          const num = Number(keyMatch[2]);
-          if (!Number.isFinite(num) || num <= 0 || !modeAllowed(key, kind, num, cfg, currentMode)) {
-            sendJson({ ok: false, error: '当前模式不允许读取该会话' }, 403);
-            return;
-          }
-          if (!v2ToolEnabled('getForwardMsg')) {
-            sendJson({ ok: false, error: '工具未启用：qq_get_forward_msg' }, 403);
-            return;
-          }
-          // 安全边界：只允许读取本会话确实收到过的 forward id，防止 AI 任意探测/跨会话读取
-          const st = getSocialV2State(key);
-          const seenInRecent = (st?.recentMessages || []).some((m) => Array.isArray(m?.forwardIds) && m.forwardIds.includes(id));
-          const seenInUnread = (st?.unread || []).some((m) => Array.isArray(m?.forwardIds) && m.forwardIds.includes(id));
-          const seenInMemory = seenForwardIds.get(key)?.has(id) === true;
-          if (!seenInRecent && !seenInUnread && !seenInMemory) {
-            sendJson({ ok: false, error: '该转发消息 id 不在当前会话可见范围内，拒绝读取' }, 404);
-            return;
-          }
-          try {
-            const data = await bot.raw('get_forward_msg', { id });
-            const formatted = formatForwardResponse(data);
-            const remember = (fid) => {
-              if (!fid) return;
-              let set = seenForwardIds.get(key);
-              if (!set) {
-                set = new Set();
-                seenForwardIds.set(key, set);
-              }
-              set.add(fid);
-              if (set.size > 1000) {
-                for (const old of set) {
-                  set.delete(old);
-                  if (set.size <= 1000) break;
-                }
-              }
-            };
-            // 把本层出现的嵌套 forward id 登记为“本会话已见过”，AI 后续可直接再次读取。
-            for (const m of formatted.messages || []) {
-              for (const fid of m.nestedForwardIds || []) remember(fid);
-            }
-            // 抓取嵌套转发的前几条作为预览，让 AI 不需要二次调用也能先看到内容。
-            const nestedPreviews = [];
-            const nestedIds = [];
-            const seenNested = new Set();
-            for (const m of formatted.messages || []) {
-              for (const fid of m.nestedForwardIds || []) {
-                if (!seenNested.has(fid) && nestedIds.length < 5) {
-                  seenNested.add(fid);
-                  nestedIds.push(fid);
-                }
-              }
-            }
-            for (const fid of nestedIds) {
-              try {
-                const ndata = await bot.raw('get_forward_msg', { id: fid });
-                const nfmt = formatForwardResponse(ndata, { maxMessages: 3, maxCharsPerMessage: 120 });
-                for (const nm of nfmt.messages || []) {
-                  for (const nfid of nm.nestedForwardIds || []) remember(nfid);
-                }
-                nestedPreviews.push({ id: fid, ...nfmt });
-              } catch (error) {
-                log(`嵌套转发预览失败 ${key} ${fid}:`, error?.message ?? error);
-                nestedPreviews.push({ id: fid, error: error?.message ?? '嵌套转发读取失败' });
-              }
-            }
-            sendJson({ ok: true, key, id, ...formatted, nestedPreviews });
-          } catch (error) {
-            log(`合并转发查询失败 ${key} ${id}: ${error?.message ?? error}`);
-            sendJson({ ok: false, error: `合并转发查询失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/forward-media') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const media = Array.isArray(body.media) ? body.media : [];
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('getForwardMsg')) { sendJson({ ok: false, error: '工具未启用：qq_get_forward_msg' }, 403); return; }
-          if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '转发媒体读取仅 reserved2 模式可用' }, 403); return; }
-          if (!media.length) { sendJson({ ok: true, key, media: [], images: [] }); return; }
-          try {
-            const images = await fetchMediaData(media);
-            sendJson({ ok: true, key, media, images });
-          } catch (error) {
-            log(`转发媒体读取失败 ${key}:`, error?.message ?? error);
-            sendJson({ ok: false, error: `转发媒体读取失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/active-members') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const limit = Math.min(20, Math.max(1, Number(url.searchParams.get('limit')) || 10));
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('getActiveMembers')) { sendJson({ ok: false, error: '工具未启用：qq_get_active_members' }, 403); return; }
-          const st = getSocialV2State(key);
-          const map = new Map();
-          for (const m of st.recentMessages) {
-            if (!m || m.isSelf) continue;
-            const uid = m.userId ? String(m.userId) : '';
-            const key2 = uid || String(m.sender || '未知');
-            const cur = map.get(key2) || { sender: m.sender || key2, userId: uid || undefined, count: 0, lastTime: 0, isOwner: !!m.isOwner };
-            if (!cur.userId && uid) cur.userId = uid;
-            cur.count += 1;
-            if (m.time > cur.lastTime) cur.lastTime = m.time;
-            if (m.isOwner) cur.isOwner = true;
-            map.set(key2, cur);
-          }
-          const members = [...map.values()].sort((a, b) => b.count - a.count || b.lastTime - a.lastTime).slice(0, limit);
-          sendJson({ ok: true, key, members });
-          return;
-        }
-        // ── B 站：观看记录与记忆（全局，跨群共用）────────────────────────────
-        //
-        // 为什么是全局而不是挂 key：现有 activeTopic/memberImpression 是**群聊上下文**，
-        // 本就该按群隔离；而"我喜欢看什么视频"是机器人自己的偏好，与群无关。
-        // 在 A 群看过的视频，B 群聊到时也该记得（2026-10-19 用户选定）。
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/bili-record') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const token = String(body.token ?? '').trim();
-          if (!biliMem) { sendJson({ ok: false, error: 'B 站功能未启用' }, 400); return; }
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (token && !agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (token && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          // bvid 解析：**优先用"最近看完的那条"**，而不是信模型传的值。
-          //
-          // 为什么（2026-10-19 实测）：模型记不住 10 位随机 bvid，会**瞎编一个**——
-          // 日志里 12:47:12 缓存的是 BV14cnn6REvX，12:47:39 它记录时传的是 BV1qh411c7mR，
-          // 于是缓存查不到、记忆里存成两条不同的视频、简介也丢了。
-          // 模型只该负责"喜不喜欢"，标识由桥接给。
-          let bvid = String(body.bvid ?? '').trim();
-          const recent = lastBiliWatch?.ok ? String(lastBiliWatch.bvid || '').trim() : '';
-          if (recent && bvid !== recent) {
-            log(`[B站] 模型传的 bvid=${bvid || '(空)'} 与刚看完的 ${recent} 不符，改用后者`);
-            bvid = recent;
-          }
-          if (!/^BV[0-9A-Za-z]{10}$/.test(bvid)) {
-            sendJson({ ok: false, error: '没有可记录的 bvid（最近没有看完的视频）' }, 400);
-            return;
-          }
-          // 用缓存补全元信息（简介、标题等模型看不到的字段）
-          const cached = biliInfoCache.get(bvid);
-          if (cached) {
-            body.desc = body.desc || cached.desc;
-            body.title = body.title || cached.title;
-            body.owner = body.owner || cached.owner;
-            body.category = body.category || cached.category;
-            body.durationSec = body.durationSec || cached.durationSec;
-            body.biliTags = cached.biliTags || undefined;
-          } else {
-            log(`[B站] 记录 ${bvid}: 元信息缓存未命中（可能重启过），标题/简介可能缺失`);
-          }
-        const rec = biliMem.record({
-            bvid,
-            title: body.title,
-            owner: body.owner,
-            category: body.category,
-            durationSec: body.durationSec,
-            // 简介：模型不必自己传，桥接在"自己刷"时会带；工具调用没传就沿用已有的
-            desc: body.desc,
-            // B 站给的原生标签（简介为空时的主要线索），与模型自己打的 tags 分开存
-            biliTags: Array.isArray(body.biliTags) ? body.biliTags : undefined,
-            // 字幕片段：桥接看过时缓存，模型不必自己传（它记不住上千字原话）
-            subtitle: body.subtitle || undefined,
-            tags: Array.isArray(body.tags) ? body.tags : undefined,
-            liked: body.liked === true ? true : (body.liked === false ? false : null),
-            interest: body.interest,
-            watchedFrames: body.watchedFrames,
-            watchedSeconds: body.watchedSeconds,
-            source: body.source,
-            notes: body.notes
-          });
-          log(`[B站] 记录 ${bvid} liked=${rec?.liked} interest=${rec?.interest} tags=${(rec?.tags || []).join('/')}`);
-          sendJson({ ok: true, video: rec, taste: biliMem.taste(5), stats: biliMem.stats() });
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/bili-memory') {
-          if (!biliMem) { sendJson({ ok: false, error: 'B 站功能未启用' }, 400); return; }
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const token = String(req.headers['x-agent-token'] ?? '').trim();
-          if (token && key && !agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 10));
-          const likedOnly = url.searchParams.get('liked') === '1';
-          const query = String(url.searchParams.get('q') ?? '').trim();
-          let list = biliMem.recent(limit, { likedOnly });
-          if (query) {
-            const q = query.toLowerCase();
-            list = list.filter((v) =>
-              String(v.title).toLowerCase().includes(q)
-              || String(v.owner).toLowerCase().includes(q)
-              || (v.tags || []).some((t) => String(t).toLowerCase().includes(q)));
-          }
-          sendJson({ ok: true, videos: list, taste: biliMem.taste(), stats: biliMem.stats() });
-          return;
-        }
-        // ── 现场搜索（模型工具 qq_bili_search 用它）──────────────────────────
-        //
-        // 需求（2026-10-19 用户反馈「为什么没有新增的视频，都是之前说过了的」）：
-        // 群友问"推荐点视频"时，模型原来只能翻记忆里的旧视频（因为只有查询工具、
-        // 没有搜索工具），还会临时编没有链接的内容。这个端点补上"实时搜索"。
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/bili-search') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const token = String(body.token ?? '').trim();
-          if (!cfg.socialV2?.bili?.enabled) { sendJson({ ok: false, error: 'B 站功能未启用' }, 400); return; }
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (token && !agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (token && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          const query = String(body.query ?? '').trim().slice(0, 60);
-          if (!query) { sendJson({ ok: false, error: 'query 不能为空' }, 400); return; }
-          try {
-            const count = Math.min(20, Math.max(1, Number(body.count) || 8));
-            const order = ['totalrank', 'pubdate', 'click'].includes(body.order) ? body.order : 'totalrank';
-            const videos = await searchVideos(query, biliAuth, { count, order });
-            // 过滤掉已经看过/记录过的（推荐"新的"才有意义）
-            const fresh = videos.filter((v) => !biliMem?.get(v.bvid));
-            sendJson({
-              ok: true,
-              query,
-              engineNote: biliAuth.loaded && biliAuth.hasSessdata ? '登录态搜索' : '匿名搜索',
-              videos: fresh.length ? fresh : videos,
-              // 若过滤后为空说明全都看过，明确告知（模型据此换关键词）
-              allSeen: fresh.length === 0 && videos.length > 0
-            });
-          } catch (error) {
-            log(`[B站] 搜索失败 ${query}：${error?.message ?? error}`);
-            sendJson({ ok: false, error: `搜索失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        // 手动看一条（群友发链接时也可以走这里；模型工具 qq_watch_bili 用它）
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/bili-watch') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const token = String(body.token ?? '').trim();
-          if (!cfg.socialV2?.bili?.enabled) { sendJson({ ok: false, error: 'B 站功能未启用' }, 400); return; }
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (token && !agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (token && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          try {
-            // 支持 b23.tv 短链：群友分享卡片给的常是短链
-            const id = await resolveBiliId(String(body.url ?? body.bvid ?? ''));
-            if (!id) { sendJson({ ok: false, error: '识别不出 B 站视频（支持 BV号 / 完整链接 / b23.tv 短链）' }, 400); return; }
-            const info = id.bvid ? await fetchVideoInfo(id.bvid) : await fetchVideoInfo({ aid: id.aid });
-            const wc = cfg.socialV2?.bili?.watchShared ?? {};
-            const depth = {
-              seconds: Math.max(1, Number(body.seconds) || Number(wc.seconds) || 10),
-              frames: Math.max(1, Number(body.frames) || Number(wc.frames) || 12)
-            };
-            const w = await watchVideo(info.bvid, {
-              ...depth,
-              info,
-              // 群友发的视频同样需要"听见"：字幕拿不到时走 ASR
-              asr: asrEngine,
-              asrEnabled: !!asrEngine,
-              asrTimeoutMs: 120000
-            });
-            if (!w.ok) { sendJson({ ok: false, error: w.error || '观看失败' }, 500); return; }
-            rememberBiliInfo(w.info, w.grid);
-            // 群友发的链接**不计入**每日"自己刷"额度（那是应要求观看，用户明确区分）
-            // 分页拼图：帧多时会被切成多张图，按时间顺序全部返回（模型能一次收多张）
-            const sheets = Array.isArray(w.grid.sheets) && w.grid.sheets.length
-              ? w.grid.sheets
-              : [{ buffer: w.grid.buffer, mimeType: w.grid.mimeType || 'image/png' }];
-            sendJson({
-              ok: true,
-              info: w.info,
-              hint: w.hint,
-              grid: sheets[0].buffer.toString('base64'),
-              mimeType: sheets[0].mimeType || 'image/png',
-              images: sheets.map((s) => ({
-                data: s.buffer.toString('base64'),
-                mimeType: s.mimeType || 'image/png'
-              }))
-            });
-          } catch (error) {
-            log(`[B站] 观看失败：${error?.message ?? error}`);
-            sendJson({ ok: false, error: `观看失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        // ── 暂停 / 恢复「自主刷」（控制台按钮）──────────────────────────────
-        //
-        // 语义：只停"它自己想看视频"这件事，**不影响**群友发链接时的 qq_watch_bili
-        //（那条路走 /bili-watch，只检查 b.enabled）。
-        //
-        // 为什么直接复用 `selfBrowsing.enabled` 而不是新开一个 paused 字段：
-        //   这个字段本来就是"自主刷开关"，`scheduleBiliBrowse` / `runBiliBrowse` 都已检查它。
-        //   再开一个 paused 会变成两个真相源——配置里写 enabled:false 而 paused:false 时
-        //   到底算不算暂停？迟早对不上。
-        //
-        // 必须落盘：只改内存的话重启就自己恢复刷视频了，用户会以为按钮没生效。
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/bili-pause') {
-          const body = await readBody();
-          const paused = body.paused === true;
-          const configFile = path.join(ROOT, 'config.json');
-          // fail-fast：配置损坏时绝不回写，否则可能把整个 config 清成只剩 bili 段
-          const file = readJsonSafe(configFile, null, true);
-          file.socialV2 = file.socialV2 ?? {};
-          file.socialV2.bili = file.socialV2.bili ?? {};
-          file.socialV2.bili.selfBrowsing = file.socialV2.bili.selfBrowsing ?? {};
-          file.socialV2.bili.selfBrowsing.enabled = !paused;
-          try {
-            atomicWriteJson(configFile, file);
-          } catch (error) {
-            // 写盘失败不改内存：否则进程内看似生效、重启即丢，症状比报错更迷惑
-            log(`[B站] 暂停状态写入失败：${error?.message ?? error}`);
-            sendJson({ ok: false, error: `配置写入失败：${error?.message ?? error}` }, 500);
-            return;
-          }
-          // 同步内存（cfg.socialV2 是启动时读进来的副本）
-          cfg.socialV2 = cfg.socialV2 ?? {};
-          cfg.socialV2.bili = cfg.socialV2.bili ?? {};
-          cfg.socialV2.bili.selfBrowsing = cfg.socialV2.bili.selfBrowsing ?? {};
-          cfg.socialV2.bili.selfBrowsing.enabled = !paused;
-
-          if (paused) {
-            // 清掉已排的定时器：否则"暂停"后它还会按原计划再刷一次
-            if (biliTimer) { clearTimeout(biliTimer); biliTimer = null; }
-            biliScheduledAt = 0;
-            biliNextDelay = 0;
-            log(`[B站] 自主刷已暂停${biliBrowsing ? '（当前这一条会看完，之后不再排期）' : ''}`);
-          } else {
-            log('[B站] 自主刷已恢复');
-            scheduleBiliBrowse();
-          }
-          sendJson({
-            ok: true,
-            paused,
-            // 附带实时状态，前端不必再请求一次
-            selfBrowsingEnabled: !paused,
-            browsing: biliBrowsing
-              ? { active: true, phase: biliBrowseState.phase || 'starting' }
-              : { active: false }
-          });
-          return;
-        }
-
-        // 「自己刷」状态：剩余额度、上次时间
-        // ── 手动触发一次"自己刷"（控制台按钮 / 调试用）──────────────────────
-        // 与自动刷的区别只有两点：跳过"距上次太近"的间隔限制、**等结果再回响应**
-        // （自动刷是 fire-and-forget，手动点按钮需要知道"到底刷没刷、刷了什么"）。
-        //
-        // 为什么必须等结果（2026-10-19 踩的坑）：先前这里先 `sendJson({ok:true})` 再把
-        // runBiliBrowse 当异步任务跑，两个问题——
-        //   ① 用户在控制台只看到"已触发"，实际被间隔限制拦掉，什么都没发生；
-        //   ② promise 的 then 里又调 sendJson，导致 "Cannot write headers after they are sent"。
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/bili-browse-now') {
-          if (!biliMem) { sendJson({ ok: false, error: 'B 站功能未启用' }, 400); return; }
-          if (biliBrowsing) { sendJson({ ok: false, error: '正在刷，等这次结束' }, 409); return; }
-          if (biliTimer) { clearTimeout(biliTimer); biliTimer = null; }
-          try {
-            const r = await runBiliBrowse({ manual: true });
-            sendJson(r);
-          } catch (e) {
-            log(`[B站] 手动刷失败：${e?.message ?? e}`);
-            sendJson({ ok: false, error: String(e?.message ?? e) }, 500);
-          }
-          return;
-        }
-
-        // 加好友/入群邀请的待决列表（控制台可见；也方便管理员在外网侧查）
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/join-requests') {
-          const jr = cfg.socialV2?.joinRequest ?? {};
-          sendJson({
-            ok: true,
-            enabled: jr.enabled !== false,
-            autoApprove: jr.autoApprove === true,
-            ttlMs: joinQueue.ttlMs,
-            ownerConfigured: !!String(cfg.ownerQQ ?? '').trim(),
-            pending: joinQueue.list().map((it) => ({
-              n: it.n,
-              requestType: it.requestType,
-              subType: it.subType,
-              userId: it.userId,
-              nickname: it.nickname || '',
-              groupId: it.groupId,
-              groupName: it.groupName || '',
-              comment: it.comment || '',
-              at: it.at,
-              remainMs: Math.max(0, joinQueue.ttlMs - (Date.now() - Number(it.at || 0)))
-            }))
-          });
-          return;
-        }
-
-        // 控制台试听：合成一句并**以音频返回**（不发群）。
-        // 与 /tts-status 分开：这个是 POST + 可能耗时数秒，不该被轮询碰到。
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/tts-say') {
-          if (!ttsEngine || !ttsEngine.available()) {
-            sendJson({ ok: false, error: '语音合成未启用或不可用（见控制台 17b 卡片）' }, 400);
-            return;
-          }
-          const body = await readBody();
-          const text = String(body.text ?? '').trim() || '你好呀，我是达妮娅。';
-          try {
-            // refId/mood 可选：控制台试听时可以把当前选定的情绪参考也带上
-            const r = await ttsEngine.speak(text.slice(0, 200), {
-              refId: body.refId,
-              mood: body.mood,
-              params: ttsSpeechParams()
-            });
-            if (!r.ok) { sendJson({ ok: false, error: r.error }, 500); return; }
-            const buf = fs.readFileSync(r.file);
-            res.writeHead(200, {
-              ...SECURITY_HEADERS,
-              'content-type': 'audio/wav',
-              'content-length': String(buf.length),
-              'cache-control': 'no-store',
-              // 诊断用：这次实际用了哪条参考（同源 fetch 可直接读，不需要 CORS）
-              'x-tts-ref': String(r.refId || ''),
-              'x-tts-mood': String(r.refMood || '')
-            });
-            res.end(buf);
-          } catch (error) {
-            sendJson({ ok: false, error: `合成失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        // 控制台「选择文件/文件夹」：在**运行桥接的这台电脑**上弹原生对话框。
-        //
-        // 为什么不在页面里用 <input type=file>：浏览器出于安全限制不会把选中文件的
-        // 绝对路径交给 JS，而 TTS 引擎要的正是本机绝对路径（权重/引擎目录）。
-        // 所以由桥接起一个 PowerShell（-STA 才能弹 WinForms 对话框），选完把路径
-        // 写到临时文件（UTF-8 无 BOM），Node 再读回——避免中文路径经过管道被按
-        // GBK 解码（这个坑在 TTS 试听上已经踩过一次）。
-        // 脚本是固定文本，只通过环境变量传模式/标题，不接受任何拼接执行的内容。
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/tts/pick-path') {
-          const body = await readBody();
-          const kind = body.kind === 'dir' ? 'dir' : 'file';
-          if (process.platform !== 'win32') {
-            sendJson({ ok: false, error: '原生文件选择目前只支持 Windows' }, 400);
-            return;
-          }
-          if (pickPathBusy) {
-            sendJson({ ok: false, error: '已经有一个选择窗口打开了，请先处理它' }, 429);
-            return;
-          }
-          pickPathBusy = true;
-          const outFile = path.join(STATE_DIR, `pick-path-${process.pid}-${Date.now()}.txt`);
-          const script = [
-            'Add-Type -AssemblyName System.Windows.Forms',
-            'Add-Type -AssemblyName System.Drawing',
-            '$owner = New-Object System.Windows.Forms.Form',
-            '$owner.TopMost = $true',
-            '$owner.ShowInTaskbar = $false',
-            '$owner.FormBorderStyle = "None"',
-            '$owner.StartPosition = "CenterScreen"',
-            '$owner.Size = New-Object System.Drawing.Size(1,1)',
-            '$owner.Opacity = 0',
-            '$owner.Show()',
-            'try {',
-            '  if ($env:QQB_PICK_KIND -eq "dir") {',
-            '    $d = New-Object System.Windows.Forms.FolderBrowserDialog',
-            '    $d.Description = $env:QQB_PICK_TITLE',
-            '    $d.ShowNewFolderButton = $false',
-            '    if ($d.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {',
-            '      [System.IO.File]::WriteAllText($env:QQB_PICK_OUT, $d.SelectedPath, (New-Object System.Text.UTF8Encoding($false)))',
-            '    }',
-            '  } else {',
-            '    $f = New-Object System.Windows.Forms.OpenFileDialog',
-            '    $f.Title = $env:QQB_PICK_TITLE',
-            '    $f.Filter = "权重文件 (*.ckpt;*.pth;*.pt;*.safetensors)|*.ckpt;*.pth;*.pt;*.safetensors|所有文件 (*.*)|*.*"',
-            '    $f.CheckFileExists = $true',
-            '    if ($f.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {',
-            '      [System.IO.File]::WriteAllText($env:QQB_PICK_OUT, $f.FileName, (New-Object System.Text.UTF8Encoding($false)))',
-            '    }',
-            '  }',
-            '} finally { $owner.Close() }'
-          ].join('\r\n');
-          try {
-            const { execFile } = await import('node:child_process');
-            await new Promise((resolve, reject) => {
-              execFile('powershell.exe',
-                ['-NoProfile', '-STA', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', script],
-                {
-                  timeout: 120000,
-                  windowsHide: true,
-                  maxBuffer: 1024 * 1024,
-                  env: {
-                    ...process.env,
-                    QQB_PICK_KIND: kind,
-                    QQB_PICK_TITLE: kind === 'dir' ? '选择 GPT-SoVITS 引擎目录' : '选择模型权重文件',
-                    QQB_PICK_OUT: outFile
-                  }
-                },
-                (error) => (error ? reject(error) : resolve())
-              );
-            });
-            let picked = '';
-            try {
-              picked = fs.readFileSync(outFile, 'utf8').replace(/^\uFEFF/, '').trim();
-            } catch { /* 用户取消：没有输出文件 */ }
-            sendJson({ ok: true, path: picked, cancelled: !picked });
-          } catch (error) {
-            const msg = error?.killed ? '等待选择超时（120 秒）' : (error?.message ?? String(error));
-            log(`[TTS] 原生路径选择失败：${msg}`);
-            sendJson({ ok: false, error: `打开文件选择框失败：${msg}` }, 500);
-          } finally {
-            pickPathBusy = false;
-            try { fs.unlinkSync(outFile); } catch { /* 没生成就忽略 */ }
-          }
-          return;
-        }
-
-        // ── 缓存盘点与清理（2026-10-22 用户要求）──────────────────────────
-        //
-        // 「注意清理 C 盘缓存，并且控制台中给出对应功能卡片」。
-        // GET 只盘点（算体积）；POST 才真删，且只删 kind='safe' 的项
-        // （语音模型/图库/观看记忆一律不动，见 cache-manager.js 顶部说明）。
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/cache') {
-          try {
-            const items = collectCacheItems({
-              root: ROOT,
-              ttsDir: cfg.socialV2?.tts?.enabled === true ? (cfg.socialV2.tts.dir || DEFAULT_SOVITS_DIR) : '',
-              // 收藏目录可被配置覆盖；不传则用 <项目>/collected
-              collectedDir: cfg.socialV2?.images?.archiveDir || ''
-            });
-            sendJson({ ok: true, items, groups: CACHE_GROUPS, summary: summarizeCache(items) });
-          } catch (error) {
-            sendJson({ ok: false, error: `盘点失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/cache-purge') {
-          const body = await readBody();
-          try {
-            const items = collectCacheItems({
-              root: ROOT,
-              ttsDir: cfg.socialV2?.tts?.enabled === true ? (cfg.socialV2.tts.dir || DEFAULT_SOVITS_DIR) : '',
-              collectedDir: cfg.socialV2?.images?.archiveDir || ''
-            });
-            const r = purgeCache(items, {
-              keys: Array.isArray(body.keys) ? body.keys.map(String) : [],
-              dryRun: body.dryRun === true
-            });
-            const human = humanBytes(r.freedBytes);
-            if (!r.dryRun) {
-              log(`[缓存] 清理完成：释放 ${human}（${r.removed} 个文件）`);
-              appendActivity(`[缓存] 清理释放 ${human}`);
-            }
-            sendJson({
-              ok: true,
-              freedBytes: r.freedBytes,
-              freedHuman: human,
-              removed: r.removed,
-              details: r.details,
-              dryRun: r.dryRun
-            });
-          } catch (error) {
-            log(`[缓存] 清理失败：${error?.message ?? error}`);
-            sendJson({ ok: false, error: `清理失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        // 语音合成（TTS）状态：给控制台显示"能不能发语音、什么音色、什么概率"。
-        // 与 bili-status 分开成独立端点：TTS 是全局能力，不属于 B 站。
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/tts-status') {
-          const t = cfg.socialV2?.tts ?? {};
-          const st = ttsEngine ? ttsEngine.status() : null;
-          const probe = ttsEngine ? ttsEngine.probe() : null;
-          // 请求级韵律参数：控制台回填/保存用（改完即时生效）
-          const speech = ttsSpeechParams();
-          sendJson({
-            ok: true,
-            enabled: t.enabled === true,
-            // 可插拔的三种可见状态：未启用 / 已启用但不可用 / 可用
-            usable: !!(st && st.available && st.enabled),
-            state: st ? st.state : (t.enabled === true ? 'unavailable' : 'disabled'),
-            voice: st?.voice || t.voiceName || '达妮娅',
-            dir: st?.dir || t.dir || DEFAULT_SOVITS_DIR,
-            device: st?.device || t.device || 'cuda',
-            // 实际加载的权重/版本：引擎就绪时以引擎回报为准。
-            // 之前控制台只显示配置项，出现过「显示爱弥斯、实际跑 dania」的误导。
-            gptModel: st?.gptModel || (t.gptModel ? path.basename(String(t.gptModel)) : ''),
-            sovitsModel: st?.sovitsModel || (t.sovitsModel ? path.basename(String(t.sovitsModel)) : ''),
-            modelVersion: st?.version || '',
-            loadSec: st?.loadSec ?? null,
-            warmed: st?.warmed ?? null,
-            // 只有真正不可用时才回显 error；可用时若还带着"未初始化"这类
-            // 初始化期的残留文案，会和"可用"状态自相矛盾（实测 UI 上出现过
-            // 「可用」+「原因：未初始化」并列）。
-            error: (st && st.available && st.state === 'ready') ? null : (st?.error ?? (t.enabled === true ? '未初始化' : null)),
-            retryInSec: st?.retryInMs ? Math.round(st.retryInMs / 1000) : 0,
-            probability: Math.max(0, Math.min(1, Number(t.probability ?? TTS_DEFAULT_PROBABILITY))),
-            maxPerHour: ttsNum(t.maxPerHour, 3, 0, 60),
-            maxChars: ttsNum(t.maxChars, 140, 20, 300),
-            refText: probe?.refText ? String(probe.refText).slice(0, 80) : '',
-            // ── 音色预设（voices.json）──────────────────────────────────
-            // 归档里的音色/权重版本/按情绪分好的参考音频。控制台据此渲染下拉；
-            // refs 只回 id/mood/label，不回绝对路径。
-            voiceId: st?.voiceId || t.voiceId || '',
-            weightsId: st?.weightsId || t.weightsId || '',
-            weightsLabel: st?.weightsLabel || '',
-            refs: st?.refs || [],
-            defaultRefId: st?.defaultRefId || '',
-            refMode: st?.refMode || t.refMode || 'auto',
-            voices: probe?.voices || [],
-            manifestPath: probe?.manifestPath || '',
-            manifestError: probe?.manifestError || '',
-            // 韵律/响度（请求级，保存即生效）
-            speech,
-            // ── 可编辑参数（2026-10-22 用户要求「设成可变参数并提供修改按钮」）──
-            // 分两类，因为生效时机不同：
-            //   ① 即时生效：概率/上限/字数——planTtsV2 与端点每次都现读 cfg；
-            //   ② 需重启：dir/模型路径/device/线程——它们在启动时传给引擎并进了闭包。
-            // 前端据此把第二类标「需重启」，避免用户改完以为没生效。
-            editable: {
-              probability: Math.max(0, Math.min(1, Number(t.probability ?? TTS_DEFAULT_PROBABILITY))),
-              maxPerHour: ttsNum(t.maxPerHour, 3, 0, 60),
-              maxChars: ttsNum(t.maxChars, 140, 20, 300),
-              dir: String(t.dir || DEFAULT_SOVITS_DIR),
-              gptModel: String(t.gptModel || 'GPT_SoVITS/dania-e15.ckpt'),
-              sovitsModel: String(t.sovitsModel || 'GPT_SoVITS/dania_e16_s2192.pth'),
-              device: String(t.device || 'cuda'),
-              cpuThreads: Math.max(1, Number(t.cpuThreads) || 8),
-              voiceName: String(t.voiceName || '达妮娅'),
-              voiceId: String(t.voiceId || ''),
-              weightsId: String(t.weightsId || ''),
-              refMode: String(t.refMode || 'auto'),
-              // 韵律/响度：请求级参数，保存后下一次合成即生效
-              ...speech
-            },
-            summary: (() => {
-              if (t.enabled !== true) return '未启用：只发文字';
-              if (!st || !st.available) return `已启用但不可用：${st?.error || (probe ? '探测失败' : '未初始化')}`;
-              if (st.state === 'ready') {
-                return `可用（${st.voice}）· ${Math.round(Math.max(0, Math.min(1, Number(t.probability ?? TTS_DEFAULT_PROBABILITY))) * 100)}% 概率发语音`
-                  + ` · 每小时最多 ${ttsNum(t.maxPerHour, 3, 0, 60)} 条`;
-              }
-              if (st.state === 'failed') return `已启用但启动失败：${st.error}（稍后自动重试）`;
-              return '已启用，等待首次加载（约 10~25 秒，不阻塞文字）';
-            })()
-          });
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/bili-status') {
-          const b = cfg.socialV2?.bili ?? {};
-          const sb = b.selfBrowsing ?? {};
-          const today = biliMem ? biliMem.todayUsage() : { seconds: 0, videos: 0 };
-          const budget = Math.max(0, Number(sb.dailyBudgetSec) || 0);
-          // 控制台要能看到"此刻是不是在刷"以及"刷到哪一步了"。
-          // 这些是进程内的瞬时状态，不落盘：重启后自然归零。
-          const now = Date.now();
-          const browsing = biliBrowsing
-            ? {
-                active: true,
-                phase: biliBrowseState.phase || 'starting',
-                since: biliBrowseState.startedAt || now,
-                video: biliBrowseState.video || null,
-                key: biliBrowseState.key || '',
-                elapsedSec: Math.round((now - (biliBrowseState.startedAt || now)) / 1000)
-              }
-            : { active: false };
-          sendJson({
-            ok: true,
-            enabled: b.enabled !== false,
-            selfBrowsing: {
-              enabled: sb.enabled !== false,
-              // 控制台按钮据此显示"已暂停 / 恢复自主刷"
-              paused: sb.enabled === false,
-              dailyBudgetSec: budget,
-              usedSec: today.seconds,
-              remainingSec: Math.max(0, budget - today.seconds),
-              videosToday: today.videos,
-              lastBrowseAt: lastBiliBrowseAt || 0,
-              // 下次自己刷还有多久：以**本次调度的起点** + 随机间隔计算。
-              // 用 lastBiliBrowseAt 会算错——那个是"上次真的看了"的时间，
-              // 而调度可能在它之后才设定（比如跳过某一轮后重新排期）。
-              nextInSec: biliTimer && biliScheduledAt
-                ? Math.max(0, Math.round((biliScheduledAt + (biliNextDelay || 0) - now) / 1000))
-                : 0,
-              // 当前是否在刷（控制台用这个显示"刷视频中…"）
-              browsing,
-              // 最近一次刷的结果，方便回看"它刚才看了啥"
-              lastVideo: lastBiliWatch || null,
-              // 分区偏好（让控制台能说明"为什么总刷这类"）
-              categoryWeights: sb.categoryWeights || null,
-              // 主动搜索：开关、上次搜的关键词、凭据状态（**只报状态，不暴露 cookie**）
-              search: {
-                enabled: sb.search?.enabled !== false,
-                lastKeyword: lastBiliSearchKeyword || '',
-                auth: biliAuth.loaded
-                  ? { loaded: true, hasLogin: !!biliAuth.hasSessdata }
-                  : { loaded: false, reason: biliAuth.reason }
-              },
-              // 声音内容（听觉）：字幕优先、ASR 兜底（2026-10-21 用户要求）
-              audio: (() => {
-                const asr = asrEngine ? asrEngine.status() : null;
-                const cfgAsr = b.asr ?? {};
-                return {
-                  // 字幕需要登录态；没登录时 B 站返回空数组（且 code 仍是 0），
-                  // 所以这里明确告诉控制台"字幕能不能用"
-                  subtitleAvailable: !!biliAuth.hasSessdata,
-                  subtitleReason: biliAuth.hasSessdata ? '' : (biliAuth.loaded ? '凭据已加载但无登录态' : '未配置 B 站凭据'),
-                  asrEnabled: cfgAsr.enabled !== false,
-                  asrConfigured: !!asr,
-                  asrState: asr?.state ?? 'disabled',
-                  asrModel: asr?.model ?? '',
-                  asrModelPath: asr?.modelPath ?? '',
-                  asrModelKind: asr?.modelKind ?? '',
-                  asrThreads: asr?.cpuThreads ?? null,
-                  asrLoadSec: asr?.loadSec ?? null,
-                  asrError: asr?.error ?? null,
-                  asrRetryInSec: asr?.retryInMs ? Math.round(asr.retryInMs / 1000) : 0,
-                  // 一句话结论，控制台直接显示
-                  summary: asr?.state === 'ready'
-                    ? (biliAuth.hasSessdata
-                      ? '字幕优先，字幕缺失时用本地语音识别补'
-                      : '未登录 B 站：全部走本地语音识别')
-                    : (asr?.state === 'failed'
-                      ? `语音识别不可用（${asr.error || '未知原因'}）：只有画面`
-                      : (asr ? '语音识别待加载（首次用时自动加载，约 8 秒）'
-                        : '未启用语音识别：只有画面'))
-                };
-              })()
-            },
-            share: {
-              enabled: b.share?.enabled !== false,
-              minInterest: b.share?.minInterest,
-              probability: b.share?.probability,
-              lastShareAt: lastBiliShareAt || 0,
-              nextAllowedInSec: lastBiliShareAt
-                ? Math.max(0, Math.round((lastBiliShareAt + (Number(b.share?.minGapMs) || 6 * 3600 * 1000) - now) / 1000))
-                : 0,
-              // 推荐目的地策略（2026-10-21 用户要求「更多推荐给活跃的群聊」）
-              preferActiveGroups: b.share?.preferActiveGroups !== false,
-              activeWindowHours: Math.max(1, Number(b.share?.activeWindowHours) || 24),
-              minActivityForShare: Math.max(0, Number(b.share?.minActivityForShare) || 0),
-              // 各群活跃度：控制台据此显示"推荐会落到哪些群"
-              groups: [...socialV2.conversations.entries()]
-                .filter(([k]) => k.startsWith('group:'))
-                .map(([k, st]) => {
-                  const hours = Math.max(1, Number(b.share?.activeWindowHours) || 24);
-                  const activity = groupActivityScore(st, { hours, now });
-                  return {
-                    key: k,
-                    activity,
-                    // 是否够格作为推荐目的地
-                    shareEligible: activity >= Math.max(1, Number(b.share?.minActivityForShare) || 1),
-                    lastActionAt: Number(st.lastActionAt) || 0
-                  };
-                })
-                .sort((x, y) => y.activity - x.activity)
-            },
-            memory: biliMem ? biliMem.stats() : null,
-            taste: biliMem ? biliMem.taste(5) : null,
-            recent: biliMem ? biliMem.recent(6).map((v) => ({
-              bvid: v.bvid, title: v.title, owner: v.owner, category: v.category,
-              liked: v.liked, interest: v.interest, tags: v.tags, lastSeenAt: v.lastSeenAt, source: v.source,
-              desc: String(v.desc || '').slice(0, 120)
-            })) : []
-          });
-          return;
-        }
-
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/memory-append') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const category = String(body.category ?? '').trim();
-          const content = String(body.content ?? '').trim();
-          const extra = body.extra && typeof body.extra === 'object' ? body.extra : {};
-          if (!key || !category || !content) { sendJson({ ok: false, error: 'key/category/content 不能为空' }, 400); return; }
-          if (!['activeTopic', 'pendingThought', 'memberImpression'].includes(category)) { sendJson({ ok: false, error: 'category 必须是 activeTopic / pendingThought / memberImpression' }, 400); return; }
-          if (category === 'memberImpression' && !String(extra.target || '').trim()) { sendJson({ ok: false, error: 'memberImpression 需要 extra.target 指定群友名字' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('memory')) { sendJson({ ok: false, error: '工具未启用：qq_memory_append' }, 403); return; }
-          const st = getSocialV2State(key);
-          appendMemoryV2(st, category, content, extra);
-          sendJson({ ok: true, key, category, content, memory: formatMemoryV2(st) });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/memory-update') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const category = String(body.category ?? '').trim();
-          const oldContent = String(body.oldContent ?? '').trim();
-          const target = redactKnownTokensOnly(String(body.target ?? '').trim());
-          const newContent = body.newContent !== undefined && body.newContent !== null ? redactKnownTokensOnly(String(body.newContent).trim()) : undefined;
-          const newExtra = body.newExtra && typeof body.newExtra === 'object' && !Array.isArray(body.newExtra) ? body.newExtra : {};
-          const redactExtra = (v) => redactKnownTokensOnly(String(v ?? '')).trim();
-          const cleanNewExtra = {
-            ...newExtra,
-            pendingQuestion: newExtra.pendingQuestion !== undefined ? redactExtra(newExtra.pendingQuestion) : undefined,
-            participants: Array.isArray(newExtra.participants) ? newExtra.participants.map((p) => redactExtra(p)) : undefined,
-            motivation: newExtra.motivation !== undefined ? redactExtra(newExtra.motivation) : undefined,
-            target: newExtra.target !== undefined ? redactExtra(newExtra.target) : undefined
-          };
-          if (!key || !category) { sendJson({ ok: false, error: 'key/category 不能为空' }, 400); return; }
-          if (!['activeTopic', 'pendingThought', 'memberImpression'].includes(category)) { sendJson({ ok: false, error: 'category 必须是 activeTopic / pendingThought / memberImpression' }, 400); return; }
-          if (category === 'memberImpression' && !target) { sendJson({ ok: false, error: 'memberImpression 需要 target 指定原群友名字' }, 400); return; }
-          if (category !== 'memberImpression' && !oldContent) { sendJson({ ok: false, error: '该类别需要 oldContent 指定要编辑的记忆内容' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('memory')) { sendJson({ ok: false, error: '工具未启用：qq_memory_*' }, 403); return; }
-          const st = getSocialV2State(key);
-          if (category === 'activeTopic' && Array.isArray(st.activeTopics)) {
-            const idx = st.activeTopics.findIndex((t) => String(t?.text ?? '') === oldContent);
-            if (idx < 0) { sendJson({ ok: false, error: '找不到要编辑的 activeTopic' }, 404); return; }
-            if (newContent !== undefined) st.activeTopics[idx].text = newContent.slice(0, 200);
-            if (cleanNewExtra.pendingQuestion !== undefined) st.activeTopics[idx].pendingQuestion = String(cleanNewExtra.pendingQuestion).slice(0, 200);
-            if (Array.isArray(cleanNewExtra.participants)) st.activeTopics[idx].participants = cleanNewExtra.participants.map(String).slice(0, 10);
-          } else if (category === 'pendingThought' && Array.isArray(st.pendingThoughts)) {
-            const idx = st.pendingThoughts.findIndex((t) => String(t?.text ?? '') === oldContent);
-            if (idx < 0) { sendJson({ ok: false, error: '找不到要编辑的 pendingThought' }, 404); return; }
-            if (newContent !== undefined) st.pendingThoughts[idx].text = newContent.slice(0, 200);
-            if (cleanNewExtra.motivation !== undefined) st.pendingThoughts[idx].motivation = String(cleanNewExtra.motivation).slice(0, 50);
-            if (cleanNewExtra.expiresAtMs !== undefined) st.pendingThoughts[idx].expiresAt = Date.now() + Math.max(0, Number(cleanNewExtra.expiresAtMs) || 0);
-          } else if (category === 'memberImpression' && st.memberImpressions && typeof st.memberImpressions === 'object') {
-            const oldTarget = target;
-            if (['__proto__', 'constructor', 'prototype'].includes(oldTarget)) { sendJson({ ok: false, error: '非法的群友名字' }, 400); return; }
-            const im = st.memberImpressions[oldTarget] || {};
-            const newTarget = String(cleanNewExtra.target || oldTarget).trim();
-            if (!newTarget || ['__proto__', 'constructor', 'prototype'].includes(newTarget)) { sendJson({ ok: false, error: '非法的群友名字' }, 400); return; }
-            if (newContent !== undefined) {
-              im.traits = newContent.split(/[,，、]/).map((s) => s.trim()).filter(Boolean).slice(0, 20);
-            }
-            if (cleanNewExtra.interactionCount !== undefined) im.interactionCount = Math.max(0, Number(cleanNewExtra.interactionCount) || 0);
-            if (newTarget !== oldTarget) delete st.memberImpressions[oldTarget];
-            st.memberImpressions[newTarget] = im;
-          }
-          saveSocialV2State();
-          sendJson({ ok: true, key, category, memory: formatMemoryV2(st) });
-          return;
-        }
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/memory') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const category = String(url.searchParams.get('category') ?? '').trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('memory')) { sendJson({ ok: false, error: '工具未启用：qq_memory_query' }, 403); return; }
-          const st = getSocialV2State(key);
-          const raw = {
-            activeTopics: Array.isArray(st.activeTopics) ? st.activeTopics.slice(-20) : [],
-            pendingThoughts: Array.isArray(st.pendingThoughts) ? st.pendingThoughts.filter((t) => !t.expiresAt || Date.now() < t.expiresAt).slice(-20) : [],
-            memberImpressions: st.memberImpressions && typeof st.memberImpressions === 'object' ? st.memberImpressions : {}
-          };
-          if (category === 'activeTopic') {
-            raw.pendingThoughts = [];
-            raw.memberImpressions = {};
-          } else if (category === 'pendingThought') {
-            raw.activeTopics = [];
-            raw.memberImpressions = {};
-          } else if (category === 'memberImpression') {
-            raw.activeTopics = [];
-            raw.pendingThoughts = [];
-          }
-          sendJson({ ok: true, key, category, formatted: formatMemoryV2({ ...st, ...raw }), raw });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/memory-remove') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const category = String(body.category ?? '').trim();
-          const content = String(body.content ?? '').trim();
-          const target = String(body.target ?? '').trim();
-          if (!key || !category) { sendJson({ ok: false, error: 'key/category 不能为空' }, 400); return; }
-          if (!['activeTopic', 'pendingThought', 'memberImpression'].includes(category)) { sendJson({ ok: false, error: 'category 必须是 activeTopic / pendingThought / memberImpression' }, 400); return; }
-          if (category === 'memberImpression' && !target) { sendJson({ ok: false, error: 'memberImpression 需要 target 指定群友名字' }, 400); return; }
-          if (category === 'memberImpression' && ['__proto__', 'constructor', 'prototype'].includes(target)) { sendJson({ ok: false, error: '非法的群友名字' }, 400); return; }
-          if (category !== 'memberImpression' && !content) { sendJson({ ok: false, error: '该类别需要 content 指定要删除的记忆内容' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('memory')) { sendJson({ ok: false, error: '工具未启用：qq_memory_remove' }, 403); return; }
-          const st = getSocialV2State(key);
-          if (category === 'activeTopic' && Array.isArray(st.activeTopics)) {
-            st.activeTopics = st.activeTopics.filter((t) => String(t?.text ?? '') !== content);
-          } else if (category === 'pendingThought' && Array.isArray(st.pendingThoughts)) {
-            st.pendingThoughts = st.pendingThoughts.filter((t) => String(t?.text ?? '') !== content);
-          } else if (category === 'memberImpression' && st.memberImpressions && typeof st.memberImpressions === 'object') {
-            delete st.memberImpressions[target];
-          }
-          saveSocialV2State();
-          sendJson({ ok: true, key, category, memory: formatMemoryV2(st) });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/memory-clear') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const category = String(body.category ?? '').trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (category && !['activeTopic', 'pendingThought', 'memberImpression'].includes(category)) { sendJson({ ok: false, error: 'category 必须是 activeTopic / pendingThought / memberImpression' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('memory')) { sendJson({ ok: false, error: '工具未启用：qq_memory_clear' }, 403); return; }
-          const st = getSocialV2State(key);
-          if (!category || category === 'activeTopic') st.activeTopics = [];
-          if (!category || category === 'pendingThought') st.pendingThoughts = [];
-          if (!category || category === 'memberImpression') st.memberImpressions = {};
-          saveSocialV2State();
-          sendJson({ ok: true, key, category: category || 'all', memory: formatMemoryV2(st) });
-          return;
-        }
-        // ── 上下文持久化（Phase 0/1）：状态 / 立即总结 / 清空 ────────────────
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/context-status') {
-          const cm = contextCfg();
-          void refreshContextNames().catch(() => {});
-          const rows = [];
-          for (const [key, st] of socialV2.conversations) {
-            if (!/^(group|private):\d+$/.test(key)) continue;
-            const stats = contextStats(STATE_DIR, key);
-            const m = contextMetrics.get(key) || {};
-            const lastEpSeq = Number(stats.lastEpisodeSeq) || 0;
-            const pendingMessages = countContextPendingV2(
-              key, st, lastEpSeq, Number(stats.lastEpisodeEndAt) || 0
-            );
-            let longTerm = longTermStats(STATE_DIR, key);
-            // Phase 2 迁移：老 episode 在 memory.json 还不存在时补种一次。
-            if (stats.episodes > 0 && !longTerm.updatedAt) {
-              try { backfillLongTermMemory(STATE_DIR, key); longTerm = longTermStats(STATE_DIR, key); } catch {}
-            }
-            const journal = journalStats(STATE_DIR, key);
-            const sid = state.sessions[key] || '';
-            rows.push({
-              key,
-              displayName: contextDisplayName(key),
-              sessionId: sid,
-              sessionBytes: sessionFileBytes(sid),
-              compactions: stats.compactions,
-              lastCompactionAt: stats.lastCompactionAt,
-              compactionTokenNotch: stats.lastCompactionNotch,
-              episodes: stats.episodes,
-              lastEpisodeAt: stats.lastEpisodeAt,
-              lastEpisodeSummary: String(stats.lastEpisodeSummary || '').slice(0, 140),
-              pendingMessages: Number(pendingMessages) || 0,
-              journalBytes: Number(journal.bytes) || 0,
-              longTerm,
-              memory: {
-                topics: Array.isArray(st.activeTopics) ? st.activeTopics.length : 0,
-                thoughts: Array.isArray(st.pendingThoughts) ? st.pendingThoughts.length : 0,
-                impressions: st.memberImpressions && typeof st.memberImpressions === 'object' ? Object.keys(st.memberImpressions).length : 0
-              },
-              lastPromptChars: Number(m.lastPromptChars) || 0,
-              lastMemoryChars: Number(m.lastMemoryChars) || 0,
-              lastEpisodeError: String(m.lastEpisodeError || '')
-            });
-          }
-          rows.sort((a, b) => b.sessionBytes - a.sessionBytes);
-          const totals = rows.reduce((acc, r) => ({
-            sessionBytes: acc.sessionBytes + r.sessionBytes,
-            episodes: acc.episodes + r.episodes,
-            compactions: acc.compactions + r.compactions,
-            journalBytes: acc.journalBytes + (Number(r.journalBytes) || 0),
-            people: acc.people + (Number(r.longTerm?.people) || 0),
-            facts: acc.facts + (Number(r.longTerm?.facts) || 0),
-            openThreads: acc.openThreads + (Number(r.longTerm?.openThreads) || 0)
-          }), { sessionBytes: 0, episodes: 0, compactions: 0, journalBytes: 0, people: 0, facts: 0, openThreads: 0 });
-          sendJson({ ok: true, enabled: cm.enabled !== false, rows, totals });
-          return;
-        }
-        // 长期记忆详情（控制台 24 号卡「长期」按钮）
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/context-memory') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          if (!/^(group|private):\d+$/.test(key)) { sendJson({ ok: false, error: 'key 非法' }, 400); return; }
-          const stats = contextStats(STATE_DIR, key);
-          let memory = loadLongTermMemory(STATE_DIR, key);
-          if (stats.episodes > 0 && !memory.updatedAt) {
-            try { memory = backfillLongTermMemory(STATE_DIR, key); } catch {}
-          }
-          sendJson({
-            ok: true,
-            key,
-            stats,
-            longTerm: longTermStats(STATE_DIR, key),
-            journal: journalStats(STATE_DIR, key),
-            memory,
-            episodes: loadEpisodes(STATE_DIR, key, 5)
-          });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/context-rebuild-memory') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          if (!/^(group|private):\d+$/.test(key)) { sendJson({ ok: false, error: 'key 非法' }, 400); return; }
-          try {
-            fs.rmSync(path.join(contextDir(STATE_DIR, key), 'memory.json'), { force: true });
-            const memory = backfillLongTermMemory(STATE_DIR, key);
-            log(`[上下文] 已从 episode 重建长期记忆 ${key}`);
-            sendJson({
-              ok: true,
-              key,
-              memory,
-              stats: contextStats(STATE_DIR, key),
-              longTerm: longTermStats(STATE_DIR, key)
-            });
-          } catch (error) {
-            sendJson({ ok: false, error: `重建失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/context-summarize') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          if (!/^(group|private):\d+$/.test(key) || !socialV2.conversations.has(key)) {
-            sendJson({ ok: false, error: '会话不存在' }, 404);
-            return;
-          }
-          const r = await makeEpisodeNow(key, { force: body.force !== false });
-          sendJson({ ok: r.ok === true, ...r });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/context-clear') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          if (key !== '*' && !/^(group|private):\d+$/.test(key)) {
-            sendJson({ ok: false, error: 'key 非法（用会话 key 或 *）' }, 400);
-            return;
-          }
-          try {
-            const clearFiles = (k) => {
-              const dir = contextDir(STATE_DIR, k);
-              // journals（messages.jsonl）是聊天记录，清空记忆时**保留**；
-              // 只删派生的情节/压缩/长期记忆。
-              for (const name of ['episodes.jsonl', 'compactions.jsonl', 'memory.json']) {
-                try { fs.rmSync(path.join(dir, name), { force: true }); } catch {}
-              }
-            };
-            if (key === '*') {
-              for (const k of socialV2.conversations.keys()) clearFiles(k);
-            } else {
-              clearFiles(key);
-            }
-            const m = contextMetrics.get(key);
-            if (m) {
-              delete m.lastEpisodeAt;
-              delete m.lastEpisodeSummary;
-              delete m.lastEpisodeError;
-            }
-            log(`[上下文] 已清空 ${key === '*' ? '全部会话' : key} 的情节/压缩/长期记忆（保留消息日志）`);
-            sendJson({ ok: true, key });
-          } catch (error) {
-            sendJson({ ok: false, error: `清空失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-        // ── 二代黑话学习（reserved2）：AI 查询/提交黑话候选 ─────────────────
-        if (req.method === 'GET' && url.pathname === '/api/socialV2/slang/query') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const q = String(url.searchParams.get('q') ?? '').trim().toLowerCase();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('slangQuery')) { sendJson({ ok: false, error: '工具未启用：qq_slang_query' }, 403); return; }
-          const list = confirmedSlangListV2().filter((e) => {
-            if (!q) return true;
-            return e.content.toLowerCase().includes(q)
-              || e.meaning.toLowerCase().includes(q)
-              || e.usage.toLowerCase().includes(q)
-              || e.example.toLowerCase().includes(q);
-          });
-          sendJson({
-            ok: true,
-            key,
-            total: list.length,
-            entries: list,
-            block: buildSlangContext(slangEntries, cfg.slang?.injectMax ?? 8)
-          });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/slang/submit') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const token = String(body.token ?? '').trim();
-          const content = redactKnownTokensOnly(String(body.content ?? '')).trim();
-          const context = redactKnownTokensOnly(String(body.context ?? '')).trim();
-          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
-          if (req.headers['x-agent-token'] && !v2ToolEnabled('slangSubmit')) { sendJson({ ok: false, error: '工具未启用：qq_slang_submit' }, 403); return; }
-          if (cfg.slang?.enabled === false) { sendJson({ ok: false, error: '黑话学习已关闭（slang.enabled=false）' }, 403); return; }
-          if (!content) { sendJson({ ok: false, error: 'content 不能为空' }, 400); return; }
-          if (content.length > 50) { sendJson({ ok: false, error: '黑话词条过长（最多 50 字）' }, 400); return; }
-          if (!allowSlangSubmit(key)) { sendJson({ ok: false, error: '黑话提交过于频繁，请稍后再试' }, 429); return; }
-          const existing = slangEntries.find((e) => e.content === content);
-          if (existing) {
-            if (existing.status === SLANG_STATUS.CONFIRMED) {
-              sendJson({ ok: true, duplicate: true, status: 'confirmed', entry: publicSlangEntry(existing) });
-              return;
-            }
-            if (existing.status === SLANG_STATUS.REJECTED) {
-              sendJson({ ok: false, error: '该词已被管理员拒绝，如需重新收录请联系管理员' }, 403);
-              return;
-            }
-            // candidate：累计出现次数并追加语境证据
-            existing.count = (Number(existing.count) || 0) + 1;
-            if (context) {
-              existing.evidence = mergeEvidence(existing.evidence, [{ key, sender: 'AI提交', text: context.slice(0, 200), time: Date.now() }]);
-            }
-            existing.updatedAt = new Date().toISOString();
-            saveSlangStore();
-            if (cfg.slang?.autoResearch !== false) {
-              const thresholds = Array.isArray(cfg.slang?.inferenceThresholds) ? cfg.slang.inferenceThresholds.map(Number).filter(Boolean) : [2, 4, 8];
-              if (thresholds.includes(existing.count) && existing.count > (Number(existing.lastInferenceCount) || 0)) {
-                queueSlangTask(() => runSlangResearch([existing]));
-              }
-            }
-            log(`[reserved2] AI 再次提交黑话候选「${content}」(${key})，累计 ${existing.count} 次`);
-            sendJson({ ok: true, duplicate: true, status: 'candidate', entry: publicSlangEntry(existing) });
-            return;
-          }
-          const entry = createSlangEntry({
-            content,
-            source: 'ai',
-            status: SLANG_STATUS.CANDIDATE,
-            evidence: context ? [{ key, sender: 'AI提交', text: context.slice(0, 200), time: Date.now() }] : []
-          });
-          slangEntries.push(entry);
-          saveSlangStore();
-          if (cfg.slang?.autoResearch !== false) {
-            queueSlangTask(() => runSlangResearch([entry]));
-          }
-          log(`[reserved2] AI 提交黑话候选「${content}」(${key})`);
-          appendActivity(`${key} [reserved2] AI 提交黑话候选：${content}${context ? '（附语境）' : ''}`);
-          sendJson({ ok: true, entry: publicSlangEntry(entry) });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/authorize/read') {
-          const body = await readBody();
-          const key = String(body.key ?? '').trim();
-          const token = String(body.token ?? '').trim();
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          if (currentMode === 'reserved2' && !agentTokenOk(key, token)) {
-            sendJson({ ok: false, error: 'reserved2 模式下旧只读工具不可用，请使用带会话令牌的 v2 读工具' }, 403);
-            return;
-          }
-          if (token && !agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
-            sendJson({ ok: false, error: '当前模式不允许读取该会话' }, 403);
-            return;
-          }
-          sendJson({ ok: true, key });
-          return;
-        }
-        // ── 图片/表情查询端点（MCP qq_get_message_images 走这里） ────────────
-        if (req.method === 'GET' && url.pathname === '/api/images/message') {
-          const key = String(url.searchParams.get('key') ?? '').trim();
-          const messageId = String(url.searchParams.get('messageId') ?? '').trim();
-          const agentToken = String(req.headers['x-agent-token'] ?? '').trim();
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
-          if (!messageId) { sendJson({ ok: false, error: 'messageId 不能为空' }, 400); return; }
-          if (currentMode === 'reserved2' && !agentToken) {
-            sendJson({ ok: false, error: 'reserved2 模式读取图片必须携带 agent token' }, 403);
-            return;
-          }
-          if (currentMode === 'chat' || currentMode === 'reserved') {
-            sendJson({ ok: false, error: '一代 chat/reserved 模式图片已自动内联，按需图片工具仅 reserved2 模式可用' }, 403);
-            return;
-          }
-          if (agentToken && !agentTokenOk(key, agentToken)) {
-            sendJson({ ok: false, error: 'agent token 无效' }, 403);
-            return;
-          }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
-            sendJson({ ok: false, error: '当前模式不允许读取该会话' }, 403);
-            return;
-          }
-          if (agentToken && !v2ToolEnabled('getImages')) {
-            sendJson({ ok: false, error: '工具未启用：qq_get_message_images' }, 403);
-            return;
-          }
-          if (!agentToken && currentMode === 'closed-agent' && !v2ToolEnabled('getImages')) {
-            sendJson({ ok: false, error: '工具未启用：qq_get_message_images' }, 403);
-            return;
-          }
-          // 本地缓存优先，未命中则回源取那条消息（群友引用别人的图时本地没有）
-          const media = await findMessageMediaAsync(key, messageId);
-          if (!media.length) {
-            sendJson({ ok: true, messageId, media: [], images: [], note: '该消息没有可读取的图片/表情元数据' });
-            return;
-          }
-          try {
-            // raw=1：跳过缩放/抽帧，返回原图（供 qq_upscale_image 做超分）
-            const images = await fetchMediaData(media, { raw: url.searchParams.get('raw') === '1' });
-            sendJson({ ok: true, messageId, media, images });
-          } catch (error) {
-            log(`图片查询失败 ${key} ${messageId}: ${error?.message ?? error}`);
-            sendJson({ ok: false, error: `图片查询失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-
-        // ── 超分结果回传（把放大后的图发给群友）─────────────────────────────
-        //
-        // 需求（2026-10-19）：「超分完没有把超分后的结果发回」——超分图原先只作为
-        // image part 交给模型，群友看不到。这个端点把结果真正发到会话里。
-        //
-        // 安全边界与其它发送端点一致：模式校验 → agent token → 目标在允许范围内 →
-        // 发送配额 → 静默模式。图片走 base64 段（不落临时文件，也不接受任意 URL／路径）。
-        if (req.method === 'POST' && url.pathname === '/api/socialV2/send-upscaled') {
-          // 这里要收一张 base64 图片，申请放宽的请求体上限（白名单路由，见 readBody）。
-          const body = await readBody({ route: url.pathname, maxBytes: 8_000_000 });
-          const token = String(body.token ?? '').trim();
-          const key = String(body.key ?? '').trim();
-          const dataB64 = String(body.data ?? '').replace(/\s/g, '');
-          const caption = String(body.caption ?? '').trim().slice(0, 200);
-          if (currentMode === 'chat' || currentMode === 'reserved') {
-            sendJson({ ok: false, error: '发送工具仅限 closed-agent / reserved2 模式使用' }, 403);
-            return;
-          }
-          if (currentMode === 'reserved2' && !token) { sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403); return; }
-          if (!key || !/^(group|private):(\d+)$/.test(key)) { sendJson({ ok: false, error: 'key 格式无效' }, 400); return; }
-          if (token && !agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (token && !v2ToolEnabled('sendImage')) { sendJson({ ok: false, error: '工具未启用：qq_send_image' }, 403); return; }
-          if (shouldBlockSilentReply(key)) { sendJson({ ok: false, error: '静默模式已开启，当前不允许发送' }, 403); return; }
-          const [, kind, idStr] = /^(group|private):(\d+)$/.exec(key);
-          if (!modeAllowed(key, kind, Number(idStr), cfg, currentMode)) {
-            sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403);
-            return;
-          }
-          if (!dataB64) { sendJson({ ok: false, error: 'data 不能为空' }, 400); return; }
-          // 只接受 base64：拒绝任何 URL／本地路径 —— 那会绕过 SSRF/本地文件防护。
-          if (!/^[A-Za-z0-9+/]+={0,2}$/.test(dataB64.slice(0, 64))) { sendJson({ ok: false, error: 'data 必须是 base64 编码的图片' }, 400); return; }
-          const buf = Buffer.from(dataB64, 'base64');
-          if (!buf.length) { sendJson({ ok: false, error: 'data 解码后为空' }, 400); return; }
-          if (buf.length > MAX_MEDIA_BYTES) { sendJson({ ok: false, error: `图片过大（${(buf.length / 1024 / 1024).toFixed(1)}MB），上限 ${(MAX_MEDIA_BYTES / 1024 / 1024) | 0}MB` }, 400); return; }
-          // 必须是图片：超分端点只发图，不能变成任意文件发送通道。
-          const sniffed = sniffImageMime(buf);
-          if (!sniffed) { sendJson({ ok: false, error: 'data 不是可识别的图片格式' }, 400); return; }
-          try {
-            const st = getSocialV2State(key);
-            const gate = imageSendAllowed(key);
-            if (!gate.ok) { sendJson({ ok: false, error: gate.error }, 429); return; }
-            const sent = await onebotSendImageFile(key, buf, { label: '［超分］' });
-            const now = Date.now();
-            const times = (imageSendTimes.get(key) ?? []).filter((t) => now - t < 3600000);
-            times.push(now);
-            imageSendTimes.set(key, times);
-            st.lastActionAt = now;
-            saveSocialV2State();
-            // 说明文字可选：先说图再补一句（分两条发，避免图配长文被截断）
-            if (caption) {
-              await sendToQQ(key, caption).catch((e) => log(`超分回传附言发送失败 ${key}: ${e?.message ?? e}`));
-            }
-            log(`[超分] 已回传图片到 ${key}（${(buf.length / 1024).toFixed(0)}KB）`);
-            sendJson({ ok: true, key, messageId: sent?.message_id ?? null, bytes: buf.length, mimeType: sniffed });
-          } catch (error) {
-            log(`超分回传失败 ${key}: ${error?.message ?? error}`);
-            sendJson({ ok: false, error: `发送失败：${error?.message ?? error}` }, 500);
-          }
-          return;
-        }
-
-        // ── 统一发送端点（MCP 旧发送工具也走这里） ───────────────────────────
-        if (req.method === 'POST' && (url.pathname === '/api/send/group' || url.pathname === '/api/send/private' || url.pathname === '/api/send/reply')) {
-          const body = await readBody();
-          const token = String(body.token ?? '').trim();
-          const isPrivate = url.pathname === '/api/send/private';
-          const isReply = url.pathname === '/api/send/reply';
-          const targetId = isPrivate ? String(body.userId ?? '').trim() : String(body.groupId ?? '').trim();
-          const message = stripLeadingMetaMarker(unquoteJsonString(String(body.message ?? '').trim()));
-          const replyToMessageId = isReply ? body.replyToMessageId : body.replyToMessageId;
-          const atUserId = body.atUserId ?? null;
-          const key = isPrivate ? `private:${targetId}` : `group:${targetId}`;
-          // 安全边界：发送工具只允许在 closed-agent（管理员私聊）或 reserved2（二代 AI 带会话令牌）下使用；
-          // chat/reserved 的自动转发已覆盖正常回复，MCP 发送工具不应成为 prompt injection 的越权出口。
-          if (currentMode === 'chat' || currentMode === 'reserved') {
-            sendJson({ ok: false, error: '发送工具仅限 closed-agent / reserved2 模式使用' }, 403);
-            return;
-          }
-          if (socialV2.paused && token) {
-            sendJson({ ok: false, error: 'AI 已暂停，当前不允许执行发送工具' }, 403);
-            return;
-          }
-          if (!targetId || !message) { sendJson({ ok: false, error: '目标 id 和 message 不能为空' }, 400); return; }
-          if (isPrivate && atUserId) { sendJson({ ok: false, error: '私聊不需要 @' }, 400); return; }
-          if (isReply && (replyToMessageId === undefined || replyToMessageId === null || String(replyToMessageId).trim() === '')) {
-            sendJson({ ok: false, error: 'replyToMessageId 不能为空' }, 400);
-            return;
-          }
-          if (currentMode === 'reserved2' && !token) { sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403); return; }
-          if (token && !agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          const flag = isPrivate ? 'sendPrivate' : (isReply ? 'reply' : 'sendGroup');
-          if (token && !v2ToolEnabled(flag)) { sendJson({ ok: false, error: `工具未启用：${flag}` }, 403); return; }
-          if (shouldBlockSilentReply(key)) {
-            sendJson({ ok: false, error: '静默模式已开启，当前不允许发送' }, 403);
-            return;
-          }
-          const keyMatch = /^(group|private):(\d+)$/.exec(key);
-          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式无效' }, 400); return; }
-          const kind = keyMatch[1];
-          const id = Number(keyMatch[2]);
-          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
-            sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403);
-            return;
-          }
-          if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '' && !isSymbolicReplyRef(replyToMessageId) && !/^-?[1-9]\d*$/.test(String(replyToMessageId).trim())) {
-            sendJson({ ok: false, error: 'replyToMessageId 必须是非零整数（消息 id 可能为负数），或传 latest/上一条 表示引用最近一条别人的消息' }, 400);
-            return;
-          }
-          let quotedInfo = null;
-          let actualReplyToMessageId = replyToMessageId;
-          if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '') {
-            const stForReply = getSocialV2State(key);
-            const resolved = await resolveReplyTargetV2(stForReply, kind, id, String(replyToMessageId).trim());
-            if (!resolved) {
-              sendJson({ ok: false, error: '无法解析被引用消息，请确认 message id 正确且属于当前会话（可用 qq_get_message_detail 查看）' }, 400);
-              return;
-            }
-            quotedInfo = resolved.info;
-            actualReplyToMessageId = resolved.messageId;
-          }
-          const sendCfg = cfg.socialV2?.send ?? {};
-          const maxChars = Math.max(1, Number(sendCfg.maxMessageChars) || 500);
-          if (message.length > maxChars) { sendJson({ ok: false, error: `单条消息不能超过 ${maxChars} 字` }, 400); return; }
-          if (SENSITIVE_RE.test(message)) { sendJson({ ok: false, error: '消息含敏感信息，已阻止发送' }, 403); return; }
-          try {
-            const st = getSocialV2State(key);
-            const now = Date.now();
-            const maxPerMinute = Number(sendCfg.maxSendPerMinute) || 0;
-            const maxPerHour = Number(sendCfg.maxSendPerHour) || 0;
-            const recentMinute = (st.sendTimes || []).filter((t) => now - t < 60000).length;
-            const recentHour = (st.sendTimes || []).filter((t) => now - t < 3600000).length;
-            if ((maxPerMinute > 0 && recentMinute + 1 > maxPerMinute) || (maxPerHour > 0 && recentHour + 1 > maxPerHour)) {
-              sendJson({ ok: false, error: '发送频率超限，请稍后再试' }, 429);
-              return;
-            }
-            st.sendTimes.push(now);
-            if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
-            const sentMessages = await sendMessagesV2(key, [message], [], actualReplyToMessageId, atUserId, { quoted: quotedInfo });
-            recordSentMessagesV2(key, sentMessages);
-            st.lastAiReplyAt = now;
-            st.lastActionAt = now;
-            st.wakeConfig.noActionCount = 0;
-            // 已回复的那条立即从未读移除：与它对应的请求已经处理完了，
-            // 留着只会让本轮/下一轮又把同一条当待办重答一次（实测重复回答 3~4 次）。
-            // 只在**真的发出去了**之后才移除，发送失败则保留（下次还能补）。
-            if (sentMessages.length > 0 && quotedInfo?.messageId != null) {
-              const before = st.unread.length;
-              st.unread = st.unread.filter((m) => String(m?.messageId ?? '') !== String(quotedInfo.messageId));
-              if (st.unread.length !== before) {
-                log(`[send] ${key} 已回复 seq 对应消息，从待回复列表移除 1 条（余 ${st.unread.length}）`);
-              }
-            }
-            if (sentMessages.length > 0 && quotedInfo?.messageId != null) {
-              const targetEntry = st.recentMessages.find((m) => m && String(m.messageId) === String(quotedInfo.messageId));
-              const targetSeq = Number(quotedInfo.seq) || Number(targetEntry?.seq) || 0;
-              if (targetSeq) {
-                const set = new Set((Array.isArray(st.answeredSeqs) ? st.answeredSeqs : []).map(Number).filter(Number.isFinite));
-                set.add(targetSeq);
-                st.answeredSeqs = [...set].slice(-200);
-              }
-            }
-            saveSocialV2State();
-            log(`[send] ${url.pathname} ${key}: 成功 ${sentMessages.length}/1 条`);
-            appendActivity(`${key} [send] 成功 ${sentMessages.length}/1 条：${message.slice(0, 80)}`);
-            if (sentMessages.length > 0) scheduleReplyCheckV2(key);
-            sendJson({ ok: true, key, sent: sentMessages.length, failed: sentMessages.length ? 0 : 1, quoted: quotedInfo });
-          } catch (error) {
-            if (error?.sent?.length) {
-              recordSentMessagesV2(key, error.sent);
-              log(`[send] ${url.pathname} ${key} 部分成功 ${error.sent.length}/1 条，已记录已发消息`);
-            }
-            // 失败/未发出的消息回滚预占的发送额度，避免假 429。
-            const sentCount = Array.isArray(error?.sent) ? error.sent.length : 0;
-            const failedCount = Math.max(0, 1 - sentCount);
-            for (let i = 0; i < failedCount; i++) {
-              const idx = st.sendTimes.indexOf(now);
-              if (idx >= 0) st.sendTimes.splice(idx, 1);
-            }
-            if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
-            saveSocialV2State();
-            sendJson({ ok: false, error: error?.message ?? String(error) }, 500);
-          }
-          return;
-        }
-        // ── 清除上下文 / 清空工作区 ──────────────────────────────────────────
-        if (req.method === 'POST' && url.pathname === '/api/session/reset') {
-          const body = await readBody();
-          const key = String(body.key ?? '');
-          if (!key || !state.sessions[key]) { sendJson({ ok: false, error: '会话不存在' }, 404); return; }
-          sessionEpoch++;
-          const oldSessionId = state.sessions[key];
-          delete state.sessions[key];
-          reverse.delete(oldSessionId);
-          collectors.delete(oldSessionId);
-          sendToolSucceededSessions.delete(oldSessionId);
-          pendingSendToolCalls.delete(oldSessionId);
-          v2TurnStartAt.delete(oldSessionId);
-          toolCallNames.delete(oldSessionId);
-          const pe = pending.get(key);
-          if (pe) {
-            clearTimeout(pe.timer);
-            cancelPendingEntry(pe).catch(() => {});
-          }
-          pending.delete(key);
-          queued.delete(key);
-          queuedHintAt.delete(key);
-          sessionPromises.delete(key);
-          drainPromptQueue(key, '会话已重置');
-          social.recentMessages.delete(key);
-          messageMediaStore.delete(key);
-          social.pendingSummaries.delete(key);
-          social.states.delete(key);
-          social.silentContext.delete(key);
-          social.silentTurns.delete(oldSessionId);
-          social.exitingSessions.delete(oldSessionId);
-          slangWindows.delete(key);
-          slangExtractionCooldowns.delete(key);
-          slangSubmitTimes.delete(key);
-          cancelSocialTimers(key);
-          clearSocialV2Timers(key);
-          pendingWakeKeys.delete(key);
-          wakeConfigUpdatedKeys.delete(key);
-          markReadCalledKeys.delete(key);
-          wakeConfigMissCount.delete(key);
-          const removedV2 = socialV2.conversations.get(key);
-          if (removedV2?.agentToken) KNOWN_AGENT_TOKENS.delete(removedV2.agentToken);
-          socialV2.conversations.delete(key);
-          seenForwardIds.delete(key);
-          saveSocialV2State();
-          saveState();
-          try { await api.workspace.archiveSession({ sessionId: oldSessionId }); } catch {}
-          log(`控制台：已清除会话上下文 ${key}（旧会话 ${oldSessionId} 已归档）`);
-          sendJson({ ok: true, key, archived: oldSessionId });
-          return;
-        }
-        if (req.method === 'POST' && url.pathname === '/api/workspace/reset') {
-          sessionEpoch++;
-          let archivedCount = 0;
-          try {
-            const ws = unwrap(await api.workspace.list({}), 'workspace.list');
-            const qq = ws.items.find((w) => w.title === cfg.workspaceTitle);
-            if (qq) {
-              for (const sid of qq.sessionIds) {
-                try { await api.workspace.archiveSession({ sessionId: sid }); archivedCount += 1; } catch {}
-              }
-              try { await api.workspace.delete({ workspaceId: qq.workspaceId }); } catch {}
-            }
-          } catch {}
-          for (const entry of pending.values()) {
-            clearTimeout(entry.timer);
-            cancelPendingEntry(entry).catch(() => {});
-          }
-          pending.clear();
-          queued.clear();
-          queuedHintAt.clear();
-          sessionPromises.clear();
-          drainAllPromptQueues('工作区已清空');
-          social.states.clear();
-          social.recentMessages.clear();
-          messageMediaStore.clear();
-          seenForwardIds.clear();
-          social.pendingSummaries.clear();
-          social.silentContext.clear();
-          social.silentTurns.clear();
-          social.exitingSessions.clear();
-          slangWindows.clear();
-          slangExtractionCooldowns.clear();
-          slangSubmitTimes.clear();
-          cancelAllSocialTimers();
-          clearAllSocialV2Timers();
-          for (const st of socialV2.conversations.values()) {
-            if (st?.agentToken) KNOWN_AGENT_TOKENS.delete(st.agentToken);
-          }
-          socialV2.conversations.clear();
-          saveSocialV2State();
-          state.sessions = {};
-          reverse.clear();
-          collectors.clear();
-          sendToolSucceededSessions.clear();
-          pendingSendToolCalls.clear();
-          v2TurnStartAt.clear();
-          toolCallNames.clear();
-          saveState();
-          try { fs.writeFileSync(ACTIVITY_LOG, ''); } catch {}
-          log(`控制台：已清空 QQ 聊天工作区（归档 ${archivedCount} 个会话，映射与活动日志已清空）`);
-          sendJson({ ok: true, archivedCount });
-          return;
-        }
-        // ── 重启桥接（守护模式下 5 秒后自动拉起） ──────────────────────────────
-        if (req.method === 'POST' && url.pathname === '/api/restart') {
-          // 重启 = **自己拉一个新进程**，不能只 process.exit 等外部守护窗口。
-          //
-          // 2026-10-21 用户反馈「控制台的重启桥接按钮并没有重启的效果」。
-          // 实测日志：19:52:12 打出"控制台：重启桥接"后 exit(0)，到 19:53:06 才
-          // 出现新进程——中间空了 54 秒，而前端只轮询 30 秒就显示"桥接尚未恢复"。
-          // 根因不是按钮没发命令，而是**没有任何守护在跑**：`start.bat` 的死循环
-          // 只存在于手动双击启动的那个窗口里；用 nohup / 计划任务 / 别的方式拉起时，
-          // exit(0) 就是彻底停服。把"能不能起来"交给运气是不对的。
-          //
-          // 做法：detached 子进程 + stdio 忽略 + unref，父进程退出后子进程继续跑。
-          // 子进程等 800ms 再启动（给父进程释放 :3100 和锁文件的时间），
-          // 并通过 QQB_RESTARTED_BY 标记来源，便于日志区分"手动启动"与"自重启"。
-          // 子进程启动时会 acquireLock()：若父进程还没退干净，它会 exit(2) 自行放弃，
-          // 不会出现两个实例同时抢端口。
-          const logFile = path.join(STATE_DIR, 'bridge.log');
-          sendJson({ ok: true, message: '正在重启桥接（已安排自重启，约 3~5 秒恢复）…' });
-          setTimeout(async () => {
-            log('控制台：重启桥接（将以 detached 子进程自重启）');
-            let spawned = false;
-            try {
-              const { spawn } = await import('node:child_process');
-              const out = fs.openSync(logFile, 'a');
-              const child = spawn(process.execPath, [path.join(ROOT, 'src', 'bridge.js')], {
-                cwd: ROOT,
-                detached: true,
-                stdio: ['ignore', out, out],
-                windowsHide: true,
-                env: { ...process.env, QQB_RESTARTED_BY: 'console' }
-              });
-              child.unref();
-              spawned = true;
-            } catch (error) {
-              log(`重启失败：无法拉起新进程（${error?.message ?? error}）；若由守护脚本启动，会由它恢复`);
-            }
-            releaseLock();
-            process.exit(spawned ? 0 : 1);
-          }, 500);
-          return;
-        }
-        sendJson({ ok: false, error: 'not found' }, 404);
-      } catch (error) {
-        const status = Number(error?.statusCode) || 500;
-        sendJson({ ok: false, error: error?.message ?? String(error) }, status);
-      }
-    });
-    server.listen(port, '127.0.0.1', () => {
-      log(`本地控制台已启动：http://127.0.0.1:${port}`);
-    });
-    // 端口被占用说明已有实例在跑：以 exit 2 退出，守护脚本会识别为"已有实例"而不是无限重启
-    server.on('error', (error) => {
-      log(`控制台服务错误: ${error?.message ?? error}`);
-      if (error?.code === 'EADDRINUSE') {
-        console.error(`[bridge] 控制台端口 ${port} 已被占用（可能已有实例在运行），退出。`);
-        process.exit(2);
-      }
-      process.exit(1);
-    });
-    return server;
-  }
+  
 
   // 会话代际：reset/清空工作区时递增，防止在途 ensureSession 把旧会话"复活"
   let sessionEpoch = 0;
@@ -8918,7 +2519,7 @@ async function main() {
   const pending = new Map(); // key -> { kind, rpcId, sessionId, ... }
 
   // QQ 发送队列（顺序发送 + 间隔，避免触发频率限制）
-  let sendChain = Promise.resolve();
+  const sendQueue = createSendQueue();
   function redactKnownTokensOnly(text) {
     let s = String(text ?? '');
     for (const token of KNOWN_AGENT_TOKENS) {
@@ -9106,7 +2707,7 @@ async function main() {
         messages: sentText ? [sentText] : [],
         sessionId: extra.sessionId ?? ''
       });
-      // 私聊走同一个 sendChain，顺序不会被群消息插队；失败只记日志，不影响主流程。
+      // 私聊走本会话的发送队列，顺序不会被群消息插队；失败只记日志，不影响主流程。
       sendToQQ(`private:${String(cfg.ownerQQ)}`, report).catch(() => {});
     }
     return true;
@@ -9149,30 +2750,11 @@ async function main() {
       for (const k of ownerNotices.keys()) { ownerNotices.delete(k); if (ownerNotices.size <= 400) break; }
     }
     const report = buildOwnerNotice({ key, title, detail, at: now, extra, suppressed });
-    // 私聊走同一个 sendChain，顺序不会被群消息插队；失败只记日志，不影响主流程。
+    // 私聊走本会话的发送队列，顺序不会被群消息插队；失败只记日志，不影响主流程。
     sendToQQ(`private:${ownerQQ}`, report).catch(() => {});
     log(`[报错] 已私聊管理员：${title}（${key || '无会话'}）${suppressed ? `，含此前 ${suppressed} 次同类` : ''}`);
   }
 
-  function sendToQQ(key, msg) {
-    const safeMsg = redactKnownTokensOnly(msg);
-    const [kind, id] = key.split(':');
-    const parts = splitForQQ(safeMsg);
-    for (const part of parts) {
-      sendChain = sendChain
-        .then(async () => {
-          const sentData = kind === 'private'
-            ? await withTimeout(bot.sendPrivateMessage(Number(id), text(escapeCqText(part))), SEND_TIMEOUT_MS, `QQ发送 ${kind}:${id}`)
-            : await withTimeout(bot.sendGroupMessage(Number(id), text(escapeCqText(part))), SEND_TIMEOUT_MS, `QQ发送 ${kind}:${id}`);
-          recordSentMessage(key, sentData, part);
-        })
-        .catch((error) => log(`QQ 发送失败 (${key}):`, error?.message ?? error))
-        .then(() => sleep(cfg.sendDelayMs));
-    }
-    return sendChain;
-  }
-
-  // ── 真人式分条发送 ──────────────────────────────────────────────────────
   function singleLineForQQ(s) {
     return String(s ?? '')
       .replace(/\s*\n\s*/g, ' ')
@@ -9284,44 +2866,8 @@ async function main() {
     return { main: main.filter(Boolean), followUp: null };
   }
 
-  // 分条发送：与 sendToQQ 共用同一 sendChain，严格顺序；条间随机间隔，
+  // 分条发送：与 sendToQQ 共用本会话的发送队列，严格顺序；条间随机间隔，
   // 有概率使用长间隔（错落感）；最后一条后不再 sleep。
-  function sendBurstToQQ(key, messages, socialCfgOrMin, maybeMax) {
-    const [kind, id] = key.split(':');
-    let min, max, longProb = 0, longMin = 0, longMax = 0;
-    if (typeof socialCfgOrMin === 'object' && socialCfgOrMin !== null) {
-      const cfg = socialCfgOrMin;
-      min = Math.max(0, Number(cfg.burstIntervalMinMs) || 1000);
-      max = Math.max(min, Number(cfg.burstIntervalMaxMs) || min);
-      longProb = Math.min(1, Math.max(0, Number(cfg.longGapProbability) || 0));
-      longMin = Math.max(0, Number(cfg.longGapMinMs) || 8000);
-      longMax = Math.max(longMin, Number(cfg.longGapMaxMs) || longMin);
-    } else {
-      min = Math.max(0, Number(socialCfgOrMin) || 0);
-      max = Math.max(min, Number(maybeMax) || min);
-    }
-
-    const sent = [];
-    for (let i = 0; i < messages.length; i++) {
-      const msg = redactKnownTokensOnly(messages[i]);
-      const isLast = i === messages.length - 1;
-      sendChain = sendChain
-        .then(async () => {
-          if (kind === 'private') await withTimeout(bot.sendPrivateMessage(Number(id), text(escapeCqText(msg))), SEND_TIMEOUT_MS, `QQ发送 ${kind}:${id}`);
-          else await withTimeout(bot.sendGroupMessage(Number(id), text(escapeCqText(msg))), SEND_TIMEOUT_MS, `QQ发送 ${kind}:${id}`);
-          sent.push(msg);
-        })
-        .catch((error) => log(`QQ 发送失败 (${key}):`, error?.message ?? error));
-      if (!isLast) {
-        const useLong = longProb > 0 && Math.random() < longProb;
-        const delay = useLong ? randInt(longMin, longMax) : randInt(min, max);
-        sendChain = sendChain.then(() => sleep(delay));
-      }
-    }
-    return sendChain.then(() => sent);
-  }
-
-
   // ── 已发消息登记（供管理员 /recall 撤回）────────────────────────────────
   // 四条发送通道（onebotSend 文本 / sendToQQ 系统提示 / 表情 / 图库）成功后都登记
   // OneBot 返回的 message_id，按会话保留最近 20 条。进程重启后记录清空（可接受：
@@ -9690,7 +3236,7 @@ async function main() {
     emojiCatalogCache = null;
     try {
       const p = cfg.socialV2?.emojiReact?.catalogPath
-        || path.join(cfg.snowluma?.homeDir || process.env.SNOWLUMA_DIR || path.join(os.homedir(), 'SnowLuma'), 'data', 'sys-face-catalog.json');
+        || (cfg.snowluma?.homeDir ? path.join(cfg.snowluma.homeDir, 'data', 'sys-face-catalog.json') : '');
       const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
       const ids = new Set();
       for (const pack of raw.packs ?? []) {
@@ -10170,11 +3716,7 @@ async function main() {
   }
 
   function mediaHintFor(key, messageRef, mediaList) {
-    if (!Array.isArray(mediaList) || mediaList.length === 0 || !messageRef) return '';
-    if (currentMode === 'reserved2') {
-      return `\n【图片/表情】本条消息包含 ${mediaList.length} 个图片/表情（消息ID=${messageRef}）。如需要查看/识别，请调用 mcp__snowluma__qq_get_message_images，参数 key="${key}", messageId="${messageRef}"。`;
-    }
-    return `\n【图片/表情】本条消息包含 ${mediaList.length} 个图片/表情（消息ID=${messageRef}）。`;
+    return buildMediaHint({ mode: currentMode, key, messageRef, mediaList });
   }
 
   function findMessageMedia(key, ref) {
@@ -10304,10 +3846,17 @@ async function main() {
       // 极端情况下（拿不到 sessionId / 没有回合标记）退回 90 秒窗口兜底，
       // 覆盖"模型连续调用但回合标记已清理"的间隙。
       const sid = state.sessions[key];
+      const currentTurn = sid ? currentTurnBySession.get(sid) : null;
+      const turnId = currentTurn?.turnId || '';
       const turnStart = sid ? Number(v2TurnStartAt.get(sid)) || 0 : 0;
-      const lastAutoAtTurn = sid ? Number(autoAtTurnDone.get(sid)) || 0 : 0;
+      const lastAutoAtTurn = sid ? Number(autoAtTurnDone.get(turnId || sid)) || 0 : 0;
       if (sid) {
-        if (turnStart > 0) {
+        if (turnId) {
+          if (lastAutoAtTurn > 0) {
+            log(`[自动@] ${key} 跳过：本回合已 @ 过（回多条只在第一条点名）`);
+            return null;
+          }
+        } else if (turnStart > 0) {
           if (lastAutoAtTurn >= turnStart) {
             log(`[自动@] ${key} 跳过：本回合已 @ 过（回多条只在第一条点名）`);
             return null;
@@ -10356,7 +3905,7 @@ async function main() {
       // 记「本回合已 @ 过」：同一回合后续的多次发送不再点名（见上面的说明）。
       // 只放内存：回合标记本身是进程内状态，重启后归零也无害。
       if (sid) {
-        autoAtTurnDone.set(sid, now);
+        autoAtTurnDone.set(turnId || sid, now);
         // 有界：会话不多，但避免长期运行无限增长
         if (autoAtTurnDone.size > 500) {
           const oldest = autoAtTurnDone.keys().next().value;
@@ -10529,104 +4078,6 @@ async function main() {
     return { text: msg, history: hist, mood: moodOfText(msg) || '' };
   }
 
-  /**
-   * 把一条文本回复改成语音发出去。
-   *
-   * 失败**必须静默回退成文字**——语音是可选的表达方式，
-   * 不能因为 TTS 出问题就让这条回复凭空消失（那才是真正的"不理人"）。
-   */
-  async function sendAsVoice(key, text, plan) {
-    const [kind, id] = key.split(':');
-    try {
-      // refMode 每次现读配置：换成"固定某条参考"即时生效，不必重启；
-      // 音色/权重才是启动参数（需重启）。
-      const fixedRef = String(cfg.socialV2?.tts?.refMode || '').trim();
-      const r = await ttsEngine.speak(text, {
-        mood: plan?.mood,
-        refId: fixedRef && fixedRef !== 'auto' ? fixedRef : '',
-        params: ttsSpeechParams()
-      });
-      if (!r.ok) {
-        log(`[TTS] 合成失败，改发文字：${r.error}`);
-        return { ok: false, reason: r.error };
-      }
-      await onebotSendVoiceFile(key, r.file, { text });
-      const st = getSocialV2State(key);
-      st.ttsTimes = [...(plan?.history ?? []), Date.now()].slice(-200);
-      st.lastTtsAt = Date.now();
-      saveSocialV2State();
-      const refTag = r.refMood ? `，情绪=${r.refMood}/${r.refId}` : '';
-      log(`[TTS] 已发语音（${r.cached ? '缓存' : `${r.synthSec ?? '?'}s 合成`}，${r.durSec}s，${text.length} 字${refTag}）→ ${key}`);
-      appendActivity(`${key} [TTS] 发了一条语音（${r.durSec}s）`);
-      return { ok: true, durSec: r.durSec, cached: !!r.cached, file: r.file };
-    } catch (error) {
-      log(`[TTS] 发送语音失败，改发文字：${error?.message ?? error}`);
-      return { ok: false, reason: String(error?.message ?? error) };
-    }
-  }
-
-  function sendMessagesV2(key, messages, delays, replyToMessageId, atUserId = null, options = {}) {
-    const [kind, id] = key.split(':');
-    const sent = [];
-    const failed = [];
-    // 概率 @：只作用于第一条（与 reply/at 段一致，后续气泡不再挂 @）。
-    const autoAt = (options.autoAt === false || replyToMessageId) ? null : planAutoAtV2(key, kind, messages, atUserId, options.quoted);
-    // 概率语音：同样只作用于"单条文本回复"。
-    // 注意它**不能与 @ 同时生效**：record 段不承载 at。
-    // 也不能和 reply 同气泡（QQ 客户端实测语音不渲染）。所以带 replyToMessageId
-    // 的回复仍然可以掷中语音，但语音单发；引用语义由端点内部保留。
-    const ttsPlan = (autoAt || atUserId) ? null : planTtsV2(key, messages, options);
-    if (ttsPlan) {
-      sendChain = sendChain.then(async () => {
-        const r = await sendAsVoice(key, ttsPlan.text, ttsPlan);
-        if (r.ok) { sent.push({ text: ttsPlan.text, isVoice: true }); return; }
-        // 回退：语音没发成，退回普通文字发送（下面这段与常规路径一致）
-        try {
-          await onebotSend(kind, id, ttsPlan.text, replyToMessageId, null);
-          sent.push(ttsPlan.text);
-        } catch (error) {
-          log(`QQ 发送失败 (${key}):`, error?.message ?? error);
-          failed.push(error);
-        }
-      });
-      return sendChain.then(() => {
-        if (failed.length > 0) {
-          const err = new Error(`QQ 发送失败 ${failed.length}/1 条：${failed[0]?.message ?? '未知错误'}`);
-          err.sent = sent.slice();
-          throw err;
-        }
-        return sent;
-      });
-    }
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      const useReply = i === 0 ? replyToMessageId : null;
-      // 模型自己传了 atUserId 时用它；否则用桥接掷出的 autoAt（仅第一条）。
-      const useAt = i === 0 ? (atUserId ?? autoAt?.userId ?? null) : null;
-      sendChain = sendChain
-        .then(async () => {
-          await onebotSend(kind, id, msg, useReply, useAt);
-          sent.push(msg);
-        })
-        .catch((error) => {
-          log(`QQ 发送失败 (${key}):`, error?.message ?? error);
-          failed.push(error);
-        });
-      if (i < delays.length) {
-        const d = delays[i];
-        sendChain = sendChain.then(() => sleep(d));
-      }
-    }
-    return sendChain.then(() => {
-      if (failed.length > 0) {
-        const err = new Error(`QQ 发送失败 ${failed.length}/${messages.length} 条：${failed[0]?.message ?? '未知错误'}`);
-        err.sent = sent.slice();
-        throw err;
-      }
-      return sent;
-    });
-  }
-
   // 审计范围：closed-agent 仅对 owner 私聊跳过；其余模式/会话一律审计
   function shouldAuditKey(key) {
     if (currentMode === 'closed-agent') {
@@ -10686,15 +4137,30 @@ async function main() {
   async function ensureSession(key) {
     const epoch = sessionEpoch;
     const existing = state.sessions[key];
+    const desiredMode = currentMode;
+    const desiredPreset = modePreset(key, desiredMode, cfg) ?? '';
     if (existing) {
       // reset/清空工作区期间旧映射可能尚未清理；发现代际不匹配必须丢弃旧会话，防止复活。
       if (epoch !== sessionEpoch) {
+        sessionHistory.record(existing, key, 'reset');
         delete state.sessions[key];
+        if (state.sessionMeta) delete state.sessionMeta[key];
         if (reverse.get(existing) === key) reverse.delete(existing);
         try { await api.workspace.archiveSession({ sessionId: existing }); } catch {}
       } else {
-        await ensureVisionModel(existing);
-        return existing;
+        const meta = state.sessionMeta?.[key];
+        if (needsNewSession(meta, { mode: desiredMode, preset: desiredPreset })) {
+          log(`[会话] ${key} 模式/预设变化 ${meta?.mode || '?'}/${meta?.preset || '默认'} → ${desiredMode}/${desiredPreset || '默认'}，重建会话`);
+          await retireSessionForModeChange(key, existing, meta, { mode: desiredMode, preset: desiredPreset });
+        } else {
+          if (!meta) {
+            state.sessionMeta[key] = { mode: desiredMode, preset: desiredPreset, at: Date.now() };
+            saveState();
+            log(`[会话] ${key} 缺少模式元数据，按当前模式接管（${desiredMode}/${desiredPreset || '默认'}）`);
+          }
+          await ensureVisionModel(existing);
+          return existing;
+        }
       }
     }
     if (sessionPromises.has(key)) return sessionPromises.get(key);
@@ -10732,7 +4198,13 @@ async function main() {
         throw new Error('会话创建期间已重置，丢弃新会话');
       }
       state.sessions[key] = sessionId;
+      state.sessionMeta[key] = {
+        mode: currentMode,
+        preset: modePreset(key, currentMode, cfg) ?? '',
+        at: Date.now()
+      };
       reverse.set(sessionId, key);
+      sessionHistory.record(sessionId, key, 'create');
       saveState();
       await ensureVisionModel(sessionId);
       log(`新会话 ${key} -> ${sessionId}（模式 ${currentMode}，preset: ${modePreset(key, currentMode, cfg) ?? '默认'}）`);
@@ -10752,6 +4224,8 @@ async function main() {
     if (min > max) [min, max] = [max, min];
     return Math.floor(min + Math.random() * (max - min + 1));
   };
+
+
   let selfNickname = 'deepseek'; // 机器人昵称（启动时从网关获取，识别"被提到"用）
   let selfQQ = '';               // 机器人自身 QQ（启动时获取；好友列表里剔除自己用）
   // 账号昵称的原始大小写。selfNickname 为了旧的宽松比较被转成了小写，
@@ -10759,7 +4233,7 @@ async function main() {
   let selfDisplayName = '';
   // 机器人在**每个群**的群名片。@ 时 QQ 显示的是群名片，不是账号昵称。
   //
-  // 2026-10-22 事故（group:100001005）：账号昵称是 `dsh`，群名片是 `?！哦鲸鲸  ? !`，
+  // 2026-10-22 事故（group:100002007）：账号昵称是 `dsh`，群名片是 `?！哦鲸鲸  ? !`，
   // 而别名表只放了 `dsh`，于是所有 `@?！哦鲸鲸  ? !` 都不算"在叫它"，
   // 自动@ 退化成模糊字面匹配，把票投给了只顺口说了句「大肥鱼可爱」的人。
   const selfCardCache = new Map(); // groupId -> { card, at }
@@ -10795,7 +4269,7 @@ async function main() {
   // primary = 真正的名字（角色名/账号昵称/群名片），匹配时可以从正文里剔除；
   // keywords = 唤醒关键词，可能是 DS/R1 这类短词，只剔除 `@关键词` 写法。
   function botAliasNamesV2(key, st) {
-    const role = readRoleState().role;
+    const role = roleFor(key);
     const primary = [...new Set([
       selfCardOf(key),
       selfDisplayName,
@@ -10873,10 +4347,23 @@ async function main() {
         log(`[上下文] 获取QQ昵称失败（继续用旧缓存）：${error?.message ?? error}`);
       }
       // 非好友私聊：好友列表里没有，逐个查陌生人资料；失败就保留号码。
-      const missing = [...socialV2.conversations.keys()]
-        .filter((k) => k.startsWith('private:'))
-        .map((k) => k.slice('private:'.length))
-        .filter((uid) => uid && !next.privates.has(uid));
+      // 白名单/管理员里也可能有非好友 QQ，一并查昵称（控制台 10 号卡片要显示）。
+      const extraPrivateIds = [
+        ...(Array.isArray(cfg.allow?.private) ? cfg.allow.private : []),
+        ...(Array.isArray(cfg.deny?.private) ? cfg.deny.private : []),
+        cfg.ownerQQ,
+      ].map((x) => String(x ?? '').trim()).filter(Boolean);
+      const missing = [...new Set([
+        ...[...socialV2.conversations.keys()]
+          .filter((k) => k.startsWith('private:'))
+          .map((k) => k.slice('private:'.length)),
+        // 历史会话可能已不在 socialV2.conversations 里，但 /api/sessions 仍会列出；
+        // 一并查昵称，避免会话映射卡只显示 QQ 号。
+        ...Object.keys(state.sessions ?? {})
+          .filter((k) => k.startsWith('private:'))
+          .map((k) => k.slice('private:'.length)),
+        ...extraPrivateIds,
+      ])].filter((uid) => uid && !next.privates.has(uid));
       if (missing.length && typeof bot.getStrangerInfo === 'function') {
         await Promise.all(missing.map(async (uid) => {
           try {
@@ -10909,6 +4396,102 @@ async function main() {
     return { ...DEFAULT_CONTEXT_MEMORY, ...(cfg.socialV2?.contextMemory || {}) };
   }
 
+  // 跨会话人物记忆配置：默认开启（2026-10-25 用户选择），但控制台可随时关闭。
+  function sharedCfg() {
+    return normalizeSharedMemoryConfig(cfg.socialV2?.sharedMemory || {});
+  }
+
+  function gapNoticeCfg() {
+    return normalizeGapNoticeConfig(cfg.socialV2?.gapNotice || {});
+  }
+
+  // Phase 3 P0：上下文检索索引。按 journal 字节数 + episode 最后时间做轻量缓存，
+  // 新消息落盘或新 episode 生成后会自动重建；纯内存，不引入外部依赖。
+  const recallIndexCache = new Map(); // key -> { sig, index }
+  function getRecallIndexV2(key) {
+    const js = journalStats(STATE_DIR, key);
+    const episodes = loadEpisodes(STATE_DIR, key, 300);
+    const sig = `${js.bytes}:${episodes.length}:${Number(episodes.at(-1)?.createdAt) || 0}`;
+    const hit = recallIndexCache.get(key);
+    if (hit && hit.sig === sig) return hit.index;
+    const messages = loadContextMessages(STATE_DIR, key, { limit: 3000 });
+    const index = buildMemoryIndex({ messages, episodes });
+    recallIndexCache.set(key, { sig, index });
+    if (recallIndexCache.size > 100) {
+      const [oldest] = recallIndexCache.keys();
+      if (oldest) recallIndexCache.delete(oldest);
+    }
+    return index;
+  }
+
+  function recallMemoryV2(key, query, opts = {}) {
+    return searchMemory(getRecallIndexV2(key), query, opts);
+  }
+
+  function clearRecallIndex(key) {
+    if (key) recallIndexCache.delete(key);
+    else recallIndexCache.clear();
+  }
+
+  /** 从当前未读/待回复消息生成检索查询，结果注入唤醒提示，作为固定记忆包的补充。 */
+  function buildRecallLineV2(key, st) {
+    try {
+      const unread = Array.isArray(st?.unread) ? st.unread : [];
+      const current = unread.filter((m) => m && !m.isSelf).slice(-3).map((m) => String(m.text || m.plain || '').trim()).filter(Boolean);
+      const pendingText = String(st?.pendingWakeMessage?.text || st?.pendingWakeMessage?.plain || '').trim();
+      const query = [pendingText, ...current].filter(Boolean).join('\n').slice(0, 1200);
+      if (!query) return '';
+      const excludeSeqs = [
+        ...unread.map((m) => Number(m?.seq)).filter(Number.isFinite),
+        Number(st?.pendingWakeMessage?.seq) || 0
+      ].filter(Boolean);
+      const started = Date.now();
+      const results = recallMemoryV2(key, query, {
+        limit: 4,
+        minScore: 0.35,
+        excludeSeqs
+      });
+      const elapsed = Date.now() - started;
+      const line = formatRecallResults(results, { budgetChars: 620 });
+      const m = contextMetrics.get(key) || {};
+      m.lastRecallChars = line.length;
+      m.lastRecallQuery = query.slice(0, 200);
+      m.lastRecallSeqs = results.map((r) => r.seq).filter(Boolean);
+      m.lastRecallMs = elapsed;
+      m.lastRecallHits = results.length;
+      m.lastRecallAt = Date.now();
+      m.recallCalls = (Number(m.recallCalls) || 0) + 1;
+      m.recallHitCalls = (Number(m.recallHitCalls) || 0) + (results.length ? 1 : 0);
+      m.recallMsTotal = (Number(m.recallMsTotal) || 0) + elapsed;
+      contextMetrics.set(key, m);
+      try {
+        appendRecallAudit(STATE_DIR, key, {
+          at: Date.now(),
+          query: query.slice(0, 200),
+          ms: elapsed,
+          hits: results.length,
+          chars: line.length,
+          results: results.map((r) => ({
+            kind: r.kind,
+            seq: r.seq,
+            time: r.time,
+            sender: r.sender,
+            text: String(r.text || '').slice(0, 160),
+            score: r.score
+          }))
+        }, contextCfg().recallAuditKeep);
+      } catch (error) {
+        log(`[上下文] 写检索审计失败：${error?.message ?? error}`);
+      }
+      if (!line) return '';
+      return `${line}\n\n`;
+    } catch (error) {
+      log(`[上下文] 检索记忆失败：${error?.message ?? error}`);
+      return '';
+    }
+  }
+
+
   function ensureContextSummarizer() {
     if (contextSummarizer) return contextSummarizer;
     const c = contextCfg();
@@ -10919,7 +4502,8 @@ async function main() {
       apiKey: c.apiKey || process.env.LOCAL_MODEL_API_KEY || '',
       model: c.model,
       timeoutMs: c.timeoutMs,
-      log
+      log,
+      onUsage: (usage, meta) => recordSummarizerUsage(meta?.key, usage)
     });
     return contextSummarizer;
   }
@@ -11022,7 +4606,7 @@ async function main() {
         previousEpisode: last,
         maxChars: c.promptMaxChars
       });
-      let text = await summarizer(prompt);
+      let text = await summarizer(prompt, { key });
       let parsed = parseEpisode(text, { redact: redactSensitiveText });
       if (!parsed) {
         // 首次 JSON 失败时用更短的窗口重试一次：模型偶尔会先写很长的
@@ -11034,7 +4618,7 @@ async function main() {
             previousEpisode: last,
             maxChars: 3000
           });
-          text = await summarizer(shortPrompt);
+          text = await summarizer(shortPrompt, { key });
           parsed = parseEpisode(text, { redact: redactSensitiveText });
         } catch (retryError) {
           log(`[上下文] ${key} 摘要重试失败：${retryError?.message ?? retryError}`);
@@ -11060,14 +4644,43 @@ async function main() {
       };
       appendEpisode(STATE_DIR, key, ep, c.episodeKeep);
       // Phase 2：把人物/事实/线索合并进长期记忆。
+      let mergedMemory = null;
       try {
-        mergeEpisodeToMemory(STATE_DIR, key, ep, {
+        mergedMemory = mergeEpisodeToMemory(STATE_DIR, key, ep, {
           keepPeople: c.longTermKeepPeople,
           keepFacts: c.longTermKeepFacts,
           keepThreads: c.longTermKeepThreads
         });
       } catch (error) {
         log(`[上下文] ${key} 长期记忆合并失败：${error?.message ?? error}`);
+      }
+      // P2：在本地长期记忆之后更新跨会话人物资料。只共享结构化偏好；
+      // 失败不影响 episode（共享层是增强，不是主链路）。
+      try {
+        // recentMessages 没有 userId，journal 有。dedupe 时 recent 先入 map，
+        // 可能把 journal 的 userId 盖掉，所以这里按 messageId/seq 反填一次。
+        const userByRef = new Map();
+        for (const m of journalPending) {
+          const ref = msgKey(m);
+          if (ref && m?.userId) userByRef.set(ref, String(m.userId));
+        }
+        const messagesForShared = (check.messages || []).map((m) => {
+          const ref = msgKey(m);
+          return { ...m, userId: m?.userId || userByRef.get(ref) || null };
+        });
+        const sharedResult = mergeEpisodeToSharedMemory(STATE_DIR, {
+          key,
+          episode: ep,
+          messages: messagesForShared,
+          localMemory: mergedMemory,
+          cfg: sharedCfg(),
+          now: ep.createdAt
+        });
+        if (sharedResult.changed) {
+          log(`[共享记忆] ${key} 更新：人物 ${sharedResult.people} / 偏好 ${sharedResult.traits}`);
+        }
+      } catch (error) {
+        log(`[共享记忆] ${key} 更新失败（不影响情节记忆）：${error?.message ?? error}`);
       }
       const m = contextMetrics.get(key) || {};
       m.lastEpisodeAt = ep.createdAt;
@@ -11089,9 +4702,32 @@ async function main() {
     }
   }
 
+  /** 全局积压快照：待总结消息总数 + episode 总数（控制台趋势用）。 */
+  function contextBacklogSnapshot() {
+    let pending = 0;
+    let episodes = 0;
+    let conversations = 0;
+    for (const [key, st] of socialV2.conversations.entries()) {
+      if (!/^(group|private):\d+$/.test(key)) continue;
+      const stats = contextStats(STATE_DIR, key);
+      pending += Number(countContextPendingV2(
+        key, st, Number(stats.lastEpisodeSeq) || 0, Number(stats.lastEpisodeEndAt) || 0
+      )) || 0;
+      episodes += Number(stats.episodes) || 0;
+      conversations += 1;
+    }
+    return { at: Date.now(), pending, episodes, conversations };
+  }
+
   /** 定时扫描所有会话；串行调用，避免同时打满网关。 */
   async function contextSweep() {
-    if (contextSweepRunning) return;
+    log('[上下文] 自动扫描触发');
+    // Token 熔断计数与上下文记忆是否启用无关：每 5 分钟顺手落盘/日切。
+    try { tokenFuse.sweep(); } catch (error) { log(`[Token熔断] 定时落盘失败：${error?.message ?? error}`); }
+    if (contextSweepRunning) {
+      log('[上下文] 扫描跳过：上一轮仍在运行');
+      return;
+    }
     const c = contextCfg();
     if (c.enabled === false) return;
     contextSweepRunning = true;
@@ -11109,6 +4745,17 @@ async function main() {
         const lastSeq = Number(stats.lastEpisodeSeq) || 0;
         const pending = countContextPendingV2(key, st, lastSeq, Number(stats.lastEpisodeEndAt) || 0);
         if (!pending) continue;
+        // 只把“本轮确实能生成”的会话放进候选。
+        // 旧逻辑把从未总结、但只有 5~14 条消息的私聊也按 lastEpisodeAt=0 排在最前，
+        // 每 5 分钟占满 6 个名额，makeEpisodeNow 又因 not-enough 直接返回——
+        // 结果活跃大群永远轮不到，memory.json / episodes 一直停在旧时间。
+        const every = Math.max(1, Number(c.episodeEveryMessages) || 40);
+        const idleMin = Math.max(1, Number(c.episodeIdleMinMessages) || 15);
+        const idleMs = Math.max(0, Number(c.episodeIdleMs) || 20 * 60 * 1000);
+        const idleReady = pending >= idleMin
+          && (Number(st.lastIncomingAt) || 0) > 0
+          && now - Number(st.lastIncomingAt) >= idleMs;
+        if (pending < every && !idleReady) continue;
         candidates.push({
           key,
           pending,
@@ -11122,10 +4769,30 @@ async function main() {
           || (b.lastIncomingAt - a.lastIncomingAt))
         .slice(0, maxRun)
         .map((x) => x.key);
+      const chunksPerKey = Math.max(1, Math.min(10, Number(c.sweepChunksPerKey) || 2));
+      const maxEpisodes = Math.max(1, Math.min(40, Number(c.sweepMaxEpisodesPerRun) || 12));
+      let made = 0;
+      log(`[上下文] 扫描：候选 ${candidates.length} 个，本轮处理 ${keys.length} 个（${keys.join('、') || '无'}），每会话最多 ${chunksPerKey} 段/总 ${maxEpisodes} 段`);
       for (const key of keys) {
-        await makeEpisodeNow(key);
+        for (let i = 0; i < chunksPerKey && made < maxEpisodes; i += 1) {
+          const r = await makeEpisodeNow(key);
+          if (!r?.ok) break;
+          made += 1;
+          await sleep(150);
+        }
+        if (made >= maxEpisodes) break;
         await sleep(300);
       }
+      try {
+        const snap = contextBacklogSnapshot();
+        appendBacklogSample(STATE_DIR, snap, c.backlogHistoryKeep);
+        log(`[上下文] 扫描完成：本轮生成 ${made} 条情节；积压快照 ${snap.pending} 条 / ${snap.conversations} 个会话`);
+      } catch (error) {
+        log(`[上下文] 积压快照失败：${error?.message ?? error}`);
+        log(`[上下文] 扫描完成：本轮生成 ${made} 条情节`);
+      }
+    } catch (error) {
+      log(`[上下文] 扫描失败：${error?.message ?? error}`);
     } finally {
       contextSweepRunning = false;
     }
@@ -11203,430 +4870,13 @@ async function main() {
   // - 只保留正整数 QQ 号（字符串形式），拒绝 null/对象/“null”/非法字符等脏数据；
   // - 去重并限制最多 20 个，避免唤醒名单无限膨胀/被恶意塞入异常值；
   // - undefined/null 都视为“不启用”（空数组）。
-  function normalizeSpeakerIdsV2(value) {
-    if (value === undefined || value === null) return [];
-    const rawList = Array.isArray(value) ? value : String(value).split(/[,，\s]+/);
-    const seen = new Set();
-    const clean = [];
-    for (const v of rawList) {
-      const s = String(v ?? '').trim();
-      if (!/^[1-9]\d*$/.test(s)) continue;
-      if (seen.has(s)) continue;
-      seen.add(s);
-      clean.push(s);
-      if (clean.length >= 20) break;
-    }
-    return clean;
-  }
-
-  function defaultWakeConfigV2() {
-    const w = cfg.socialV2?.wake ?? {};
-    const defaultMode = w.defaultMode === 'active' ? 'active' : 'diving';
-    const defaultInfinite = w.recommendedDefaultInfinite !== false;
-    const recMin = Number(w.recommendedSleepMinMs) || 300000;
-    const recMax = Number(w.recommendedSleepMaxMs) || 7200000;
-    let finiteMs = recMin + Math.random() * Math.max(0, recMax - recMin);
-    const hardMin = Math.max(0, Number(w.sleepMinMs) || 0);
-    const hardMax = Number(w.sleepMaxMs) || 0;
-    if (hardMin > 0 && finiteMs < hardMin) finiteMs = hardMin;
-    if (hardMax > 0 && finiteMs > hardMax) finiteMs = hardMax;
-    return {
-      mode: defaultMode,
-      infinite: defaultInfinite,
-      sleepUntil: defaultInfinite ? null : new Date(Date.now() + Math.round(finiteMs)).toISOString(),
-      triggers: {
-        atMention: w.recommendedAtMention !== false,
-        nameMention: w.recommendedNameMention !== false,
-        speakerIds: [],
-        keywords: Array.isArray(w.recommendedKeywords) ? w.recommendedKeywords.map(String) : [],
-        question: w.recommendedQuestion !== false,
-        poke: w.recommendedPoke !== false,
-        anyMessage: defaultMode === 'active',
-        probability: Math.min(1, Math.max(0, Number(w.recommendedProbability) || 0))
-      },
-      batchWindowMs: Math.max(1000, Number(w.batchWindowMs) || 8000),
-      lastWakeAt: 0,
-      wakeCount: 0,
-      noActionCount: 0,
-      confirmedAt: 0,
-      confirmedBy: 'default'
-    };
-  }
-
-  // 把“仍使用默认唤醒配置”的会话刷新为当前推荐/默认参数。
-  // 只有 confirmedBy === 'default' 的会话才会被刷新；AI 或管理员显式设置过的（set_wake_config / mark_read）不会被覆盖。
-  function refreshDefaultWakeConfigV2(st) {
-    if (!st || !st.wakeConfig) return false;
-    if (st.wakeConfig.confirmedBy !== 'default') return false;
-    const def = defaultWakeConfigV2();
-    const old = st.wakeConfig;
-    st.wakeConfig = {
-      ...def,
-      lastWakeAt: old.lastWakeAt || 0,
-      wakeCount: old.wakeCount || 0,
-      noActionCount: old.noActionCount || 0,
-      confirmedAt: old.confirmedAt || 0,
-      confirmedBy: 'default'
-    };
-    return true;
-  }
-
-  // 保存推荐/默认参数后，把所有仍使用默认配置的会话同步到新默认值。
-  function refreshAllDefaultWakeConfigsV2() {
-    let changed = false;
-    for (const st of socialV2.conversations.values()) {
-      if (refreshDefaultWakeConfigV2(st)) changed = true;
-    }
-    if (changed) saveSocialV2State();
-    return changed;
-  }
-
-  // 沉睡前强制观察窗口：防止 AI 聊两句就立刻潜水。
-  // 新规则：每次设置潜水/下一次唤醒前，AI 必须先进入一次“沉睡前观察”（qq_wait_for_messages(timeoutMs=preSleepWaitMs)）。
-  // - 观察期间没人说话 → 可以设置唤醒并沉睡（preSleepWaitSatisfiedAt）。
-  // - 观察期间有人发了新消息 → 等待工具会把新消息带回给 AI（preSleepWaitObservedAt）；
-  //   AI 看过新消息后若判断没必要参与，可以直接沉睡；若参与了（发送/拍一拍），则下次想睡需重新观察。
-  const EXPLICIT_END_RE = /(?:不聊了|不说了|晚安|睡了|先睡了|下了|先下了|拜拜|再见|走了|先走|撤了|去忙|忙了|下次再聊|下次聊|散了吧|结束|就到这|先这样|就这样吧|886|88|睡觉了|下班了|去洗澡|去吃饭了)/i;
-
-  function hasExplicitEndV2(st) {
-    const recent = Array.isArray(st?.recentMessages) ? st.recentMessages : [];
-    const last = [...recent].reverse().find((m) => m && !m.isSelf);
-    if (!last) return false;
-    return EXPLICIT_END_RE.test(String(last.tail || last.plain || last.text || ''));
-  }
-
-  function isSleepingConfigV2(wc) {
-    if (!wc) return false;
-    if (wc.mode === 'active' || wc.triggers?.anyMessage) return false;
-    return true; // diving 且不是 anyMessage 都视为“沉睡/潜水”，需要先观察
-  }
-
-  function preSleepWaitBlockedV2(st, key = '') {
-    if (!st) return false;
-    const w = cfg.socialV2?.wake ?? {};
-    if (w.preSleepWaitEnabled === false) return false;
-    if (hasExplicitEndV2(st)) return false;
-    const waitMs = Math.max(0, Number(w.preSleepWaitMs) || 300000);
-    const now = Date.now();
-    // 已经连续安静满观察窗口：可以直接设置潜水。
-    if ((st.lastIncomingAt || 0) && now - st.lastIncomingAt >= waitMs) return false;
-    // 已经完整等过观察窗口且之后没有新消息：放行。
-    if (st.preSleepWaitSatisfiedAt && (!st.lastIncomingAt || st.lastIncomingAt <= st.preSleepWaitSatisfiedAt)) return false;
-    // 已经做过一次沉睡前观察（可能等到了新消息并已把新消息返回给 AI），只要 AI 之后没有参与、也没有更新的消息，就允许直接沉睡。
-    if (st.preSleepWaitObservedAt && (!st.lastIncomingAt || st.lastIncomingAt <= st.preSleepWaitObservedAt)) return false;
-    // 活跃群死锁兜底：本回合已经发过言、且距最后一次发言已过 30 秒，就不再要求
-    // 连续 60 秒静默。否则群里一直有人说话 → 观察窗口永远重置 → 模型只能反复 wait，
-    // 单个回合拖到几十分钟（2026-10-23 group:100001005 实测 24 分钟）。
-    if (key) {
-      const sid = state.sessions[key];
-      const turnStart = sid ? (Number(v2TurnStartAt.get(sid)) || 0) : 0;
-      const lastReply = Number(st.lastAiReplyAt) || 0;
-      const graceMs = Math.max(0, Math.min(300000, Math.round(Number(w.preSleepReplyGraceMs) || 30000)));
-      if (turnStart && lastReply >= turnStart && now - lastReply >= graceMs) return false;
-    }
-    return true;
-  }
-
-  function computeWakeSafetyV2(wc) {
-    const tr = wc?.triggers || {};
-    const hard = wc?.mode === 'active' || tr.anyMessage || tr.atMention || tr.nameMention || tr.question || tr.poke ||
-      (Array.isArray(tr.keywords) && tr.keywords.length > 0) ||
-      normalizeSpeakerIdsV2(tr.speakerIds).length > 0;
-    const timed = !wc?.infinite && wc?.sleepUntil && Date.parse(wc.sleepUntil) > Date.now();
-    const soft = Number(tr.probability) > 0;
-    const guaranteed = hard || timed || soft;
-    const confirmedNum = Number(wc?.confirmedAt);
-    const stale = !wc?.confirmedAt || !Number.isFinite(confirmedNum) || Date.now() - confirmedNum > 24 * 60 * 60 * 1000;
-    return { hard, timed, soft, guaranteed, stale };
-  }
-
-  // 防“永眠”：检查当前 WakeConfig 是否至少有一个可触发唤醒的途径；没有则重置为默认配置。
-  // opts.skipSave=true 用于加载状态阶段，避免中途落盘覆盖尚未加载的会话。
-  function ensureWakeableV2(st, opts = {}) {
-    if (!st || !st.wakeConfig) return;
-    const key = opts.key || st.key;
-    const wc = st.wakeConfig;
-    if (!wc.triggers || typeof wc.triggers !== 'object') wc.triggers = {};
-    const tr = wc.triggers;
-    // 掉垃圾数据只留有效 QQ 号，避免“null”/对象等脏值被当成可唤醒条件绕过防永眠。
-    tr.speakerIds = normalizeSpeakerIdsV2(tr.speakerIds);
-    const timed = !wc.infinite && wc.sleepUntil && Number.isFinite(Date.parse(wc.sleepUntil)) && Date.parse(wc.sleepUntil) > Date.now();
-    const wakeable = wc.mode === 'active' || tr.anyMessage || tr.atMention || tr.nameMention || tr.poke ||
-      (Array.isArray(tr.keywords) && tr.keywords.length > 0) || tr.question || Number(tr.probability) > 0 ||
-      tr.speakerIds.length > 0 || timed;
-    if (!wakeable) {
-      if (st.sleepTimer) {
-        clearTimeout(st.sleepTimer);
-        st.sleepTimer = null;
-      }
-      st.wakeConfig = defaultWakeConfigV2();
-      if (!opts.skipSave) saveSocialV2State();
-      if (key) setupSleepTimerV2(key);
-      log(`[reserved2] 唤醒配置无任何触发条件，已重置为默认配置，避免永眠`);
-    }
-  }
-
-  function getSocialV2State(key) {
-    // 只允许内部约定的会话 key 格式，并统一成无前导零的正整数形式，防止同一会话分裂成多个状态。
-    const canonical = canonicalV2Key(key);
-    if (!canonical) {
-      const err = new Error(`无效的会话 key：${String(key ?? '')}`);
-      err.statusCode = 400;
-      throw err;
-    }
-    key = canonical;
-    let st = socialV2.conversations.get(key);
-    if (!st) {
-      st = {
-        wakeConfig: defaultWakeConfigV2(),
-        recentMessages: [],
-        unread: [],
-        lastWakeReason: '',
-        lastAiReplyAt: 0,
-        // 明确引用回复过的消息 seq。mark_read 只认这个集合，
-        // 不再按"回复时间晚于 @ 时间"推断——那会把同一批里没答的 @ 一起标掉。
-        answeredSeqs: [],
-        lastActionAt: 0,
-        agentToken: crypto.randomBytes(16).toString('hex'),
-        bootstrapSent: false,
-        wakeTimes: [],
-        sendTimes: [],
-        stickerCollectTimes: [],
-        crawlTimes: [],
-        stickerAddTimes: [],
-        pendingWakeTimer: null,
-        sleepTimer: null,
-        replyCheckTimer: null,
-        proactiveTimer: null,
-        lastIncomingAt: 0,
-        preSleepWaitSatisfiedAt: 0,
-        preSleepWaitObservedAt: 0,
-        preSleepWaitAccumMs: 0,
-        lastUnreadSeq: 0,
-        // 本轮唤醒的未读水位（唤醒时未读里最大的 seq）。mark_read 只清 ≤ 它的消息，
-        // 水位之后新到的不动。0 = 没有在途回合（如启动初期）。
-        wakeSeqAt: 0,
-        lastComplyRollAt: 0,
-        pendingComply: null,
-        complyTimes: [],
-        activeTopics: [],
-        pendingThoughts: [],
-        memberImpressions: {},
-        // 表情包主动要求的频率账（见 saveSocialV2State 里的说明）
-        lastStickerAt: 0,
-        recentStickers: [],
-        stickerNudgeTimes: []
-      };
-      KNOWN_AGENT_TOKENS.add(st.agentToken);
-      socialV2.conversations.set(key, st);
-      scheduleProactiveCheckV2(key);
-      setupSleepTimerV2(key);
-    }
-    return st;
-  }
-
-  // 注意：引用目标的解析由下面的 resolveReplyTargetV2(st, kind, convId, ref) 统一负责
-  //（含 seq→messageId 映射与归属校验）。**不要**在此处再定义一个同名函数——
-  // 函数声明提升会让后者覆盖前者，静默废掉原有的解析与校验（曾因此把发送链路打断）。
-
-  function loadSocialV2State() {
-    try {
-      const raw = readJsonSafe(SOCIAL_V2_FILE, null);
-      socialV2.paused = raw?.paused === true;
-      if (raw && typeof raw.conversations === 'object') {
-        const seenTokens = new Set();
-        for (const [key, val] of Object.entries(raw.conversations)) {
-          if (!val || typeof val !== 'object') continue;
-          if (!/^(group|private):\d+$/.test(key)) continue;
-          const defaultWc = defaultWakeConfigV2();
-          let agentToken = String(val.agentToken || crypto.randomBytes(16).toString('hex'));
-          if (!agentToken || seenTokens.has(agentToken)) {
-            agentToken = crypto.randomBytes(16).toString('hex');
-          }
-          seenTokens.add(agentToken);
-          const st = {
-            wakeConfig: {
-              ...defaultWc,
-              ...(val.wakeConfig ?? {}),
-              triggers: { ...defaultWc.triggers, ...((val.wakeConfig?.triggers) ?? {}) }
-            },
-            recentMessages: Array.isArray(val.recentMessages) ? val.recentMessages : [],
-            unread: Array.isArray(val.unread) ? val.unread : [],
-            lastWakeReason: String(val.lastWakeReason ?? ''),
-            lastAiReplyAt: Number(val.lastAiReplyAt) || 0,
-            answeredSeqs: Array.isArray(val.answeredSeqs)
-              ? val.answeredSeqs.map(Number).filter(Number.isFinite).slice(-200)
-              : [],
-            lastActionAt: Number(val.lastActionAt) || 0,
-            agentToken,
-            bootstrapSent: !!val.bootstrapSent,
-            wakeTimes: Array.isArray(val.wakeTimes) ? val.wakeTimes : [],
-            sendTimes: Array.isArray(val.sendTimes) ? val.sendTimes : [],
-            stickerCollectTimes: Array.isArray(val.stickerCollectTimes) ? val.stickerCollectTimes : [],
-            crawlTimes: Array.isArray(val.crawlTimes) ? val.crawlTimes : [],
-            stickerAddTimes: Array.isArray(val.stickerAddTimes) ? val.stickerAddTimes : [],
-            // 表情包主动要求的频率账（与 saveSocialV2State 的白名单成对出现：
-            // 只存不读 = 重启后限制失效；只读不存 = 一直为 0，等于没限制）
-            lastStickerAt: Number(val.lastStickerAt) || 0,
-            recentStickers: Array.isArray(val.recentStickers) ? val.recentStickers : [],
-            stickerNudgeTimes: Array.isArray(val.stickerNudgeTimes) ? val.stickerNudgeTimes : [],
-            pendingWakeMessage: (val.pendingWakeMessage && typeof val.pendingWakeMessage === 'object')
-              ? val.pendingWakeMessage
-              : null,
-            pendingWakeTimer: null,
-            sleepTimer: null,
-            replyCheckTimer: null,
-            proactiveTimer: null,
-            lastIncomingAt: Number(val.lastIncomingAt) || 0,
-            // 管理员身份判定依赖这两个字段（isOwnerTurn）。
-            // 原来**只存不读**：重启后 lastRequesterId 恒为空，管理员的所有
-            // 写操作（删表情等）都会被判成"不是管理员"——这本身就让人以为
-            // "删不掉"。现在补上读取，并加了 ownerSpokeAt 时间窗。
-            lastRequesterId: String(val.lastRequesterId || ''),
-            lastRequesterRole: String(val.lastRequesterRole || ''),
-            ownerSpokeAt: Number(val.ownerSpokeAt) || 0,
-            preSleepWaitSatisfiedAt: Number(val.preSleepWaitSatisfiedAt) || 0,
-            preSleepWaitObservedAt: Number(val.preSleepWaitObservedAt) || 0,
-            preSleepWaitAccumMs: Number(val.preSleepWaitAccumMs) || 0,
-            lastComplyRollAt: Number(val.lastComplyRollAt) || 0,
-            pendingComply: (val.pendingComply && typeof val.pendingComply === 'object') ? val.pendingComply : null,
-            complyTimes: Array.isArray(val.complyTimes) ? val.complyTimes : [],
-            lastUnreadSeq: Number(val.lastUnreadSeq) || 0,
-            wakeSeqAt: Number(val.wakeSeqAt) || 0,
-            activeTopics: Array.isArray(val.activeTopics) ? val.activeTopics : [],
-            pendingThoughts: Array.isArray(val.pendingThoughts) ? val.pendingThoughts : [],
-            memberImpressions: (() => {
-              const rawImp = (val.memberImpressions && typeof val.memberImpressions === 'object') ? val.memberImpressions : {};
-              const clean = {};
-              for (const [k, v] of Object.entries(rawImp)) {
-                if (['__proto__', 'constructor', 'prototype'].includes(k)) continue;
-                clean[k] = v;
-              }
-              return clean;
-            })()
-          };
-          // 旧状态没有 answeredSeqs：把“上次发过言之前”的未读视为历史已答，
-          // 避免升级后突然把所有旧 @ 都当成待回复；比 lastAiReplyAt 新的仍保持待答。
-          if (!Array.isArray(val.answeredSeqs)) {
-            st.answeredSeqs = (st.unread || [])
-              .filter((m) => m && !m.isSelf && Number(m.time) && st.lastAiReplyAt
-                && Number(m.time) <= st.lastAiReplyAt + 5000)
-              .map((m) => Number(m.seq))
-              .filter(Number.isFinite)
-              .slice(-200);
-          }
-          // 旧状态/异常状态里的指定成员名单也统一归一化，防止“null”/非法值污染。
-          if (st.wakeConfig?.triggers && typeof st.wakeConfig.triggers === 'object') {
-            st.wakeConfig.triggers.speakerIds = normalizeSpeakerIdsV2(st.wakeConfig.triggers.speakerIds);
-            if (key.startsWith('private:')) st.wakeConfig.triggers.speakerIds = [];
-          }
-          // 仍使用默认唤醒配置的会话，在重启加载时同步到当前推荐/默认参数。
-          refreshDefaultWakeConfigV2(st);
-          KNOWN_AGENT_TOKENS.add(st.agentToken);
-          socialV2.conversations.set(key, st);
-          // 重启后从已持久化的消息与 seenForwardIds 字段重建“本会话见过的 forward id”
-          {
-            const rebuilt = new Set();
-            if (Array.isArray(val.seenForwardIds)) {
-              for (const fid of val.seenForwardIds) {
-                const safe = sanitizeForwardId(fid);
-                if (safe) rebuilt.add(safe);
-              }
-            }
-            for (const m of [...(st.recentMessages || []), ...(st.unread || [])]) {
-              if (Array.isArray(m?.forwardIds)) {
-                for (const fid of m.forwardIds) {
-                  const safe = sanitizeForwardId(fid);
-                  if (safe) rebuilt.add(safe);
-                }
-              }
-            }
-            if (rebuilt.size) seenForwardIds.set(key, rebuilt);
-          }
-          ensureWakeableV2(st, { skipSave: true, key });
-          scheduleProactiveCheckV2(key);
-        }
-        // 加载阶段统一落盘一次，避免 ensureWakeableV2 中途写盘覆盖未加载会话。
-        saveSocialV2State();
-      }
-    } catch (error) {
-      log('读取 socialV2 状态失败:', error?.message ?? error);
-    }
-  }
-
-  function saveSocialV2State() {
-    try {
-      const obj = { paused: socialV2.paused, conversations: Object.create(null) };
-      for (const [key, st] of socialV2.conversations) {
-        obj.conversations[key] = {
-          wakeConfig: st.wakeConfig,
-          recentMessages: st.recentMessages.slice(-200),
-          unread: st.unread.slice(-100),
-          lastWakeReason: st.lastWakeReason,
-          lastAiReplyAt: st.lastAiReplyAt,
-          answeredSeqs: Array.isArray(st.answeredSeqs) ? st.answeredSeqs.slice(-200) : [],
-          lastActionAt: st.lastActionAt,
-          agentToken: st.agentToken,
-          bootstrapSent: st.bootstrapSent,
-          wakeTimes: st.wakeTimes.slice(-200),
-          sendTimes: st.sendTimes.slice(-500),
-          stickerCollectTimes: Array.isArray(st.stickerCollectTimes) ? st.stickerCollectTimes.slice(-500) : [],
-          crawlTimes: Array.isArray(st.crawlTimes) ? st.crawlTimes.slice(-200) : [],
-          stickerAddTimes: Array.isArray(st.stickerAddTimes) ? st.stickerAddTimes.slice(-200) : [],
-          lastIncomingAt: st.lastIncomingAt || 0,
-          // 最近一条入站消息的发送者：管理员专属工具据此判请求者身份。
-          // ⚠️ 这个序列化是**白名单式**的（只写这里列举的字段）——
-          // 新加会话字段时必须在这里补一行，否则赋值后会立刻丢失
-          // （实测踩过：加了赋值但没加这行，文件里始终没有该字段）。
-          lastRequesterId: st.lastRequesterId || '',
-          lastRequesterRole: st.lastRequesterRole || '',
-          // 管理员最后一次发言的时间：isOwnerTurn 的时间窗判据依赖它。
-          // 不持久化的话重启后就没了，管理员刚下的命令会立刻失效。
-          ownerSpokeAt: st.ownerSpokeAt || 0,
-          preSleepWaitSatisfiedAt: st.preSleepWaitSatisfiedAt || 0,
-          preSleepWaitObservedAt: st.preSleepWaitObservedAt || 0,
-          preSleepWaitAccumMs: st.preSleepWaitAccumMs || 0,
-          lastComplyRollAt: st.lastComplyRollAt || 0,
-          pendingComply: st.pendingComply ?? null,
-          complyTimes: Array.isArray(st.complyTimes) ? st.complyTimes.slice(-50) : [],
-          lastUnreadSeq: st.lastUnreadSeq || 0,
-          // 自动 @ 的额度：冷却与每小时上限都依赖它，必须持久化
-          // （否则每次重启都清零，冷却失效 → 可能连着重启连着重启都 @）。
-          lastAutoAt: st.lastAutoAt || 0,
-          autoAtTimes: Array.isArray(st.autoAtTimes) ? st.autoAtTimes.slice(-100) : [],
-          // 表情包主动要求的频率控制（2026-10-22）：
-          //   stickerNudgeTimes = "要求过几次"（掷中即记，不论模型是否真发）
-          //   lastStickerAt / recentStickers = "真发过"的时间与 id
-          // 两笔账分开，是因为"掷中但模型跳过"不该占用真发出的间隔。
-          // 不持久化的话每次重启频率限制清零 → 重启几次后可能连着刷表情。
-          lastStickerAt: st.lastStickerAt || 0,
-          recentStickers: Array.isArray(st.recentStickers) ? st.recentStickers.slice(-10) : [],
-          stickerNudgeTimes: Array.isArray(st.stickerNudgeTimes) ? st.stickerNudgeTimes.slice(-100) : [],
-          // 繁忙期间暂存的唤醒原因（内存里产生、回合结束后补发）。
-          // 不持久化的话**回合中途重启就全丢**：典型场景是群里 @ 它、
-          // 它正在处理上一轮 → 记进 pendingWakeReasons → 这时重启/崩溃 → @ 永远不回。
-          // 启动补投只兜底"未读还没被 mark_read"的情况，救不了已被标记已读的那些。
-          pendingWakeReasons: Array.isArray(st.pendingWakeReasons)
-            ? st.pendingWakeReasons.filter((r) => r && typeof r === 'object').slice(-20)
-            : [],
-          // 繁忙期间触发消息的正文快照：队列里的 seq 会先于回合结束被未读窗口挤掉。
-          pendingWakeMessage: (st.pendingWakeMessage && typeof st.pendingWakeMessage === 'object')
-            ? st.pendingWakeMessage
-            : null,
-          // 必须持久化：回合跨重启时水位丢了会导致 mark_read 走保守清空分支，
-          // 虽然安全但会清掉本轮刚到的未读，所以能存就存。
-          wakeSeqAt: st.wakeSeqAt || 0,
-          activeTopics: Array.isArray(st.activeTopics) ? st.activeTopics.slice(-50) : [],
-          pendingThoughts: Array.isArray(st.pendingThoughts) ? st.pendingThoughts.slice(-50) : [],
-          memberImpressions: st.memberImpressions && typeof st.memberImpressions === 'object' ? st.memberImpressions : {},
-          seenForwardIds: Array.from(seenForwardIds.get(key) || []).slice(-1000)
-        };
-      }
-      atomicWriteJson(SOCIAL_V2_FILE, obj);
-    } catch (error) {
-      log('保存 socialV2 状态失败:', error?.message ?? error);
-    }
-  }
+  const {
+    normalizeSpeakerIdsV2, defaultWakeConfigV2, refreshDefaultWakeConfigV2, refreshAllDefaultWakeConfigsV2, hasExplicitEndV2, isSleepingConfigV2,
+    preSleepWaitBlockedV2, computeWakeSafetyV2, ensureWakeableV2, getSocialV2State, loadSocialV2State, saveSocialV2State
+  } = createSocialStateStore({
+    cfg, socialV2, state, v2TurnStartAt, KNOWN_AGENT_TOKENS, seenForwardIds,
+    SOCIAL_V2_FILE, readJsonSafe, atomicWriteJson, scheduleProactiveCheckV2, setupSleepTimerV2, log
+  });
 
   function formatParticipationV2(st) {
     if (!st) return '';
@@ -11974,7 +5224,7 @@ async function main() {
     st.activeExitAt = now;
     // 先取消尚未触发的旧回复/补刀定时器，避免退场期间再冒出旧发言
     cancelSocialTimers(key);
-    const roleHint = currentRoleHint();
+    const roleHint = currentRoleHint(key);
     const promptText = buildActiveExitPrompt(key, roleHint);
     scheduleSocialReply(
       key, promptText,
@@ -12029,11 +5279,20 @@ async function main() {
       accepted = await api.sessions.prompt({ sessionId, mode: 'queue', content });
     } catch (error) {
       if (opts.farewell) social.exitingSessions.delete(sessionId);
+      const errText = String(error?.message ?? error);
+      if (isContextOverflowError(errText)) {
+        await contextRecovery.recover({ key, sessionId, error: errText, mode: currentMode, silent: !!opts.silent });
+        return { ok: false, error: errText, recovered: true };
+      }
       throw error;
     }
     if (!accepted.result.ok) {
       if (opts.farewell) social.exitingSessions.delete(sessionId);
       const errText = `${accepted.result.error.code}: ${accepted.result.error.message}`;
+      if (isContextOverflowError(errText)) {
+        await contextRecovery.recover({ key, sessionId, error: errText, mode: currentMode, silent: !!opts.silent });
+        return { ok: false, error: errText, recovered: true };
+      }
       if (!opts.silent) notifyOwnerOfError(key, '消息未被 DSH 接受', errText, { sessionId });
       return { ok: false, error: errText };
     }
@@ -12119,7 +5378,7 @@ async function main() {
               st.proactiveNextCheckAt = now + randInt(Number(cfg.social?.proactiveCheckMinMs ?? 2700000), Number(cfg.social?.proactiveCheckMaxMs ?? 5400000));
               if (Math.random() < Number(cfg.social?.proactiveProbability ?? 0.2)) {
                 enterActive(key);
-                const roleHint = currentRoleHint();
+                const roleHint = currentRoleHint(key);
                 const promptText = buildProactivePrompt(key, roleHint);
                 scheduleSocialReply(
                   key, promptText,
@@ -12235,7 +5494,7 @@ async function main() {
         log(`摘要投喂创建会话失败 (${k}): ${error?.message ?? error}`);
         continue;
       }
-      const roleHint = currentRoleHint();
+      const roleHint = currentRoleHint(k);
       const summaryText = `${roleHint ? roleHint + '\n\n' : ''}【群聊摘要】过去一段时间群里发生了这些（你未逐条参与）：\n${lines}\n\n【最近对话】\n${buildContextBlock(k)}\n\n你不需要回复，只需记住这些内容，后续聊天会更自然。`;
       const silentId = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
       social.silentTurns.set(sessionId, [...(social.silentTurns.get(sessionId) ?? []), { id: silentId, ts: Date.now() }]);
@@ -12268,36 +5527,11 @@ async function main() {
     startSocialLoop();
   }
 
-  // 当前角色扮演提示：读 state/current-role.json + roles/<角色>.md，
-  // 由桥接注入到 QQ 群消息（群友无法通过对话修改，只能由管理端写该文件）。
-  // 缓存 key 为两个文件的 mtime，mtime 未变时直接返回，避免每次同步读文件。
-  let roleHintCache = { key: '', hint: '' };
-  function currentRoleHint() {
-    try {
-      const rs = readRoleState();
-      if (!rs.role) return '';
-      const roleFile = path.join(ROOT, 'roles', rs.role + '.md');
-      if (!fs.existsSync(roleFile)) return '';
-      const stateStat = fs.statSync(ROLE_STATE_FILE);
-      const roleStat = fs.statSync(roleFile);
-      const cacheKey = `${stateStat.mtimeMs}:${roleStat.mtimeMs}`;
-      if (roleHintCache.key === cacheKey) return roleHintCache.hint;
-      let hint = fs.readFileSync(roleFile, 'utf8');
-      // 角色卡整份注入：上限设得足够宽，**超限要留痕**。
-      // 原来硬切 6000 字：实测「大肥鱼」6283、「大肥鱼（傲娇版）」6946、「小鲸鱼」7388 都被切尾，
-      // 于是末尾整节（表情包体系 / 轻量记忆 / 被问长相时）静默丢失——「禁写外貌」这类约束
-      // 恰恰在最后一节，丢了不报错，只在群聊里表现为"模型忽然开始瞎编长相"。
-      const ROLE_HINT_MAX = 12000;
-      if (hint.length > ROLE_HINT_MAX) {
-        log(`⚠️ 角色卡 ${rs.role}.md 超长（${hint.length} 字），已截断到 ${ROLE_HINT_MAX} 字；末尾内容不会进入提示词`);
-        hint = hint.slice(0, ROLE_HINT_MAX);
-      }
-      roleHintCache = { key: cacheKey, hint };
-      return hint;
-    } catch {
-      return '';
-    }
-  }
+  // 当前角色扮演提示：按 roleFor(key) 取本会话 override（没有则全局默认），
+  // 再读 roles/<角色>.md；由桥接注入到 QQ 群消息（群友无法通过对话修改）。
+  // 缓存按角色名 + 角色文件 mtime，切换群人格不会串卡。
+  const roleHintCache = new Map(); // roleName -> { key, hint }
+  const currentRoleHint = createRoleHintReader({ ROOT, roleFor, roleHintCache, log });
 
   // 二代仿真模式专用角色提示：去掉一代的 [SILENT] / 空格分句等状态机指令，避免与工具协议冲突。
   // 为了不削减原角色卡内容，示例节不整体删除，而是把“用空格分条”的示范改写成“用逗号表示停顿”，
@@ -12386,8 +5620,8 @@ async function main() {
     return `第 ${bad.join('，')} 条之间像是把同一句话拆开了；如果两条拼起来才完整，请合并成一条，或把断点移到完整句子的边界。`;
   }
 
-  function currentRoleHintV2() {
-    const raw = currentRoleHint();
+  function currentRoleHintV2(key) {
+    const raw = currentRoleHint(key);
     if (!raw) return '';
     // 一代仿真模式专用指令整行过滤，避免污染二代工具协议
     const GEN1_ROLE_LINE_RE = /\[SILENT\]|空格分隔|按空格|用空格|空格分句|空格代表|自动转发|回复会自动|输出\s*\[SILENT\]/i;
@@ -12857,7 +6091,7 @@ async function main() {
       const safeText = redactKnownTokensOnly(bodyText).slice(0, 200);
       // 语音必须留下可识别标记：桥接按概率把文字换成语音时，模型并没有主动
       // 调用 qq_send_voice；如果 recentMessages 里仍记成原文，它下一轮就不知道
-      // 自己发的是语音（实测 2026-10-23 group:100001004）。
+      // 自己发的是语音（实测 2026-10-23 group:100002004）。
       const text = (isVoice ? '[语音] ' : '') + safeText;
       const entry = {
         sender: '我',
@@ -12993,7 +6227,7 @@ async function main() {
     const tr = st.wakeConfig?.triggers ?? {};
     // 顺序必须按 WAKE_PRIORITY 从高到低。`anyMessage` 若放在前面，会把所有
     // @/提问/指定成员/名字/关键词都吞成低优先级的 anyMessage——群一热闹就被
-    // 限流丢掉。2026-10-23 群 100001006 实测：owner 的「查下来源」被记成
+    // 限流丢掉。2026-10-23 群 100002005 实测：owner 的「查下来源」被记成
     // anyMessage@seq7064，之后只剩「唤醒频率超限，跳过」，表现就是 @ 了不理。
     if (tr.atMention) {
       const atSelf = Array.isArray(event?.message) && event.message.some((seg) => seg?.type === 'at' && String(seg.data?.qq) === String(event?.self_id ?? ''));
@@ -13029,152 +6263,9 @@ async function main() {
     return null;
   }
 
-  // ── 群友点单（要求生成内容）的「照做」判定 ─────────────────────────────────
-  // 背景：preset 主体性规则明确写了「别人要推荐/要答案/要帮忙时不一定马上给」，
-  // 群友点单因此常被挡回。这里由桥接给出**权威的**照做/自由发挥判定，注入唤醒提示，
-  // 让模型有依据地服从——概率不能交给模型自报（不可复现，且与主体性规则互相打架）。
-
-  // 点单动词/句式：要求产出内容或执行具体任务，而不是普通闲聊。
-  const COMPLY_REQUEST_RE = /(帮我|帮忙|给我|替我|请你|求你|能不能|可不可以|能否|麻烦|拜托|来一[个张段篇首份]|写一?[个张段篇首份下]|生成|画一?[个张幅]|做一?[个张份]|整个|搞个|出个|编个|编一?段|翻译|总结一下|概括|续写|改写|润色|扩写|取个名|起个名|想个|列[个一]|列一下|整理一下|排版|做成|转换成|计算一下|算一下|解释一下|讲讲|介绍一下|推荐一?[个下些]|安利|出个主意|想个办法|写代码|写个函数|写段代码)/;
-  // 产出物名词：与上面的动词独立，用于扩大命中（需配合「冲着我来」才判定）。
-  const COMPLY_ARTIFACT_RE = /(文案|标题|提纲|大纲|脚本|方案|计划|攻略|清单|列表|表格|代码|函数|正则|周报|日报|总结|摘要|作文|故事|小说|诗|对联|歌词|顺口溜|段子|笑话|谜语|签名|昵称|翻译|字幕|配文|旁白|剧本|台词|人设|设定|封面|海报|logo|图标|邮件|通知|公告|策划|复盘|问卷|试卷|作业|答案)/i;
-  // 否定/防御语气：这是在拒绝或吐槽，不是在点单。
-  // 刻意不用裸「别/不要/不用」——中文没有词边界，「个别/特别/别的/不用心」会误伤；
-  // 只认多字、明确的收回说法。
-  const COMPLY_NEGATIVE_RE = /(不用了|不必了|不要了|算了|懒得|凭什么|你又不|又不会|做不到|开玩笑|骗你的|别闹|别搞|别写|别问|别说|别管|别来|你想多了)/;
-  // 起手就是祈使句（无 @、无名）——群里指名道姓之外最常见的点单口吻。
-  const COMPLY_IMPERATIVE_RE = /^(帮我|帮忙|给我|替我|来一?[个张段篇首份下]|写|生成|画|做|整|搞|出|编|翻|列|总结|概括|续写|改写|润色|扩写|取|起|想|整理|排版|转|计算|算|解释|讲|介绍|推荐|安利)/;
-  // 第一人称自述（「我想写代码」「我要做个表」）：在说自己要干嘛，不是点单。
-  // 只有同时带了明确的请求标记（帮我/请你/能不能…）才翻回点单。
-  const COMPLY_SELF_DESC_RE = /^[我咱](想|要|打算|准备|正在|正|在|去|得|需要|应该|该|准备)/;
-  const COMPLY_EXPLICIT_RE = /(帮我|帮忙|给我|替我|请你|求你|麻烦|拜托|能不能|可不可以|能否|可以)/;
-
-  // 这条消息是不是「冲着机器人说的」。@ 了别人、或明显在找别人，就不算。
-  function isAimedAtSelfV2(plainContent, event, quoteTargetIsSelf) {
-    const s = String(plainContent ?? '').trim();
-    const lower = s.toLowerCase();
-    const segs = Array.isArray(event?.message) ? event.message : [];
-    const selfId = String(event?.self_id ?? '');
-    const atSelf = segs.some((seg) => seg?.type === 'at' && String(seg?.data?.qq) === selfId);
-    const atOthers = segs.some((seg) => seg?.type === 'at' && String(seg?.data?.qq) !== selfId);
-    if (atSelf || quoteTargetIsSelf) return true;
-    if (selfNickname && lower.includes(String(selfNickname).toLowerCase())) return true;
-    if (atOthers) return false;                                  // 明确 @ 了别人
-    if (/(你|您)/.test(s)) return true;                          // 直接对「你」说话
-    return COMPLY_IMPERATIVE_RE.test(s);                         // 光是祈使句也认（群里常见的直接点单）
-  }
-
-  // 是否属于「点单」：既要有请求/产出物，还要是冲着机器人来的。
-  function isContentRequestV2(plainContent, aimedAtSelf) {
-    const s = String(plainContent ?? '').trim();
-    if (!s || !aimedAtSelf) return false;
-    if (s.length > 300) return false;                            // 长文更像群友自己的输出
-    if (COMPLY_NEGATIVE_RE.test(s)) return false;                // 拒绝/吐槽语境
-    // 第一人称自述且没有明确请求标记 → 在说自己要干嘛，不算点单。
-    if (COMPLY_SELF_DESC_RE.test(s) && !COMPLY_EXPLICIT_RE.test(s)) return false;
-    // 祈使句起手且带产出物/动作 → 稳定的点单信号（不必再要求产出物名词）。
-    if (COMPLY_IMPERATIVE_RE.test(s)) return true;
-    return COMPLY_REQUEST_RE.test(s) || COMPLY_ARTIFACT_RE.test(s);
-  }
-
-  // 掷骰：同一请求只判一次（结果存 pendingComply，后续唤醒沿用），
-  // 带冷却与每小时上限，避免被刷成「有求必应」。
-  function rollComplyV2(key, requestText) {
-    const st = getSocialV2State(key);
-    const cc = cfg.socialV2?.comply ?? {};
-    if (cc.enabled === false) return null;
-    const now = Date.now();
-    const pending = st.pendingComply;
-    if (pending && pending.text === requestText && now < (pending.expireAt || 0)) {
-      return pending;                                            // 同一请求复用上次判定，别反复掷骰子
-    }
-    if (st.lastComplyRollAt && now - st.lastComplyRollAt < (Number(cc.cooldownMs) || 0)) {
-      return null;                                               // 冷却中：本轮不判定，模型按自主性处理
-    }
-    const hour = 60 * 60 * 1000;
-    const recent = (st.complyTimes || []).filter((t) => now - Number(t) < hour);
-    const overCap = Number(cc.maxPerHour) > 0 && recent.filter(Boolean).length >= Number(cc.maxPerHour);
-    const base = Math.min(1, Math.max(0, Number(cc.probability) || 0));
-    const comply = !overCap && Math.random() < base;
-    st.lastComplyRollAt = now;
-    st.pendingComply = {
-      text: requestText,
-      comply,
-      roll: Number(base.toFixed(3)),
-      at: now,
-      expireAt: now + (Number(cc.ttlMs) || 3 * 60 * 1000),
-      capped: overCap
-    };
-    st.complyTimes = [...(st.complyTimes || []).slice(-49), comply ? now : 0];
-    saveSocialV2State();
-    log(`[reserved2] 点单判定 ${key}：${comply ? '照做' : '自由发挥'}（概率 ${base}${overCap ? '，已触每小时上限' : ''}）：${requestText.slice(0, 40)}`);
-    return st.pendingComply;
-  }
-
-  // 取最近一条「点单」消息，用于掷骰对象。
-  // 从后往前扫：遇到自己发过言就停（说明这单已经处理过了，别再翻旧账）；
-  // 中间的非点单闲聊跳过（群友常在点单后插一句话，不该把点单顶掉）。
-  function latestOrderV2(st) {
-    const list = Array.isArray(st?.recentMessages) ? st.recentMessages : [];
-    const now = Date.now();
-    for (let i = list.length - 1; i >= 0; i--) {
-      const m = list[i];
-      if (!m) continue;
-      if (m.isSelf) return null;                                     // 已经被回应过
-      if (now - (Number(m.time) || 0) > 5 * 60 * 1000) return null;  // 超过 5 分钟的点单不再作数
-      if (m.orderText) return m;
-    }
-    return null;
-  }
-
-  // 把判定渲染成注入文本。
-  /**
-   * 判定「未读里有人在问机器人的 token 用量」，并给出**权威**指令。
-   *
-   * 为什么由桥接判定，而不是只靠工具描述里的触发词：
-   * 实测（2026-10-21 group:100001004）问「你用了多少token」会调工具（6 次成功），
-   * 但换种说法——「看看你吃了多少token」「你怎么这么能吃白饭」——**就不调了**，
-   * 反而编出「35.27B里prompt占35.25B」，下一条又改口「我这边没有查自己用量的口子」。
-   * 模型对没见过的措辞不会自动联想，而群友的说法是开放的，列举永远追不上。
-   * 所以：桥接自己认（语义范围写得宽一点），认出来就在提示里点名要求调工具。
-   *
-   * 判据两段式，必须**同时**满足，避免误判（"token"在别的话题里也常出现）：
-   *   ① 有"用量"语义词：token / 用量 / 算力 / 消耗（或"白饭"这类群里常用的代称）
-   *   ② 有"数量/询问"语义：多少 / 几 / 用了 / 耗了 / 花了 / 吃了 / 看看 / 统计 / 账单 / 烧
-   * 再排除明显不是问它用量的（如"token 是什么""你吃不吃 token"这种玩笑）。
-   */
-  const TOKEN_ASK_SUBJECT_RE = /(token|token\s*数|用量|算力|白饭)/i;
-  const TOKEN_ASK_QUANTITY_RE = /(多少|几[个亿万千]|用了|耗了|花了|吃了|吃掉|看看|查查|统计|账单|消耗|烧了|跑多少|这么能吃|能吃)/;
-  const TOKEN_ASK_NOT_RE = /(是什么|啥意思|什么意思|怎么读|单词|英文|你吃不吃|好吃吗)/;
-  function buildTokenAskLineV2(st) {
-    if (cfg.socialV2?.tools?.tokenReport === false) return '';
-    const unread = Array.isArray(st?.unread) ? st.unread : [];
-    // 只看最近几条：更早的「问用量」如果已回，会留在未读里造成"每轮都催它发图"。
-    const hit = [...unread].reverse().slice(0, 8).find((m) => {
-      if (!m || m.isSelf) return false;
-      const t = String(m.plain ?? m.text ?? '').trim();
-      if (!t) return false;
-      if (TOKEN_ASK_NOT_RE.test(t)) return false;
-      return TOKEN_ASK_SUBJECT_RE.test(t) && TOKEN_ASK_QUANTITY_RE.test(t);
-    });
-    if (!hit) return '';
-    return `【本轮必须调 qq_token_report】未读里有人在问你的 token 用量（「${String(hit.text || hit.plain || '').slice(0, 40)}」）。
-这一轮**先调 qq_token_report(key, token)** 把统计图发出去，再配一句很短的话（「喏，图来了」这类）。
-**不许自己估算数字、不许说"我没有查用量的口子"**——你有这个工具，编数字会被图当场打脸。
-如果工具返回失败，如实说统计图暂时生成不了并带上原因。\n\n`;
-  }
-
-  function buildComplyLineV2(key, st) {
-    if (cfg.socialV2?.comply?.enabled === false) return '';
-    const order = latestOrderV2(st);
-    if (!order) return '';
-    const p = rollComplyV2(key, String(order.orderText));
-    if (!p) return '';
-    if (Date.now() >= (p.expireAt || 0)) return '';
-    return p.comply
-      ? `【本轮点单判定：照做】群里有人在点单（"${String(p.text).slice(0, 60)}"）。桥接已为你掷出「照做」：这一轮请**直接按要求产出内容**，别再装傻、反问或拒绝。产出要自然、贴群友语感、长度适中；如果对方要的东西你确实给不了（真实图片/文件/联网下载等），就说明给不了，并在能力范围内给一个替代方案。\n\n`
-      : `【本轮点单判定：自由发挥】有人在点单（"${String(p.text).slice(0, 60)}"）。桥接掷出的是「不照做」：这轮按你自己的性子来——可以装傻、咸鱼、反问、拒绝，也可以给个离谱答案或只吐槽一句；但**别每次都这样**，同一个人反复求你就别一直晾着。\n\n`;
-  }
+  const { isAimedAtSelfV2, isContentRequestV2, rollComplyV2, latestOrderV2, buildTokenAskLineV2, buildComplyLineV2 } = createContentRequestPolicy({
+    cfg, getSocialV2State, saveSocialV2State, log, getSelfNickname: () => selfNickname
+  });
 
   // 判定未读里有哪些消息是「在叫机器人」，并按「是否已经答过」分成两组。
   // 别名集合 = 机器人昵称 + 角色名 + 该会话唤醒关键词（如「大肥鱼」这类群友常用的称呼）。
@@ -13186,347 +6277,59 @@ async function main() {
   // 实测出现「这条我答过两回了」这种尴尬输出，群友直接问「怎么一直回复同一条」。
   // 判据：该消息的入库时间早于机器人上次发言时间 → 上一轮它已经看过并回过了。
   function findCallersV2(key, st) {
-    // 与自动@ 用同一份别名（含当前群的群名片），避免出现
-    // "提示说群友B在叫它、自动@ 却选了别人"这种自相矛盾。
-    const aliasInfo = botAliasNamesV2(key, st);
-    const unreadList = Array.isArray(st?.unread) ? st.unread : [];
-    const lastReplyAt = Number(st?.lastAiReplyAt) || 0;
-    const callers = unreadList.filter((m) => m && !m.isSelf).filter((m) => {
-      const t = String(m.text || m.plain || '');
-      if (!t) return false;
-      // 拍一拍不算「在叫你」：它不是言语请求，被拍的人也不该被要求必须回应。
-      // 而且 appendSocialV2Poke 会把 targetIsSelf 写进 quoteTargetIsSelf，
-      // 若把它当成「引用自己」就会让每条拍一拍都触发拦截 —— 实测导致机器人
-      // 每次想潜水都被拒、只能反复 wait，回合卡死、群消息全排队（2026-10-01）。
-      if (/^\[拍一拍\]/.test(t)) return false;
-      // 入站时从 at 段直接判定的结果，最可靠（不依赖别名/群名片是否被查到）
-      if (m.atSelf) return true;
-      // 引用机器人自己的消息：这是明确在跟你说话
-      if (m.quoteTargetIsSelf) return true;
-      // @ 它的任一别名
-      const lower = t.toLowerCase();
-      return aliasInfo.all.some((nm) => lower.includes(`@${nm}`.toLowerCase()));
-    });
-    // 已答过 = 明确引用回复过的 seq（answeredSeqs）。不再按时间推断：
-    // 同一批里回复了 A，不代表比 A 更早/更新的 B 也答过了。旧状态没有
-    // answeredSeqs 时走一次时间兜底（仅兼容旧数据/测试），加载时会补种。
-    // 实测 2026-10-23 群 100001006：机器人引用回复 seq7150 后，owner 的
-    // seq7128「查下来源」仍是未答，但旧时间判据让它被 mark_read 一并标掉。
-    const hasAnsweredTracking = Array.isArray(st?.answeredSeqs);
-    const answeredSet = new Set(
-      (hasAnsweredTracking ? st.answeredSeqs : [])
-        .map(Number)
-        .filter(Number.isFinite)
-    );
-    const answered = [];
-    const pending = [];
-    for (const m of callers) {
-      if (hasAnsweredTracking) {
-        if (Number.isFinite(Number(m.seq)) && answeredSet.has(Number(m.seq))) answered.push(m);
-        else pending.push(m);
-      } else {
-        const t = Number(m.time) || 0;
-        if (lastReplyAt && t && t <= lastReplyAt + 5000) answered.push(m);
-        else pending.push(m);
-      }
-    }
-    return Object.assign(callers, { answered, pending });
+    return findPendingCallers(st, botAliasNamesV2(key, st));
   }
 
-  function buildWakePromptV2(key, reason) {
-    const roleState = readRoleState();
-    // 角色卡**正文**要直接进唤醒提示，不能只给一行「请调用 qq_get_prompt 查看」。
-    //
-    // 曾经的写法只注入角色名，指望模型自己去调 qq_get_prompt 取全文。实测这个指望不成立：
-    // 8/31~10/20 共 30 天里 qq_get_prompt 只被调用过 26 次，而群聊唤醒有 7605 次——
-    // 也就是说 **99.7% 的回合里模型根本没看过角色卡**，人格只剩「大肥鱼」三个字。
-    // 后果是角色卡里最吃细节的指令全线失效，最明显的是表情包：
-    //   角色卡「表情是你的主武器，能发就发…多数轮次都该带表情」
-    //   vs 通用策略「普通闲聊不用每条都配；大约每 3~5 轮来一张就够」
-    // 没有角色卡的强命令时，模型只按通用策略行事，于是几乎不发（10/16 起连续 5 天 send_sticker=0）。
-    //
-    // 体积可控：角色卡 6~7 KB，唤醒提示原本约 4 KB，加起来仍在模型上下文内；
-    // 且 currentRoleHintV2() 已含「一代指令行过滤 + 示例节空格转换」，可直接复用。
-    const roleCard = roleState.role ? currentRoleHintV2() : '';
-    const roleLine = roleState.role
-      ? `【当前角色】${roleState.role}\n\n${roleCard ? roleCard.trim() + '\n\n' : ''}`
-      : '';
-    const st = getSocialV2State(key);
-    const tokenLine = `【会话令牌】${st.agentToken}（调用二代状态工具时请在参数中带上此令牌）\n\n`;
-    // 功能介绍与角色无关：换人格后仍可用菜单图，文案由同一份能力清单维护。
-    const menuLine = cfg.socialV2?.tools?.getFeatureMenu !== false
-      ? '【功能介绍】群友询问“你会什么 / 你会啥 / 能干嘛 / 有什么功能 / 功能声明 / 功能菜单 / 功能介绍”时，可用 qq_send_feature_menu(key, token) 直接发送本地缓存的功能图。该图按当前角色和已启用功能生成；发送成功后无需逐条复述或追加未列出的能力，失败时如实说明图片暂时发不了。\n\n'
-      : '';
-    // Token 用量图：与功能菜单同一条路（桥接渲染并直接发送）。
-    // 写进唤醒提示的理由：群友问"用了多少 token"时，模型若不知道有这个工具，
-    // 会自己去翻日志或凭印象编数字——那是最糟的结果。
-    //
-    // ⚠️ 触发词必须写全。实测（2026-10-21 group:100001004）：
-    //   问「你用了多少token」→ 调用了工具（6 次成功）；
-    //   问「看看你吃了多少token」「你怎么这么能吃白饭」→ **没调用**，
-    //   反而编出「35.27B里prompt占35.25B」这种数，下一条又改口
-    //   「我这边没有查自己用量的口子」——自相矛盾且全是假的。
-    //   根因是旧文案只列了"用了多少/消耗多少/烧了多少"，没有把"吃了/白饭/token 花销"
-    //   这些群友口语说法挂钩到工具上。模型对没列出的说法就没有触发联想。
-    //
-    // 另外两件事一起写明：
-    //   ① **绝不允许自己估算或凭印象报数**——错的数字比"我查一下"糟糕得多；
-    //   ② 报错时要说"统计图暂时发不了"，不能顺势说"我没有这个能力"（那是谎话）。
-    const tokenReportLine = cfg.socialV2?.tools?.tokenReport !== false
-      ? '【Token 用量】群友只要在问「机器人自己消耗了多少 token」，**一律调 qq_token_report(key, token)** 生成统计图并发到当前会话。触发说法很多，别只认固定词：'
-        + '「用了/耗了/花了/吃了多少 token」「token 用多少了」「今天消耗多少」「这个月烧了多少」「花了多少算力」「吃了多少白饭」「你这么能吃？」「看看你的用量/统计/账单」「今天跑了多少」等，'
-        + '只要语义是在问**用量/消耗/花了多少**，都用这个工具。\n'
-        + '**绝对不要自己估算、翻日志或凭印象报数字**——你算不准，编出来的数会被图上真实数字当场打脸。'
-        + '**也不要说「我没有查用量的口子/这个统计不归我管」**：你有这个工具，说没有是错的。\n'
-        + '返回里带与图同源的文字摘要，追问具体数字时照它回答；只有工具真的返回失败时，才如实说「统计图暂时生成不了」并带上原因。\n\n'
-      : '';
-    // 语音能力：只有 TTS 真可用时才告诉模型"你能发语音"。
-    //
-    // 这条是必须的，血泪教训（2026-10-22）：之前只做了"桥接按概率把回复换成语音"，
-    // 却没写进提示词，群友说「发个语音」时模型答「语音我发不出来呀」——
-    // 它说的是实话，因为提示词里从没提过这个能力。
-    // **能力不写进提示词，就等于没有**。
-    //
-    // 注意这里**不能调 v2ToolEnabled()**：那个函数定义在 HTTP 服务器回调内部
-    // （bridge.js 约 2766 行），本函数在另一处作用域，直接调会抛
-    // `v2ToolEnabled is not defined` 并让**整个唤醒中断**——
-    // 实测后果就是"发私聊完全不理人"。同语义直接读 cfg 即可。
-    const voiceLine = (ttsEngine && ttsEngine.available() && cfg.socialV2?.tools?.sendVoice !== false)
-      ? '【语音】你能发语音（qq_send_voice）。群友明确要听声音时（「发个语音」「说句听听」「用语音回我」）就调它，'
-        + '念一句自己组织的口语（≤140 字）。日常聊天不要主动发——语音比文字吵。'
-        + '发完不要再复述同一句话。发不出来（比如正在加载）就如实说，改发文字。\n\n'
-      : '';
-    // 短期/人工记忆（activeTopics / pendingThoughts / memberImpressions）
-    const memoryBase = formatMemoryV2(st);
-    // Phase 1/2：长期情节记忆（episodes）+ 长期人物/事实/线索 + DSH 压缩摘要兜底。
-    // 两段分开拼，避免 formatMemoryV2 的【】小节被覆盖。
-    let memoryPack = '';
-    try {
-      const cm = contextCfg();
-      const episodes = loadEpisodes(STATE_DIR, key, 3);
-      const compactions = loadCompactions(STATE_DIR, key, 1);
-      const longTerm = loadLongTermMemory(STATE_DIR, key);
-      memoryPack = formatMemoryPack({
-        episodes,
-        compactions,
-        longTerm,
-        budgetChars: cm.memoryPackChars
-      });
-      const m = contextMetrics.get(key) || {};
-      m.lastMemoryChars = memoryPack.length;
-      contextMetrics.set(key, m);
-    } catch (error) {
-      log(`[上下文] 读取记忆包失败：${error?.message ?? error}`);
-    }
-    const memoryText = [memoryBase, memoryPack].filter(Boolean).join('\n');
-    const memoryLine = memoryText ? `${memoryText}\n\n` : '';
-    // 注意：黑话表不在这里注入，deliverPromptNow 的 withSlangContext 会统一注入，
-    // 避免唤醒 prompt 出现两份黑话表。
-    const participationText = formatParticipationV2(st);
-    const participationLine = participationText ? `${participationText}\n\n` : '';
-    const antiAiLine = '【反AI味】你不是客服：不用有求必应，可以装傻、已读乱回、拒绝推荐；少用“一绝/真管用/保证/绝对”这类词。\n\n';
-    // 元信息防泄漏：这条提示里的所有【】小节（状态/唤醒/令牌/策略/记忆/参与度）都是
-    // 给你看的内部调度信息，不是可以拿去说的内容。早期没写这句，模型会把「你别重复回答」
-    // 「这条已经交代过了」这类内部指令当台词发到群里（实测群友收到的原话：
-    // 「芙老师那句 666 我收到了，这回不接第二遍」「那条我上一条已经交代过了，不再补一遍」），
-    // 看起来非常出戏。后台提醒通道早有同类约束，唤醒通道漏了，这里补上。
-    const metaLine = '【内部信息不外泄】下面所有【】里的内容（状态、唤醒原因、令牌、策略、记忆、参与度等）都是你内部参考，不是台词。绝对不要复述、转述或提及它们，也不要说“我收到指令”“系统提醒我”“这条我答过了”“我不再重复”这类关于自己调度的话——像真人一样只聊群里的事。\n\n';
-    const stickerCfg = cfg.socialV2?.sticker ?? {};
-    // 表情包：**桥接掷骰决定"这一轮要不要发"**，模型只从给定候选里挑一张。
-    //
-    // 背景（2026-10-22 用户反馈「依旧极少调用表情包」）：实测 1999 次工具调用里
-    // `qq_send_sticker` 只出现 1 次。原来只有软策略提示（"大约每 3~5 轮来一张"），
-    // 模型可以永远不选；而且发表情要额外一次工具调用、还不能和文字同气泡，
-    // 收益"可有可无"自然被跳过。
-    // 改成"桥接要求 + 只给 2~3 个候选"后，模型的选择成本降到最低，
-    // 而频率由桥接控制（不会忽多忽少）。
-    const stickerPlan = planStickerV2(key, st);
-    if (stickerPlan) {
-      // 记一行：出问题时能立刻区分"没掷中"和"掷中了但模型没发"
-      log(`[表情] ${key} 本轮要求发一张（语气=${stickerPlan.moodLabel}，候选 ${stickerPlan.picks.length} 个）`);
-    }
-    const stickerLine = stickerCfg.enabled !== false && stickerCfg.includeInPrompt !== false
-      ? (stickerPlan
-        ? `${buildStickerNudge(stickerPlan)}\n\n`
-        : `${buildStickerStrategyHint()}\n${buildStickerContext(stickerEntries, stickerCfg.promptMaxStickers ?? 8)}\n\n`)
-      : '';
-    const preSleepMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
-    const proactiveLine = '【积极性】不要习惯性潜水：群里有你能接的话题就主动参与，偶尔插一句别人的话题也很正常；只有确实没话可说、对方已明确结束、或长时间没人说话时才潜水。\n\n';
-    const preSleepLine = `【沉睡前强制等待】除非对方明确说“不聊了/晚安/下了/拜拜”等结束语，否则每次设置潜水/下一次唤醒前，必须先调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察；短等待（30秒/60秒/180秒）不能代替这次完整观察。若 ${Math.round(preSleepMs / 60000)} 分钟内没人说话，返回 preSleepWaitSatisfied=true，可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看返回的 newMessages——判断不需要你参与就可以直接沉睡，若你选择参与回复，则下次想睡时需要重新等待观察窗口。如果返回里带 preSleepWaitRemainingMs，就按剩余时间继续等待。\n\n`;
-    // 关键防循环：活跃群里“等 60 秒安静”永远等不到。模型一旦已经发过言，
-    // 本回合的任务就完成了；回复检查会自动叫醒它，不需要它抱着 wait 守候。
-    const wrapLine = '【回合收尾】本回合已经发过言后，不要再调用 qq_wait_for_messages 守候后续消息；直接结束回合即可，桥接会在 30~45 秒后自动唤醒你做回复检查。只有还没发过言、准备直接潜水时，才需要用一次 qq_wait_for_messages 完成观察。同一个回合最多等 2 次、累计不超过 120 秒，超时桥接会强制收尾。\n\n';
+  // 第 4A 步：唤醒提示构建已抽到 src/pipeline/wake.js；
+  // 这里只注入依赖，具体 prompt 文案/结构在 pipeline 里维护。
+  const wakePrompts = createWakePromptBuilder({
+    roleFor,
+    currentRoleHintV2,
+    getSocialV2State,
+    cfg,
+    getTtsEngine: () => ttsEngine,
+    formatMemoryV2,
+    contextCfg,
+    stateDir: STATE_DIR,
+    loadEpisodes,
+    loadCompactions,
+    loadLongTermMemory,
+    formatMemoryPack,
+    formatSharedMemoryForWake: (key, st, longTerm) => formatSharedMemoryForWake(STATE_DIR, {
+      key,
+      st,
+      localMemory: longTerm,
+      cfg: sharedCfg()
+    }),
+    buildGapNotice: (key) => sessionGap.buildNotice(key, gapNoticeCfg()),
+    contextMetrics,
+    log,
+    buildRecallLine: buildRecallLineV2,
+    formatParticipationV2,
+    planStickerV2,
+    getStickerEntries: () => stickerEntries,
+    stickerCacheOpts,
+    buildStickerNudge,
+    buildStickerStrategyHint,
+    buildStickerContext,
+    buildComplyLine: buildComplyLineV2,
+    buildTokenAskLine: buildTokenAskLineV2,
+    looksLikeUnfinished,
+    findCallers: findCallersV2
+  });
 
-    // 点单判定：桥接掷骰的权威结果，放在最前面（优先级高于自主性规则）。
-    const complyLine = buildComplyLineV2(key, st);
-    // 有人在问 token 用量：桥接直接认出来并要求调工具，不靠模型自己联想措辞。
-    // 位置紧跟 complyLine——都属于"本轮该做什么"的权威指令，要在自主性规则之前。
-    const tokenAskLine = buildTokenAskLineV2(st);
-    const lastMsg = [...(Array.isArray(st.recentMessages) ? st.recentMessages : [])].reverse().find((m) => m && !m.isSelf);
-    const lastAiMin = st.lastAiReplyAt ? Math.max(0, Math.round((Date.now() - Number(st.lastAiReplyAt)) / 60000)) : null;
-    const statusBits = [`未读 ${(st.unread || []).length} 条`];
-    // 「最近一条」带上 seq：这是最常被引用的目标（模型引用上一条别人的话时要用它）。
-    // 不给 seq 时模型得去未读列表里自己对号，实测经常串行引用错（差几条地错），
-    // 而且错了不报错、只能从群友反应看出来。
-    if (lastMsg) {
-      const seqTag = lastMsg.seq != null ? `（seq=${lastMsg.seq}）` : '';
-      // 【管理员】标记：群里管理员和群友的 sender 都是昵称，光看名字模型认不出谁是管理员
-      // （2026-10-15 用户要求「管理员发消息时机器人应该能够认出」）。
-      // 这是**客观状态描述**，不是命令——措辞按既有惯例保持中性，避免被当台词复述。
-      const ownerTag = identityTagOf(lastMsg);
-      // 同样不能只截开头：引用类消息里"真正对你说的话"在末尾（见 findCallers 处注释）。
-      const lastText = String(lastMsg.text || lastMsg.plain || '').trim();
-      const lastSummary = lastText.length <= 60 ? lastText : `${lastText.slice(0, 24)}…${lastText.slice(-36)}`;
-      statusBits.push(`最近一条来自 ${ownerTag}${String(lastMsg.sender || '未知')}${seqTag}：${lastSummary}`);
-    }
-    if (lastMsg && looksLikeUnfinished(String(lastMsg.tail || lastMsg.plain || lastMsg.text || ''))) statusBits.push('对方可能没说完');
-    if (lastAiMin != null) statusBits.push(`你上次发言 ${lastAiMin} 分钟前`);
-    // 最近的几条群友发言 + 各自 seq，做成"可引用清单"：
-    // 模型要引用比最新更早的某条时，直接从这份清单里挑一个 seq 抄过去即可，不必翻未读。
-    const recentOthers = [...(Array.isArray(st.recentMessages) ? st.recentMessages : [])]
-      .filter((m) => m && !m.isSelf && m.seq != null)
-      .slice(-4);
-    if (recentOthers.length > 1) {
-      const list = recentOthers
-        .map((m) => `seq=${m.seq} ${identityTagOf(m)}${String(m.sender || '某人').slice(0, 8)}：${String(m.text || m.plain || '').slice(0, 24)}`)
-        .join(' ｜ ');
-      statusBits.push(`最近几条（要引用哪条就用它的 seq）→ ${list}`);
-    }
-    // 分享卡片：文本里的链接可能被摘要截断，这里给完整链接（小红书等站点
-    // 少了 xsec_token 会直接打不开）。只取未读里最新的一条，避免提示词膨胀。
-    const shareMsg = [...(Array.isArray(st.unread) ? st.unread : [])]
-      .reverse()
-      .find((m) => m && !m.isSelf && m.shareUrl);
-    if (shareMsg) {
-      statusBits.push(`分享链接（${shareMsg.sharePlatform || '卡片'}，seq=${shareMsg.seq}）：${shareMsg.shareUrl}`);
-    }
-    // 把「你最近说过什么」明确列出来：群消息密集时，模型看不到自己的发言记录，
-    // 会把未读里早前的 @ 当新问题重答（实测「这条我答过两回了」）。
-    // 措辞保持中性（不给命令口吻），避免被当成台词复述出去。
-    const myRecent = [...(Array.isArray(st.recentMessages) ? st.recentMessages : [])]
-      .filter((m) => m && m.isSelf)
-      .slice(-3);
-    if (myRecent.length) {
-      const mine = myRecent.map((m) => `「${String(m.text || m.plain || '').slice(0, 30)}」`).join('');
-      statusBits.push(`你最近已说过：${mine}`);
-    }
-    // 「有人在叫你吗」必须由桥接明确判定：模型的别名（群名片 / 关键词如「大肥鱼」）
-    // 它自己不一定认得出，实测出现过「@大肥鱼 speak」被它判成「没人叫我」而只观察不回应。
-    // 同时区分「已答过 / 还没答」：群消息堆满未读上限时，早前的 @ 会一直躺在未读里，
-    // 模型每轮都当新问题重答，出现「这条我答过两回了」这种重复输出。
-    const calledBy = findCallersV2(key, st);
-    if (calledBy.length) {
-      // 摘要**不能只截开头**：引用类消息的结构是
-      //   "[引用 某人：[图片]]（被引用的这条消息含 1 个图片/表情。要看到它请调用 …）@大肥鱼 超分一下"
-      // 真正对你说的话在**末尾**。只取前 30 字，模型看到的是"引用…请调用工具…"，
-      // 完全看不到「@大肥鱼 超分一下」→ 实测它输出"没点我"就收尾了（2026-10-21 group:100001033）。
-      // 现在：短消息原样给；长消息保留开头 + 末尾（末尾更重要，因为指令通常在那儿）。
-      const showText = (m) => {
-        const t = String(m.text || m.plain || '').trim();
-        if (t.length <= 60) return t;
-        return `${t.slice(0, 24)}…${t.slice(-36)}`;
-      };
-      const fmt = (m) => `${identityTagOf(m)}${String(m.sender || '某人')}：${showText(m)}`;
-      // 措辞刻意保持「客观状态描述」而非「命令式强调」：早期用过 🚫/加粗/「绝对不要再回」
-      // 这类强措辞，结果模型把它当成台词直接说出口（实测群友收到「芙老师那句 666 我收到了，
-      // 这回不接第二遍」「那条我上一条已经交代过了，不再补一遍」——全是复述提示词，非常出戏）。
-      // 内部调度信息要写得像背景事实，不要像待办或宣言。
-      if (calledBy.pending.length) {
-        // 带上 seq：模型要引用"正在回的那条"时需要精确目标。不给 seq 时它会自己挑，
-        // 实测挑错过（回复请求 seq=15118 时引用成 15117，引用了上一条别人的图，且不报错）。
-        // 这里直接点名"该回哪条"，把 seq 摆到它面前。
-        const withSeq = calledBy.pending.slice(-3).map((m) => `${fmt(m)}（seq=${m.seq}）`).join('；');
-        statusBits.push(`有人新叫你（${withSeq}）`);
-      }
-      if (calledBy.answered.length) {
-        statusBits.push(`另有 ${calledBy.answered.length} 条 @ 你的是你已回过的（未读列表里的旧消息，无需再处理）`);
-      }
-    }
-    // 繁忙期间入队的消息可能已经被 30 条未读/100 条 recent 挤掉；快照必须显式摆出来。
-    // 不补这一句，模型只看到一个 atMention 原因，却找不到原文，典型表现就是“@ 它不回”。
-    const pendingMsg = st.pendingWakeMessage;
-    if (pendingMsg && typeof pendingMsg === 'object') {
-      const ptext = String(pendingMsg.text || pendingMsg.plain || '').trim();
-      const pshown = ptext.length <= 800 ? ptext : `${ptext.slice(0, 360)}…${ptext.slice(-360)}`;
-      if (pshown) {
-        statusBits.push(`此前繁忙期间漏看的消息：${identityTagOf(pendingMsg)}${String(pendingMsg.sender || '某人')}：${pshown}${pendingMsg.seq ? `（seq=${pendingMsg.seq}）` : ''}`);
-      }
-    }
-    // 拍你的事件：`findCallersV2` 刻意把拍一拍排除了（拍不是"叫你"，不该逼它回应），
-    // 但那是因为它被当成"喊话"。**拍你**仍然是冲你来的动作，尤其在 pokeSelf 唤醒时，
-    // 必须把"谁拍的你"摆到模型眼前——否则它只看到一堆普通未读，顺手 mark_read 就划走了。
-    // 实测（2026-10-20）：连续 5 次「戳了戳 你」，模型每轮都只回"这轮先到这儿"。
-    const pokeSelfs = (Array.isArray(st.unread) ? st.unread : [])
-      .filter((m) => m && !m.isSelf && m.poke?.targetIsSelf)
-      .slice(-3);
-    if (pokeSelfs.length) {
-      // 必须**带上 QQ 号**，否则模型手里没有任何可用目标。
-      //
-      // 实测事故（2026-10-22 group:100001006）：提示只说「有人戳了你（群友F）」，
-      // 而 qq_send_poke 要的是数字号。模型没有群友F的号，就复用上下文里残留下来的
-      // 另一个号（群友A 的 100001009），一路拍了十几次，群里被问「怎么一直戳我」。
-      // 现在直接把号摆出来，模型不需要记忆、也不需要猜。
-      const who = pokeSelfs
-        .map((m) => {
-          const uid = m.userId != null && /^[1-9]\d*$/.test(String(m.userId)) ? ` QQ=${m.userId}` : '';
-          return `${identityTagOf(m)}${String(m.sender || '某人')}${uid}`;
-        })
-        .join('、');
-      statusBits.push(
-        `有人戳了你（${who}）——这是冲你来的。回拍就把上面 QQ= 后面的数字原样传给 targetUserId，`
-        + `或者直接传 targetUserId="latest"（桥接会解析成最近戳你的人）；不要用记忆里别的号。`
-        + `不想回拍就回一句话`
-      );
-    }
-    const statusLine = `【此刻状态】${statusBits.join('；')}\n\n`;
-    const wc = st.wakeConfig || {};
-    const wcTr = wc.triggers || {};
-    const wcMode = wc.mode === 'active' ? '活跃' : '潜水';
-    const wcTime = wc.infinite ? '无限' : (wc.sleepUntil && Number.isFinite(Date.parse(wc.sleepUntil)) ? `有限至 ${new Date(wc.sleepUntil).toLocaleString()}` : '未设时间');
-    const wcTriggers = [];
-    if (wcTr.atMention) wcTriggers.push('@');
-    if (wcTr.nameMention) wcTriggers.push('名字');
-    if (Array.isArray(wcTr.keywords) && wcTr.keywords.length) wcTriggers.push('关键词');
-    if (wcTr.question) wcTriggers.push('提问');
-    if (wcTr.poke) wcTriggers.push('拍一拍');
-    if (Array.isArray(wcTr.speakerIds) && wcTr.speakerIds.length) wcTriggers.push(`指定成员(${wcTr.speakerIds.length}:${wcTr.speakerIds.join(',')})`);
-    if (wcTr.anyMessage) wcTriggers.push('任意消息');
-    if (Number(wcTr.probability) > 0) wcTriggers.push(`概率${wcTr.probability}`);
-    const wakeLine = `【当前唤醒】${wcMode}，${wcTime}${wcTriggers.length ? `；触发：${wcTriggers.join('/')}` : ''}\n\n`;
-    // complyLine 紧随令牌行、排在 antiAiLine **之前**：点单判定要压过「拒绝有求必应」的默认倾向。
-    // metaLine 放在最前（角色行之后）：防泄漏约束要早于所有内部小节出现。
-    const base = roleLine + metaLine + tokenLine + menuLine + tokenReportLine + voiceLine + complyLine + tokenAskLine + antiAiLine + proactiveLine + stickerLine + preSleepLine + wrapLine + statusLine + wakeLine + memoryLine + participationLine;
-    if (reason === 'bootstrap') {
-      return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是二代仿真模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看你的角色、推荐值、可用工具和当前状态，然后用 qq_set_wake_config 设置你希望如何被唤醒。`;
-    }
-    if (reason === 'timeout') {
-      return `${base}【唤醒】${key}\n原因：你设置的有限潜水时间已到；在你规定的时间内没有任何一项条件被触发，只是因为时间到了所以你被唤醒。\n你可以查看消息，或继续设置新的唤醒条件。`;
-    }
-    if (reason === 'replyCheck') {
-      return `${base}【回复检查】${key}
-原因：你刚刚发送过消息，现在回来检查是否有人回复。
-先查看未读消息：有人回了就正常接话；没人回你，不用硬补一句，也不要反复长等待——直接结束本回合即可，桥接会稍后再次检查。只有准备直接潜水、且本回合还没发过言时，才按上面的【沉睡前强制等待】完成一次观察。`;
-    }
-    if (reason === 'proactiveCheck') {
-      return `${base}【主动机会】${key}\n原因：群里已经安静了一段时间，这是一次你可以主动冒泡的机会。\n优先主动开个话题、追问上次没聊完的事、分享一个刚想到的想法；如果一时想不到，可以用 mcp__web-search-safe__web_search 搜一下当前热点/时事/网络热梗，再结合记忆里的群友兴趣挑一个自然角度。只要内容自然，就大胆开口；如果实在没话想说，再安静收尾（qq_mark_read 或 qq_set_wake_config）。`;
-    }
-    if (reason === 'pokeSelf') {
-      return `${base}【唤醒】${key}\n原因：**有人拍了你**（拍一拍的目标就是你）。\n这是冲你来的动作，必须回应——哪怕只回一个拍一拍（qq_send_poke）或一句短话（「诶？」「干嘛」「在」），别装没看见。真人被戳了不会一声不吭。\n**回拍的对象就是上面【此刻状态】里那个戳你的人**：直接用他后面的 QQ= 数字，或者传 targetUserId="latest"，桥接会解析成最近戳你的人；不要凭记忆填一个号（填错就会拍到别人身上）。\n回完就收尾（qq_mark_read 或 qq_set_wake_config），不用长篇大论。`;
-    }
-    if (reason === 'poke') {
-      return `${base}【唤醒】${key}\n原因：群里有人拍了别人（**不是拍你**）。\n看一眼就好：觉得有趣可以接个梗，但别把别人的互动抢过来，也不必每次都说话。没有想说的就安静收尾（qq_mark_read 或 qq_set_wake_config）。`;
-    }
-    return `${base}【唤醒】${key}\n原因：${reason}\n【行动前】先判断：群里在聊什么？热闹还是冷清？有没有人直接找你？对方说完了吗？你有没有真正想说的？\n如果群聊正热但没人叫你，可以插一句有趣的/相关的，插不上再看情况潜水；不要一上来就划走。\n【引用：只在必要时用】只有你这条消息指向的人或消息并非最新一条别人的消息，或者你连续的几句话中不同消息指代的是不同的消息或人时，才用 qq_reply 或 qq_send_message 的 replyToMessageId 指向具体那条；其他情况不要引用，别让对方猜。**要引用时优先传 messageId；只记得大概位置就传 seq；不确定目标到底哪条就传 latest**（= 最近一条别人的消息）——不要凭记忆猜编号，猜错的编号照样能解析到另一条真实消息，会静默引用错，只有群友看得出来。\n你可以调用工具查看未读消息、人设、状态，自行决定是否发言；决定潜水前必须按上面的【沉睡前强制等待】先等够观察窗口。`;
+  function buildWakePromptV2(key, reason) {
+    return wakePrompts.buildWakePrompt(key, reason);
   }
 
   function buildWakeReminderPromptV2(key) {
-    const roleState = readRoleState();
+    const roleName = roleFor(key);
     // 与主唤醒提示一致：角色卡正文要直接给，不能只给名字。
     // 这条提醒是「模型忘了收尾」时补发的，措辞若只催"收尾"，它会直接
     // qq_set_wake_config 潜水，把还没回的 @ 一起带走。
-    const roleCard = roleState.role ? currentRoleHintV2() : '';
-    const roleLine = roleState.role
-      ? `【当前角色】${roleState.role}\n\n${roleCard ? roleCard.trim() + '\n\n' : ''}`
+    const roleCard = roleName ? currentRoleHintV2(key) : '';
+    const roleLine = roleName
+      ? `【当前角色】${roleName}\n\n${roleCard ? roleCard.trim() + '\n\n' : ''}`
       : '';
     const st = getSocialV2State(key);
     const tokenLine = `【会话令牌】${st.agentToken}（调用二代状态工具时请在参数中带上此令牌）\n\n`;
@@ -13579,6 +6382,54 @@ async function main() {
   }
 
   /**
+   * 情节摘要器 usage 记账。
+   *
+   * 为什么单独记：摘要器直连 :7863 网关，不经过 DSH，所以 DSH 转录里
+   * 没有它的 usage——控制台过去的"累计"少算了这一块。摘要频率低（每会话
+   * 15 分钟一次左右），直接读改写 token-usage.json 足够，失败只记日志，
+   * **不能影响摘要生成本身**。
+   */
+  function recordSummarizerUsage(key, usage = {}) {
+    const k = String(key || '');
+    if (!/^(group|private):\d+$/.test(k)) return;
+    const now = Date.now();
+    const day = dayKey(now);
+    const input = Number(usage.input) || 0;
+    const output = Number(usage.output) || 0;
+    const cacheRead = Number(usage.cacheRead) || 0;
+    try {
+      const disk = loadTokenUsage() || {
+        updatedAt: now, days: {}, models: {}, dayModels: {}, sessions: {}, summarizer: {}, turns: 0, calls: 0
+      };
+      if (!disk.summarizer || typeof disk.summarizer !== 'object') disk.summarizer = {};
+      const bucket = disk.summarizer[k] || { input: 0, output: 0, cacheRead: 0, calls: 0, days: {} };
+      bucket.input += input;
+      bucket.output += output;
+      bucket.cacheRead += cacheRead;
+      bucket.calls += 1;
+      if (!bucket.days || typeof bucket.days !== 'object') bucket.days = {};
+      const d = bucket.days[day] || { input: 0, output: 0, cacheRead: 0, calls: 0 };
+      d.input += input;
+      d.output += output;
+      d.cacheRead += cacheRead;
+      d.calls += 1;
+      bucket.days[day] = d;
+      disk.summarizer[k] = bucket;
+      atomicWriteJson(TOKEN_USAGE_FILE, disk);
+      if (tokenUsage) tokenUsage.summarizer = disk.summarizer;
+      const m = contextMetrics.get(k) || {};
+      m.lastSummaryTokens = input + output;
+      m.lastSummaryAt = now;
+      contextMetrics.set(k, m);
+      if (usage.hasUsage === false) {
+        log(`[Token] 摘要器 ${k} 调用已记账，但网关响应没有 usage 字段（只记次数）`);
+      }
+    } catch (error) {
+      log(`[Token] 摘要器用量记账失败（不影响摘要）：${error?.message ?? error}`);
+    }
+  }
+
+  /**
    * 重新统计并落盘。
    * @param {{force?:boolean}} opts force=true 时不复用缓存（全量重解）
    */
@@ -13615,9 +6466,16 @@ async function main() {
 
       const agg = aggregateTokenUsage(roots, {
         cache: opts.force ? {} : (prev?.cache || {}),
-        maxFiles: 400
+        maxFiles: 400,
+        // 历史映射负责轮换前的旧 sessionId；当前 state.sessions 优先，
+        // 防止历史里同一 session 的 key 因后续重置被改写时口径漂移。
+        sessionKeys: sessionHistory.mapping(),
+        currentSessions: state.sessions
       });
 
+      // 摘要器可能在 15 秒扫描期间刚好完成一次调用并写盘；重读一次合并，
+      // 避免本次 refresh 用开始时读到的旧 summarizer 把它覆盖掉。
+      const latest = loadTokenUsage();
       const out = {
         updatedAt: Date.now(),
         // 按天（上海时区 YYYY-MM-DD）
@@ -13626,6 +6484,10 @@ async function main() {
         // 按天 × 按模型的联合分布：控制台「按日审阅」用它按所选日期取明细。
         // 不能从 days/models 事后反推（边际汇总推不出联合分布）。
         dayModels: agg.dayModels || {},
+        // 按 sessionId 分桶：会话级报表的数据源。轮换后的旧会话不会丢。
+        sessions: agg.sessions || {},
+        // 情节摘要器直连网关、不经过 DSH，转录里没有它的 usage；由 onUsage 单独记账。
+        summarizer: latest?.summarizer || prev?.summarizer || {},
         turns: agg.turns,
         calls: agg.calls,
         files: agg.files,
@@ -13700,391 +6562,37 @@ async function main() {
     log(`[B站] 下次自己刷：${Math.round(biliNextDelay / 60000)} 分钟后`);
   }
 
-  /**
-   * 统计某个群会话的"活跃度"：近 N 小时群友发了多少条**非自己**的消息。
-   *
-   * 为什么不用 lastActionAt：那只说明"最后一条是什么时候"，
-   * 一个昨天热闹、今天没人说话的群它的值也是旧的；而"活跃"要看**持续的消息量**。
-   * 也不能只看 recentMessages 的长度——它是有上限的滚动窗口（100 条），
-   * 所以统计时必须**按时间过滤**，不能拿数组长度当活跃度。
-   *
-   * @param {object} st 会话状态
-   * @param {{hours?:number, now?:number}} opts
-   * @returns {number} 窗口内群友消息条数（排除机器人自己）
-   */
-  function groupActivityScore(st, opts = {}) {
-    const hours = Math.max(0.1, Number(opts.hours) || 24);
-    const now = Number(opts.now) || Date.now();
-    const from = now - hours * 3600 * 1000;
-    const msgs = Array.isArray(st?.recentMessages) ? st.recentMessages : [];
-    let n = 0;
-    for (const m of msgs) {
-      if (!m || m.isSelf) continue;              // 机器人自己的发言不算群活跃
-      const t = Number(m.time) || 0;
-      if (t > 0 && t >= from) n += 1;
+  // 选群与浏览编排显式接线；模式、观看记录和时间戳必须实时读写。
+  const { groupActivityScore, pickBiliSessionKey, maybeShareBiliVideo } = createBiliSharing({
+    cfg, socialV2, isSessionAllowedInCurrentMode, isConversationBusyV2, shouldBlockSilentReply,
+    sendToQQ: (...args) => sendToQQ(...args), askModelOnce, log, live: {
+      get currentMode() { return currentMode; },
+      get lastBiliShareAt() { return lastBiliShareAt; },
+      set lastBiliShareAt(value) { lastBiliShareAt = value; }
     }
-    return n;
-  }
-
-  /**
-   * 选一个群会话作为刷视频的落脚点（它得有个会话才能把画面交给模型）。
-   *
-   * 2026-10-21 用户要求：「B站视频推荐更多推荐给活跃的群聊而不是非活跃的」。
-   *
-   * 旧实现是"取 lastActionAt 最久没动静的那个"——那是**优先冷群**，
-   * 与需求正好相反。现在的规则：
-   *   ① 硬门槛：**近 `activeWindowHours`（默认 24h）群友发言数 ≥ `minActivityForShare`（默认 1）**
-   *      才作为候选。完全没人说话的群不推荐（推了也没人看见，还浪费时间）。
-   *   ② 候选内按活跃度**加权随机**（权重 = 发言数，有 `activityWeightCap` 上限防垄断）。
-   *      不做纯"取最活跃"——那会让同一个群天天被推荐，其余群永远轮不到。
-   */
-  function pickBiliSessionKey(opts = {}) {
-    const sb = cfg.socialV2?.bili?.selfBrowsing ?? {};
-    const shareCfg = cfg.socialV2?.bili?.share ?? {};
-    // 是否启用"优先活跃群"。默认开；关掉则退回旧的"最闲"策略。
-    const preferActive = opts.preferActive ?? (shareCfg.preferActiveGroups !== false);
-    const windowHours = Math.max(1, Number(shareCfg.activeWindowHours) || 24);
-    const minActivity = Math.max(0, Number(opts.minActivity ?? shareCfg.minActivityForShare) || 0);
-    const cap = Math.max(1, Number(shareCfg.activityWeightCap) || 50);
-    const now = Date.now();
-
-    const candidates = [];
-    for (const [key, st] of socialV2.conversations) {
-      if (!key.startsWith('group:')) continue;
-      if (!isSessionAllowedInCurrentMode(key)) continue;
-      // 有未读/繁忙的跳过：别在人正聊着的时候插进来刷视频
-      if (isConversationBusyV2(key, st)) continue;
-      if (Array.isArray(st.unread) && st.unread.length > 0) continue;
-      const activity = groupActivityScore(st, { hours: windowHours, now });
-      // 没指定 minActivity 时（内部刷视频选落脚点）不设活跃门槛——
-      // 刷视频本身只需要一个能承载画面的会话，冷群也可以。
-      // 只有"推荐到群里"这条路径才要求群真的在说话（见 runBiliBrowse）。
-      if (opts.requireActive === true && activity < Math.max(1, minActivity)) continue;
-      candidates.push({
-        key,
-        activity,
-        lastActionAt: Number(st.lastActionAt) || 0,
-        weight: Math.min(cap, Math.max(1, activity))
-      });
+  });
+  const { runBiliBrowse } = createBiliRuntime({
+    cfg, socialV2, log, scheduleBiliBrowse, pickBiliSessionKey, biliBrowseState,
+    isTokenFused: (key) => tokenFuse.isFused(key),
+    rememberBiliInfo, judgeBiliScan, deliverBiliPrompt, maybeShareBiliVideo,
+    live: {
+      get biliMem() { return biliMem; },
+      set biliMem(value) { biliMem = value; },
+      get biliBrowsing() { return biliBrowsing; },
+      set biliBrowsing(value) { biliBrowsing = value; },
+      get lastBiliBrowseAt() { return lastBiliBrowseAt; },
+      set lastBiliBrowseAt(value) { lastBiliBrowseAt = value; },
+      get lastBiliSearchKeyword() { return lastBiliSearchKeyword; },
+      set lastBiliSearchKeyword(value) { lastBiliSearchKeyword = value; },
+      get biliAuth() { return biliAuth; },
+      set biliAuth(value) { biliAuth = value; },
+      get asrEngine() { return asrEngine; },
+      set asrEngine(value) { asrEngine = value; },
+      get lastBiliWatch() { return lastBiliWatch; },
+      set lastBiliWatch(value) { lastBiliWatch = value; },
     }
-    if (!candidates.length) return null;
+  });
 
-    if (!preferActive) {
-      // 旧行为：最久没动静的那个（最闲）
-      candidates.sort((a, b) => a.lastActionAt - b.lastActionAt);
-      return candidates[0].key;
-    }
-
-    // 按活跃度加权随机
-    const total = candidates.reduce((a, c) => a + c.weight, 0);
-    let r = Math.random() * total;
-    for (const c of candidates) {
-      r -= c.weight;
-      if (r <= 0) return c.key;
-    }
-    return candidates[candidates.length - 1].key;
-  }
-
-  /**
-   * 跑一次「自己刷」。
-   *
-   * @param {{manual?:boolean}} opts manual=true 表示管理员在控制台点的「现在刷一条」：
-   *   **跳过"距上次太近"的间隔限制**（否则点了没反应——这正是 2026-10-19 用户报的现象），
-   *   但仍受每日额度约束（手动刷也算看了视频）。
-   */
-  async function runBiliBrowse(opts = {}) {
-    const manual = opts.manual === true;
-    const b = cfg.socialV2?.bili ?? {};
-    const sb = b.selfBrowsing ?? {};
-    if (b.enabled === false || !biliMem) return { ok: false, reason: 'B 站功能未启用' };
-    // 暂停只停"自动排期"，**不拦手动触发**——手动是你明确让它看一条，不是自主行为。
-    // 但返回里带上 paused 标记，控制台据此提示"当前是暂停状态，这条是手动触发的"，
-    // 免得用户以为暂停没生效。
-    const manualWhilePaused = manual && sb.enabled === false;
-    if (biliBrowsing) {
-      log('[B站] 上一轮还没结束，跳过这次');
-      if (!manual) scheduleBiliBrowse();
-      return { ok: false, reason: '上一轮还没结束' };
-    }
-    // 额度：按今日已用秒数判断
-    const today = biliMem.todayUsage();
-    const gate = canSelfBrowse({
-      budgetSec: sb.dailyBudgetSec,
-      todaySeconds: today.seconds,
-      // 手动触发不受间隔限制：把 lastAt 置 0 让间隔检查必然通过
-      lastAt: manual ? 0 : lastBiliBrowseAt,
-      minIntervalMs: manual ? 0 : sb.minIntervalMs
-    });
-    if (!gate.allowed) {
-      log(`[B站] 跳过自己刷：${gate.reason}（剩余额度 ${Math.round(gate.remainingSec)}s）`);
-      if (!manual) scheduleBiliBrowse();
-      return { ok: false, reason: gate.reason };
-    }
-    // 只在潜水时刷（用户没要求，但 active 时刷会抢回复；配成 false 可关闭此限制）
-    if (sb.onlyWhenDiving !== false) {
-      const anyActive = [...socialV2.conversations.entries()]
-        .some(([k, st]) => k.startsWith('group:') && st.phase === 'active');
-      if (anyActive) {
-        log('[B站] 有群正在活跃，这次不刷');
-        if (!manual) scheduleBiliBrowse();
-        return { ok: false, reason: '有群正在活跃（潜水时才刷）' };
-      }
-    }
-    // 落脚群（承载模型会话）与"推荐目标群"是两件事：
-    //   - 落脚群：任一空闲会话即可，冷群也行（只要能承载画面）；
-    //   - 推荐目标：用户要求「更多推荐给活跃的群聊」——必须是真的有人在说话的群。
-    // 旧实现把两者绑在一起，而选群规则是"最久没动静的"，于是推荐总落在冷群里。
-    const key = pickBiliSessionKey();
-    if (!key) {
-      log('[B站] 没有空闲会话可以落脚，跳过这次');
-      if (!manual) scheduleBiliBrowse();
-      return { ok: false, reason: '没有空闲会话可以落脚' };
-    }
-    // 预览推荐会落在哪个群（不设活跃门槛时返回 null，由 maybeShareBiliVideo 决定不发）
-    const shareKey = pickBiliSessionKey({ requireActive: true });
-
-    biliBrowsing = true;
-    biliBrowseState.startedAt = Date.now();
-    biliBrowseState.key = key;
-    biliBrowseState.video = null;
-    biliBrowseState.phase = 'fetching-list';
-    try {
-      // 候选池 = 热门榜多页 **+ 主动搜索**（2026-10-19 加搜索）。
-      //
-      // 为什么要搜索：热门榜是"别人决定给你看什么"，只有搜索才能主动找
-      // "我喜欢的那类"。关键词来自：群友常玩的游戏 → 记忆里喜欢过的标签 → 分区兜底。
-      //
-      // 搜索接口的前提（实测）：`search/type` 在**完全不带 cookie** 时返回
-      // `-412 request was banned`；带上任意 buvid3 就正常返回 20 条/页。
-      // 所以凭据不是"必须登录"，而是"必须有设备/登录标识"——见 bili-auth.js。
-      //
-      // 注：分区榜 `ranking/v2?rid=4` 实测持续 -352（真风控），仍未使用。
-      const pages = Math.max(1, Math.min(5, Number(sb.poolPages) || 3));
-      const poolResults = await Promise.all(
-        Array.from({ length: pages }, (_, i) =>
-          fetchPopularVideos({ count: 50, page: i + 1 }).catch(() => []))
-      );
-
-      // 口味归纳只读一次：选片和搜索关键词都要用（taste() 每次都会读盘+统计）
-      const taste = biliMem.taste(10);
-
-      // 搜索候选：每次随机挑一个关键词（避免总搜同一个）
-      let searchHits = [];
-      if (sb.search?.enabled !== false) {
-        try {
-          const keywords = buildSearchKeywords(
-            { likedTags: taste.totalTags, categories: taste.categories },
-            sb.search?.gamesOnly === true
-              ? GAME_KEYWORDS.map((g) => g.name)
-              : GAME_KEYWORDS.map((g) => g.name),
-            { max: Number(sb.search?.maxKeywords) || 6 }
-          );
-          const kw = pickSearchQuery(keywords);
-          if (kw) {
-            biliBrowseState.phase = 'searching';
-            lastBiliSearchKeyword = kw;
-            const order = ['totalrank', 'pubdate', 'click'].includes(sb.search?.order)
-              ? sb.search.order : 'totalrank';
-            searchHits = await searchVideos(kw, biliAuth, {
-              count: Number(sb.search?.count) || 20,
-              order
-            });
-            if (searchHits.length) {
-              log(`[B站] 主动搜索「${kw}」得到 ${searchHits.length} 条`);
-            }
-          }
-        } catch (error) {
-          // 搜索失败不影响热门榜那条路（降级而非中断）
-          log(`[B站] 搜索失败（改用热门榜）：${error?.message ?? error}`);
-        }
-      }
-
-      // 按 bvid 去重（热门各页、热门与搜索之间都可能重叠）
-      const seenIds = new Set();
-      const list = [];
-      for (const v of [...poolResults.flat(), ...searchHits]) {
-        if (!v?.bvid || seenIds.has(v.bvid)) continue;
-        seenIds.add(v.bvid);
-        list.push(v);
-      }
-      biliBrowseState.phase = 'picking';
-      const pick = pickCandidate(list, (bvid) => biliMem.get(bvid), {
-        cooldownMs: sb.seenCooldownMs,
-        // 分区偏好：默认偏向二次元/游戏/科技/社会热点（见 bili-browse.js 的权重表）。
-        weights: sb.categoryWeights,
-        // 群友常玩的游戏额外加权（用户要求"多看这些"）
-        gameBoost: sb.gameBoost,
-        preferGames: sb.preferGames !== false,
-        // 把记忆里的高频标签带上，让"我喜欢什么"能自我强化（上限 2 倍，不会垄断）
-        likedTags: taste.totalTags,
-        // 喜欢过的 UP 主（≥2 次才加分）：比标签更硬的偏好信号
-        likedOwners: taste.owners
-      });
-      if (!pick) {
-        log('[B站] 候选都看过（冷却期内），这次不刷');
-        return { ok: false, reason: '候选都在冷却期内（最近都看过）' };
-      }
-      biliBrowseState.video = { bvid: pick.bvid, title: pick.title, owner: pick.owner, category: pick.category };
-      biliBrowseState.phase = 'downloading';
-
-      // ── 两段式观看：先浅看判断，喜欢再多看一段 ──────────────────────────
-      //
-      // 为什么改成两段（2026-10-19 用户问「为什么总是只看 8s11 帧，不是说感兴趣就多看吗」）：
-      //   原实现**先定看多深、再去看**，而"喜不喜欢"要看完才知道，所以永远走
-      //   `watchDepth(null)` 的中庸分支（8s/11 帧），`framesLiked`/`framesDisliked` 从未生效。
-      // 现在的顺序：浅看（6s/6 帧）→ 让模型只回一行 JSON 判断 → 喜欢则追加到 120s/120 帧。
-      //
-      // 采样密度（2026-10-19 用户要求「帧间隔缩短一些，最好一秒取样一次」）：
-      //   帧数不再跟 `framesLiked/framesDisliked` 死绑，而是**按秒数 × framesPerSecond** 算。
-      //   120 秒按 1 帧/秒 = 120 帧，超过每张拼图 30 格的上限 → 自动切成 4 张图
-      //   （见 bili.js 的分页拼图）。所以"看得更细"不会把单帧压成看不清的小方块。
-      //
-      // 额度：两段的总秒数都要记进"今日已看"，且不超过剩余额度。
-      const remain = Math.max(1, gate.remainingSec);
-      const density = Math.max(0.1, Math.min(4, Number(sb.framesPerSecond) || 1));
-      const maxFramesTotal = Math.max(8, Math.min(120, Number(sb.maxFramesTotal) || 120));
-      const framesFor = (sec) => Math.min(maxFramesTotal, Math.max(1, Math.round(sec * density)));
-      const tilesPerSheet = Math.max(4, Math.min(36, Number(sb.tilesPerSheet) || 30));
-      // 浅看用"不喜欢"的深度（扫一眼），喜欢才追加到"喜欢"的深度。
-      // 秒数取配置里 twoPass 的值，没有就按帧数比例给默认（6s / 120s）。
-      const scanSeconds = Math.min(
-        Number(sb.scanSeconds) || Number(sb.dislikedSeconds) || 6,
-        remain
-      );
-      const likeSeconds = Math.min(
-        Number(sb.likedSeconds) || 120,
-        Number(sb.maxSecondsPerVideo) || 240,
-        remain
-      );
-
-      biliBrowseState.phase = 'scanning';
-      const scan = await watchVideo(pick.bvid, {
-        info: pick,
-        seconds: scanSeconds,
-        frames: framesFor(scanSeconds),
-        tilesPerSheet,
-        // 声音内容：有字幕用字幕，没字幕用本地 ASR（见 bili-browse 的说明）
-        asr: asrEngine,
-        asrEnabled: !!asrEngine,
-        asrTimeoutMs: Number(sb.asrTimeoutMs) || 120000
-      });
-      if (!scan.ok) {
-        log(`[B站] 看 ${pick.bvid} 失败：${scan.error}`);
-        lastBiliWatch = { bvid: pick.bvid, title: pick.title, ok: false, error: scan.error, at: Date.now() };
-        return { ok: false, reason: `看视频失败：${scan.error}` };
-      }
-      // 缓存元信息（含简介），供模型稍后 qq_bili_record 时补全
-      rememberBiliInfo(scan.info, scan.grid);
-
-      // 第一段交给模型做初判（只回 JSON，不发群）
-      let verdict = { liked: null, interest: null, tags: [], notes: '' };
-      try {
-        biliBrowseState.phase = 'judging';
-        const judged = await judgeBiliScan(key, pick, scan);
-        if (judged) verdict = judged;
-      } catch (error) {
-        log(`[B站] 初判失败（按"没判断出来"继续）：${error?.message ?? error}`);
-      }
-
-      // 喜欢且额度够 → 追加观看（时间窗口变长，不是另截一段）
-      let finalWatch = scan;
-      let extended = false;
-      if (verdict.liked === true && likeSeconds > scanSeconds) {
-        biliBrowseState.phase = 'extending';
-        const longer = await watchVideo(pick.bvid, {
-          info: pick,
-          seconds: likeSeconds,
-          frames: framesFor(likeSeconds),
-          tilesPerSheet,
-          asr: asrEngine,
-          asrEnabled: !!asrEngine,
-          asrTimeoutMs: Number(sb.asrTimeoutMs) || 120000
-        });
-        if (longer.ok) {
-          finalWatch = longer;
-          extended = true;
-        } else {
-          log(`[B站] 追加观看失败，保留第一次的画面：${longer.error}`);
-        }
-      }
-
-      const watchedSeconds = extended ? likeSeconds : scanSeconds;
-      // 记账按**实际拿到的帧数**（抽帧可能因超时/源限制少于请求值）
-      const watchedFrames = Number(finalWatch.grid?.frames) || framesFor(watchedSeconds);
-      // 追加观看后字幕窗口更长：用最终的覆盖一次缓存（同一 bvid 直接覆盖）
-      if (extended) rememberBiliInfo(finalWatch.info, finalWatch.grid);
-
-      // 记账：按实际观看秒数
-      biliMem.addUsage(watchedSeconds);
-      lastBiliBrowseAt = Date.now();
-      lastBiliWatch = {
-        bvid: finalWatch.info.bvid, title: finalWatch.info.title,
-        owner: finalWatch.info.owner, category: finalWatch.info.category,
-        seconds: watchedSeconds, frames: watchedFrames,
-        extended, liked: verdict.liked, interest: verdict.interest,
-        ok: true, at: Date.now(), key
-      };
-
-      biliBrowseState.phase = 'delivering';
-      // 判断已经做过了：喜欢的走"继续看"提示词（要求记录），不喜欢/没判断的直接记录
-      const prompt = extended
-        ? buildExtendedPrompt(finalWatch.info, finalWatch.hint, verdict.notes)
-        : buildBrowsePrompt(finalWatch.info, finalWatch.hint, finalWatch.grid);
-      await deliverBiliPrompt(key, prompt, finalWatch.grid);
-      biliBrowseState.phase = 'done';
-      log(`[B站] 自己刷了《${finalWatch.info.title.slice(0, 30)}》`
-        + `(${watchedSeconds}s / ${watchedFrames} 帧${extended ? '，初判喜欢已追加' : '，扫一眼就过'}) → ${key}`);
-
-      // ── 推荐分享（用户要求「推荐视频时顺便给出标题和链接」）──
-      // 条件：喜欢 + 兴趣分够 + 概率命中 + 距上次分享够久。
-      // 分享内容 = 标题 + 链接 + 一句推荐语，**由模型自己组织**（不是模板文案），
-      // 这样才像人说话；但链接和标题必须原样给出，不能让模型自己编。
-      let shared = null;
-      if (verdict.liked === true) {
-        try {
-          // 推荐发到活跃群；没有活跃群时 shareKey 为 null，maybeShareBiliVideo 会跳过
-          shared = await maybeShareBiliVideo(shareKey, finalWatch.info, verdict);
-        } catch (error) {
-          log(`[B站] 分享失败（不影响观看）：${error?.message ?? error}`);
-        }
-      }
-
-      return {
-        ok: true,
-        video: {
-          bvid: finalWatch.info.bvid, title: finalWatch.info.title,
-          owner: finalWatch.info.owner, category: finalWatch.info.category
-        },
-        seconds: watchedSeconds,
-        frames: watchedFrames,
-        extended,
-        liked: verdict.liked,
-        shared: shared || undefined,
-        // 暂停状态下手动触发的：控制台要能说明"这条是手动点的，不是它自己又开始刷了"
-        manualWhilePaused: manualWhilePaused || undefined,
-        key
-      };
-    } finally {
-      biliBrowsing = false;
-      biliBrowseState.phase = '';
-      biliBrowseState.startedAt = 0;
-      biliBrowseState.video = null;
-      biliBrowseState.key = '';
-      scheduleBiliBrowse();
-    }
-  }
-
-  /**
-   * 让模型对"浅看"的画面做初判，并**同步等它回一行 JSON**。
-   *
-   * 为什么需要单独的等待机制：现有的 collector 是全局事件循环驱动的、且与
-   * "会话是否繁忙"绑定，不适合在一个函数里同步拿结果。这里用一次性的
-   * `biliJudgeWaiters`（sessionId → resolve）实现：
-   *   投递 prompt 前登记，事件流收到该 session 的 turn/end 时把文本回填。
-   *
-   * 超时/异常一律返回 null（调用方按"没判断出来"处理，只保留第一段画面），
-   * 绝不让一次判断失败卡住整个刷视频流程。
-   */
   /** 记住看过的视频元信息（含简介），供模型稍后记录时补全。 */
   function rememberBiliInfo(info, grid) {
     if (!info?.bvid) { log('[B站] rememberBiliInfo: 无 bvid，跳过'); return; }
@@ -14107,6 +6615,8 @@ async function main() {
       biliInfoCache.delete(oldest);
     }
   }
+  // 初判使用独立 waiter，投递前登记，并只接受匹配 turn/turnId 的回填；
+  // 超时或异常返回 null，调用方只保留第一段画面，不能阻塞整个浏览流程。
   async function judgeBiliScan(key, info, scan) {
     const sessionId = await ensureSession(key);
     // 投递前再确认一次：挑会话和真正投递之间隔了几秒（要下载视频），
@@ -14126,12 +6636,16 @@ async function main() {
       const timeoutMs = Math.max(30000, Number(cfg.socialV2?.bili?.selfBrowsing?.judgeTimeoutMs) || 150000);
       const timer = setTimeout(() => {
         biliJudgeWaiters.delete(sessionId);
+        biliJudgeCollectors.delete(sessionId);
         log(`[B站] 初判超时（${sessionId}，${Math.round(timeoutMs / 1000)}s），按"没判断出来"处理`);
         resolve('');
       }, timeoutMs);
       timer.unref?.();
       biliJudgeWaiters.set(sessionId, {
         token,
+        turn: null,
+        turnId: null,
+        collector: null,
         resolve: (t) => {
           clearTimeout(timer);
           biliJudgeWaiters.delete(sessionId);
@@ -14183,88 +6697,6 @@ async function main() {
    *
    * @returns {Promise<{ok:boolean, messageId?:any, reason?:string}>}
    */
-  async function maybeShareBiliVideo(key, info, verdict) {
-    const share = cfg.socialV2?.bili?.share ?? {};
-    if (share.enabled === false) return { ok: false, reason: '分享已关闭' };
-    // 没有"活跃群"可推荐时就不发。用户要求「更多推荐给活跃的群聊」——
-    // 推到没人说话的群里既没人看，也会让那个群显得像公告板。
-    if (!key) {
-      return {
-        ok: false,
-        reason: `最近 ${Math.max(1, Number(share.activeWindowHours) || 24)} 小时内没有群达到活跃门槛`
-          + `（至少 ${Math.max(1, Number(share.minActivityForShare) || 1)} 条群友发言），这次不推荐`
-      };
-    }
-
-    const interest = Number(verdict?.interest) || 0;
-    // 默认门槛 65（2026-10-20 从 75 下调）。
-    // 为什么：实际 56 条"喜欢"的视频里 interest 中位数只有 68、最高 82，
-    // ≥75 的只有 25%。再乘 30% 概率、6 小时间隔，等于推荐功能几乎从不触发。
-    // 65 覆盖约 70% 的喜欢视频，既能真的偶尔推荐，也不会推无聊的。
-    const minInterest = Number(share.minInterest) || 65;
-    if (interest < minInterest) {
-      return { ok: false, reason: `兴趣分 ${interest} 未达 ${minInterest}` };
-    }
-
-    // 全局间隔：不管哪个群，两次推荐之间至少隔 minGapMs
-    const minGap = Math.max(0, Number(share.minGapMs) || 6 * 3600 * 1000);
-    if (lastBiliShareAt && Date.now() - lastBiliShareAt < minGap) {
-      return { ok: false, reason: '距上次推荐太近' };
-    }
-
-    const prob = Math.min(1, Math.max(0, Number(share.probability) ?? 0.3));
-    if (Math.random() > prob) return { ok: false, reason: `未命中概率（${prob}）` };
-
-    // URL 用 bvid 拼，而不是从接口拿（接口给的链接可能带过期参数）
-    const url = `https://www.bilibili.com/video/${info.bvid}`;
-    const title = String(info.title || '').trim();
-    const owner = String(info.owner || '').trim();
-
-    // 推荐语由模型写；失败就用中性兜底（绝不把机制说出来）
-    let lead = '';
-    if (share.askModel !== false) {
-      lead = await composeBiliRecommendation(key, info, verdict);
-    }
-    if (!lead) {
-      lead = owner ? `刷到个「${owner}」的视频，还挺对味` : '刚刷到个视频，挺对味';
-    }
-
-    // 分两条发：先说一句，再单独发「标题 + 链接」
-    // —— 合成一条在群里容易折行错乱，而且链接单独一行更好点。
-    const text = `${lead}\n\n《${title}》\n${url}`;
-    await sendToQQ(key, text);
-    lastBiliShareAt = Date.now();
-    log(`[B站] 已推荐给 ${key}：《${title.slice(0, 26)}》兴趣 ${interest} → ${url}`);
-    return { ok: true, url, title };
-  }
-
-  /** 让模型写一句自然的推荐语（不暴露机制、不自称在刷视频）。 */
-  async function composeBiliRecommendation(key, info, verdict) {
-    try {
-      const prompt = `【写一句推荐语】
-你刚看了一个 B 站视频，觉得不错，想在群里顺手提一句（像人分享刚看到的好东西）。
-
-标题：${info.title}
-UP主：${info.owner || '未知'}｜分区：${info.category || '未知'}
-你的感受：${verdict?.notes || '挺有意思'}
-你的标签：${(verdict?.tags || []).join('、') || '无'}
-
-要求：
-- 只写**一句**自然的话（15~40 字），像随口分享，不要用"推荐""安利"这类正式词。
-- 不要说"我在刷 B 站""根据我的分析"这类暴露机制的话，也不要提任何数字/分值。
-- 不要写标题、不要写链接（系统会自动附在下面）。
-- 直接输出这句话，不要加引号、不要解释。`;
-      const text = await askModelOnce(key, prompt, 60000);
-      const line = String(text || '').trim().split('\n').map((s) => s.trim()).filter(Boolean)[0] || '';
-      // 防御：模型有时会把标题/链接也写进来，或超长
-      if (!line || line.length > 80) return '';
-      if (/https?:\/\//.test(line)) return '';
-      return line.replace(/^["「『]|["」』]$/g, '').trim();
-    } catch {
-      return '';
-    }
-  }
-
   /**
    * 向某个会话投一条 prompt，等模型回一段文本（复用初判那套 waiter 机制）。
    * 与 judgeBiliScan 的区别：这里只是要一句话，不解析 JSON。
@@ -14274,12 +6706,16 @@ UP主：${info.owner || '未知'}｜分区：${info.category || '未知'}
     return await new Promise((resolve) => {
       const timer = setTimeout(() => {
         biliJudgeWaiters.delete(sessionId);
+        biliJudgeCollectors.delete(sessionId);
         resolve('');
       }, Math.max(5000, timeoutMs));
       timer.unref?.();
       biliJudgeWaiters.set(sessionId, {
         token: 'recommend',
-        resolve: (t) => { clearTimeout(timer); biliJudgeWaiters.delete(sessionId); resolve(t || ''); }
+        turn: null,
+        turnId: null,
+        collector: null,
+        resolve: (t) => { clearTimeout(timer); biliJudgeWaiters.delete(sessionId); biliJudgeCollectors.delete(sessionId); resolve(t || ''); }
       });
       api.sessions.prompt({ sessionId, mode: 'queue', content: [{ type: 'text', text: promptText }] })
         .catch((error) => {
@@ -14374,17 +6810,23 @@ UP主：${info.owner || '未知'}｜分区：${info.category || '未知'}
     } catch { return null; }
   }
 
-  async function sendWakePromptV2(key, reason) {
+  async function sendWakePromptV2(key, reason, opts = {}) {
     if (cfg.socialV2?.enabled === false) return;
     if (currentMode !== 'reserved2' || socialV2.paused) return;
     if (!isSessionAllowedInCurrentMode(key)) {
       log(`[reserved2] 跳过唤醒 ${key}（${reason}）：会话已不在当前模式允许范围内`);
       return;
     }
+    // 自动唤醒在熔断后一律拦住；控制台手动唤醒带 manual:true，管理员私聊也不受影响。
+    if (!opts.manual && tokenFuse.isFused(key)) {
+      log(`[Token熔断] 跳过唤醒 ${key}（${reason}）：会话已熔断`);
+      appendActivity(`${key} [Token] 熔断中，已跳过自动唤醒（${reason}）`);
+      return;
+    }
     const st = getSocialV2State(key);
     // 兜底升级：只要未读里还有没答过的 @，这次唤醒就按 atMention 处理。
     // 否则 anyMessage/probability 定时器会在限流时被直接丢掉，@ 跟着一起饿死
-    // （2026-10-23 群 100001006：owner 的「查下来源」就是这样被反复跳过的）。
+    // （2026-10-23 群 100002005：owner 的「查下来源」就是这样被反复跳过的）。
     try {
       const pendingCallers = findCallersV2(key, st).pending.length;
       if (pendingCallers > 0 && wakePriorityV2(reason) < 90) {
@@ -14553,34 +6995,6 @@ UP主：${info.owner || '未知'}｜分区：${info.category || '未知'}
     return false;
   }
 
-  const WAKE_PRIORITY = {
-    private: 100,
-    atMention: 90,
-    // 「拍你」仅次于 @：这是明确冲你来的动作，不回会显得在装死。
-    // 与 poke（拍别人）分开是因为实测两者混用导致拍谁都唤醒它，
-    // 而模型看到"拍了别人"就不回 —— 群里感受就是「戳它不回」。
-    pokeSelf: 85,
-    question: 80,
-    speaker: 75,
-    nameMention: 70,
-    keyword: 60,
-    anyMessage: 50,
-    replyCheck: 40,
-    // 「拍别人」：只是群里的热闹，看一眼就好，优先级低于普通消息。
-    poke: 35,
-    timeout: 30,
-    proactiveCheck: 20,
-    // 启动补投：优先级最低——它是「收拾重启前的积压」，若同窗口内有真实新消息触发
-    // 更高优先级的原因（@/提问等），应让那个原因胜出。
-    startupBackfill: 10
-  };
-
-  // 唤醒原因可能带子类型（如 keyword:小鲸鱼、speaker:昵称），取冒号前的基名计算优先级。
-  function wakePriorityV2(reason) {
-    const base = String(reason ?? '').split(':')[0];
-    return WAKE_PRIORITY[base] ?? 0;
-  }
-
   /**
    * 启动补投：把「进程重启前积压的未读」重新排一次唤醒。
    *
@@ -14624,6 +7038,11 @@ UP主：${info.owner || '未知'}｜分区：${info.category || '未知'}
     if (socialV2.paused) return;
     if (!isSessionAllowedInCurrentMode(key)) {
       log(`[reserved2] 跳过计划唤醒 ${key}（${reason}）：会话已不在当前模式允许范围内`);
+      return;
+    }
+    if (tokenFuse.isFused(key)) {
+      log(`[Token熔断] 跳过计划唤醒 ${key}（${reason}）：会话已熔断`);
+      appendActivity(`${key} [Token] 熔断中，已跳过计划唤醒（${reason}）`);
       return;
     }
     const st = getSocialV2State(key);
@@ -14791,369 +7210,266 @@ UP主：${info.owner || '未知'}｜分区：${info.category || '未知'}
   }
 
   // QQ 消息 → DSH prompt
+  // 非白名单群的 @：直接回一条预设话术（OneBot HTTP），不调用 DSH、不消耗 token。
+  const whitelistNoticeCache = new Map(); // groupId -> { at, index, count }
+
+  // 会话回合态共用同一个清理器；映射、群聊记忆等按调用场景另行处理。
+  function clearSessionTracking(sessionId) {
+    clearSessionTrackingState({ collectors, v2TurnStartAt, currentTurnBySession, autoAtTurnDone,
+      sendToolSucceededSessions, pendingSendToolCalls, toolCallNames, social,
+      biliJudgeCollectors, biliJudgeWaiters }, sessionId);
+  }
+
+  function clearAllSessionTracking() {
+    const ids = new Set([...collectors.keys(), ...currentTurnBySession.keys(), ...v2TurnStartAt.keys(),
+      ...biliJudgeWaiters.keys(), ...biliJudgeCollectors.keys()]);
+    for (const sid of ids) clearSessionTracking(sid);
+    autoAtTurnDone.clear();
+  }
+
+  /** 重置会话全部上下文与登记；返回旧会话是否存在。 */
+  function resetSession(key) {
+    const old = state.sessions[key];
+    if (!old) return false;
+    sessionHistory.record(old, key, 'reset');
+    sessionEpoch++;
+    delete state.sessions[key];
+    if (state.sessionMeta) delete state.sessionMeta[key];
+    reverse.delete(old);
+    clearSessionTracking(old);
+    collectors.delete(old);
+    sendToolSucceededSessions.delete(old);
+    pendingSendToolCalls.delete(old);
+    v2TurnStartAt.delete(old);
+    currentTurnBySession.delete(old);
+    toolCallNames.delete(old);
+    social.silentTurns.delete(old);
+    social.exitingSessions.delete(old);
+    const pe = pending.get(key);
+    if (pe) {
+      clearTimeout(pe.timer);
+      cancelPendingEntry(pe).catch(() => {});
+    }
+    pending.delete(key);
+    queued.delete(key);
+    queuedHintAt.delete(key);
+    sessionPromises.delete(key);
+    drainPromptQueue(key, '会话已重置');
+    social.recentMessages.delete(key);
+    messageMediaStore.delete(key);
+    social.pendingSummaries.delete(key);
+    social.states.delete(key);
+    social.silentContext.delete(key);
+    slangWindows.delete(key);
+    slangExtractionCooldowns.delete(key);
+    slangSubmitTimes.delete(key);
+    cancelSocialTimers(key);
+    clearSocialV2Timers(key);
+    pendingWakeKeys.delete(key);
+    wakeConfigUpdatedKeys.delete(key);
+    markReadCalledKeys.delete(key);
+    wakeConfigMissCount.delete(key);
+    const removedV2 = socialV2.conversations.get(key);
+    if (removedV2?.agentToken) KNOWN_AGENT_TOKENS.delete(removedV2.agentToken);
+    socialV2.conversations.delete(key);
+    seenForwardIds.delete(key);
+    saveSocialV2State();
+    saveState();
+    return true;
+  }
+
+  /**
+   * 模式 / agent preset 变化时停用旧 DSH 会话。
+   * 旧会话的能力面（工具集/系统提示）不会随配置变化，继续复用会静默错配。
+   * 只摘会话映射与 session 级状态，保留 socialV2 的群聊记忆。
+   */
+  async function retireSessionForModeChange(key, oldSessionId, oldMeta, desired) {
+    if (state.sessions[key] === oldSessionId) delete state.sessions[key];
+    if (state.sessionMeta) delete state.sessionMeta[key];
+    if (reverse.get(oldSessionId) === key) reverse.delete(oldSessionId);
+    clearSessionTracking(oldSessionId);
+    collectors.delete(oldSessionId);
+    v2TurnStartAt.delete(oldSessionId);
+    currentTurnBySession.delete(oldSessionId);
+    autoAtTurnDone.delete(oldSessionId);
+    sendToolSucceededSessions.delete(oldSessionId);
+    pendingSendToolCalls.delete(oldSessionId);
+    toolCallNames.delete(oldSessionId);
+    social.silentTurns.delete(oldSessionId);
+    social.exitingSessions.delete(oldSessionId);
+    biliJudgeCollectors.delete(oldSessionId);
+    const judgeWaiter = biliJudgeWaiters.get(oldSessionId);
+    if (judgeWaiter) {
+      try { judgeWaiter.resolve(''); } catch {}
+      biliJudgeWaiters.delete(oldSessionId);
+    }
+    sessionPromises.delete(key);
+    const pe = pending.get(key);
+    if (pe && pe.sessionId === oldSessionId) {
+      clearTimeout(pe.timer);
+      pending.delete(key);
+      cancelPendingEntry(pe).catch(() => {});
+    }
+    try { await api.workspace.archiveSession({ sessionId: oldSessionId }); } catch (error) {
+      log(`[会话] 归档旧会话失败 ${oldSessionId}：${error?.message ?? error}`);
+    }
+    sessionHistory.record(oldSessionId, key, 'mode');
+    saveState();
+    log(`[会话] ${key} 已停用旧会话 ${oldSessionId}（${oldMeta?.mode || '?'}/${oldMeta?.preset || '默认'} → ${desired.mode}/${desired.preset || '默认'}）`);
+  }
+
+  /**
+   * 上下文超限时摘除中毒会话的映射与 session 级状态。
+   *
+   * 关键：**不动 socialV2.conversations**（bridge 侧的 recentMessages / episodes /
+   * 长期记忆都在那里）。旧 DSH 会话的历史已经超过模型上限，换新会话后靠这些记忆
+   * 重建人格与上下文，而不是把整个群的状态一起清掉。
+   */
+  function rotateSessionForContextOverflow(key, oldSessionId) {
+    return rotateContextSession({
+      state,
+      reverse,
+      collectors,
+      v2TurnStartAt,
+      currentTurnBySession,
+      autoAtTurnDone,
+      sendToolSucceededSessions,
+      pendingSendToolCalls,
+      toolCallNames,
+      social,
+      biliJudgeCollectors,
+      biliJudgeWaiters,
+      sessionPromises,
+      pending,
+      cancelPendingEntry,
+      saveState,
+      log,
+      recordSessionHistory: (sessionId, key2, reason) => sessionHistory.record(sessionId, key2, reason),
+      bumpSessionEpoch: () => { sessionEpoch++; }
+    }, key, oldSessionId);
+  }
+
+  const bot = new SnowLumaWebSocketClient({
+    url: cfg.snowluma.wsUrl,
+    accessToken: cfg.snowluma.accessToken || undefined,
+    reconnect: true
+  });
+
+  // 第 4B 步：QQ 发送通道抽到 src/pipeline/qq-send.js；
+  // 这里只注入依赖。发送一律走 sendQueue（每会话队列）。
+  const qqSend = createQQSender({
+    sendQueue,
+    log,
+    sleep,
+    randInt,
+    cfg,
+    text,
+    escapeCqText,
+    redactKnownTokensOnly,
+    splitForQQ,
+    withTimeout,
+    SEND_TIMEOUT_MS,
+    bot,
+    recordSentMessage,
+    planAutoAtV2,
+    planTtsV2,
+    onebotSend,
+    getSocialV2State,
+    saveSocialV2State,
+    appendActivity,
+    syncStickerLibrary,
+    findSticker,
+    getStickerEntries: () => stickerEntries,
+    setStickerEntries: (v) => { stickerEntries = v; },
+    validateFetchUrl,
+    markStickerUsed,
+    saveStickerStoreSafe,
+    getTtsEngine: () => ttsEngine,
+    ttsSpeechParams,
+    onebotSendVoiceFile
+  });
+  const sendToQQ = qqSend.sendToQQ;
+  const sendBurstToQQ = qqSend.sendBurstToQQ;
+  const sendMessagesV2 = qqSend.sendMessagesV2;
+  const sendAsVoice = qqSend.sendAsVoice;
+  const sendStickerV2 = qqSend.sendStickerV2;
+  // 管理命令执行器：命令表/准入例外都在 admin-commands.js；
+  // 这里只注入 bridge 的副作用。joinQueue 用 getter 是因为它在本函数后面才创建，
+  // 但 handleIncoming 只会在 bot.connect() 之后被调用，届时已初始化。
+  const adminCommands = createAdminCommands({
+    cfg,
+    configFile: path.join(ROOT, 'config.json'),
+    sendToQQ,
+    log,
+    notifyOwnerOfError,
+    readJsonSafe,
+    atomicWriteJson,
+    withTimeout,
+    getGroupList: () => bot.getGroupList({ noCache: true }),
+    deleteMessage: (messageId) => bot.deleteMessage(messageId),
+    getSentMessages: (key) => sentMessages.get(key) ?? [],
+    resetSession,
+    getSessionId: (key) => state.sessions[key],
+    isAllowed: (kind, id) => allowed(kind, id, cfg),
+    roleFor,
+    hasConversationRole: (key) => !!readConversationRoles()[key],
+    getRoleState: () => readRoleState(),
+    writeRoleState,
+    writeConversationRole,
+    sanitizeRoleName,
+    roleExists,
+    getOwnerQQ: () => cfg.ownerQQ,
+    getJoinQueue: () => joinQueue,
+    submitJoinDecision: (item, approve) => submitJoinDecision(item, approve),
+    getTokenFuseStatus: () => tokenFuse.status(),
+    resetTokenFuse: (key) => tokenFuse.resetKey(key),
+    appendActivity
+  });
+
+
+
+  const imageSender = createImageSender({
+    cfg, imagesEnabled, imageSendAllowed, sourcesWithHint, imageStore, sourceFilterForPick,
+    groupImageOpts, refreshImageLib, imageAnnotation, recordSentMessage, onebotSend,
+    log, lastSentImage, imageSendTimes, sendQueue,
+    live: {
+      get lastFetchCorrections() { return lastFetchCorrections; },
+      set lastFetchCorrections(value) { lastFetchCorrections = value; }
+    }
+  });
+
+  const maybeSendWhitelistNotice = createWhitelistNotifier({ getSelfQQ: () => selfQQ, whitelistNoticeCache, onebotSend, log });
+
+  const incomingStages = createIncomingStages({
+    getMode: () => currentMode, modeAllowed, maybeSendWhitelistNotice, refreshFriendList, log,
+    resolveGroupMemberName, resolveReplyInfo, extractMediaFromSegments,
+    transcribeIncomingVoice, messageMediaStore, MAX_MEDIA_STORE_PER_KEY,
+    isQuoteTargetSelf, readRoleState, adminCommands, pending, handlePendingAnswer, appendActivity, sendToQQ
+  });
+
   async function handleIncoming(kind, id, event, cfg) {
-    const key = convKey(kind, id);
-    // 白名单命令的准入例外。
-    //
-    // 为什么必须加（否则功能自相矛盾）：管理员想「从这个新群把自己加进白名单」时，
-    // 消息在准入闸门就被丢掉了，永远走不到命令块——那这条命令就只能对**已经在白名单里的群**
-    // 生效，等于没法加新群。
-    // 放行条件收得很窄：仅群聊、仅 ownerQQ、且文本确实以白名单命令开头；
-    // 群友发同样的话照旧被丢弃（命令块里还有一次 isOwner 校验）。
-    // closed-agent 模式不例外（该模式只认管理员私聊，开了口子等于破模式）。
-    const ownerWhitelistCmd = kind === 'group'
-      && currentMode !== 'closed-agent'
-      && !!String(cfg.ownerQQ ?? '').trim()
-      && String(event.user_id) === String(cfg.ownerQQ)
-      && parseWhitelistCommand(rawTextOfMessage(event.message)) !== null;
-    if (!modeAllowed(key, kind, id, cfg, currentMode) && !ownerWhitelistCmd) {
-      // 私聊被拒时先强制刷一次好友列表再定论。
-      //
-      // 为什么需要（2026-10-13 实测）：好友列表有 5 分钟 TTL 缓存，而**刚加的好友**
-      // 不在缓存里，于是被判成"非好友"直接忽略——对方看到的就是"私聊不回人"。
-      // 实测用户新加好友 100001050（昵称"牢"），发了两条消息全被丢弃，
-      // 日志只有 `忽略未授权会话 private:100001050`，而 SnowLuma 侧查同一个人是好友。
-      //
-      // 节流：force 刷新会真的去问 SnowLuma，不加限制的话非好友持续刷消息就等于
-      // 拿桥接当放大器打 SnowLuma 接口。所以全局限流（同一窗口内只刷一次），
-      // 且失败也不重试——宁可这一次仍按拒绝处理，也不能被打爆。
-      const canRetry = kind === 'private'
-        && cfg.allow?.privateMode === 'friends'
-        && (Date.now() - lastFriendForceRefreshAt >= FRIEND_FORCE_REFRESH_MS);
-      let retryOk = false;
-      if (canRetry) {
-        lastFriendForceRefreshAt = Date.now();
-        retryOk = await refreshFriendList({ force: true })
-          .then(() => modeAllowed(key, kind, id, cfg, currentMode))
-          .catch(() => false);
-      }
-      if (retryOk) {
-        log(`[私聊准入] ${key} 刷新好友列表后放行（新加的好友）`);
-      } else {
-        log(`忽略未授权会话 ${key}（当前模式 ${currentMode}，来自 ${event.user_id}）`);
-        return;
-      }
-    }
-    const resolveAtName = async (qq) => {
-      // 只有群聊才需要把 @QQ号 解析成群名片/昵称；私聊没有群成员概念
-      if (kind !== 'group') return null;
-      return resolveGroupMemberName(event.group_id, qq);
-    };
-    const resolveReply = (messageId) => resolveReplyInfo(kind, id, messageId, event.self_id);
-    // 被引用消息里含图片/表情时，给模型一句「怎么看到它」的说明。
-    // reserved2 用按需取图工具（图片不自动内联）；其他模式图片本就自动内联，只报事实。
-    const mediaFetchHint = currentMode === 'reserved2' ? reserved2MediaFetchHint(key) : inlineMediaFactHint();
-    // textContent 带引用对象信息，供 DSH 判断“这句话在对谁说”；
-    // plainContent 只保留当前消息自己的文字，用于命令/指向性判断，避免被引用原文干扰。
-    let textContent = await segmentsToText(event.message ?? [], { resolveAtName, resolveReply, mediaFetchHint });
-    let plainContent = await segmentsToText(event.message ?? [], { resolveAtName, includeReply: false });
-    const mediaList = extractMediaFromSegments(event.message ?? []);
-    // 分享卡片的完整链接（小红书/B站等）：消息文本会被截断，单独留一份给模型。
-    const shareCard = extractShareCards(event.message ?? [])[0] || null;
-    const messageRef = String(event.message_id ?? event.msg_id ?? event.message_seq ?? '');
-    // 语音输入：先转写再进入唤醒提示/上下文；失败就保留 [语音] 占位。
-    const voiceTranscript = await transcribeIncomingVoice(key, messageRef, event.message ?? []);
-    if (voiceTranscript) {
-      textContent = `${textContent}（语音转文字：${voiceTranscript}）`;
-      plainContent = `${plainContent}（语音转文字：${voiceTranscript}）`;
-    }
-    const seqRef = event.message_seq != null ? String(event.message_seq) : '';
-    const refsToStore = [...new Set([messageRef, seqRef].filter(Boolean))];
-    if (refsToStore.length > 0 && mediaList.length > 0) {
-      let mediaByRef = messageMediaStore.get(key);
-      if (!mediaByRef) {
-        mediaByRef = new Map();
-        messageMediaStore.set(key, mediaByRef);
-      }
-      for (const ref of refsToStore) mediaByRef.set(ref, mediaList);
-      // 防止无限增长：超过上限时删除最旧一条（Map 保持插入序）
-      while (mediaByRef.size > MAX_MEDIA_STORE_PER_KEY) {
-        const oldestKey = mediaByRef.keys().next().value;
-        if (oldestKey === undefined) break;
-        mediaByRef.delete(oldestKey);
-      }
-    }
-    // 引用对象是机器人自己时，视为直接对 AI 说（即使当前文字没有 @/关键词）。
-    // 因此必须先解析 quoteTargetIsSelf 再做空文本过滤，避免“只引用不附文”被漏掉。
-    const quoteTargetIsSelf = await isQuoteTargetSelf(event.message ?? [], kind, id, event.self_id);
-    if (!plainContent && !quoteTargetIsSelf) return;
-    const isOwner = String(event.user_id) === String(cfg.ownerQQ ?? '');
+    const context = { key: convKey(kind, id), kind, id, event, cfg };
+    if (!await incomingStages.admit(context)) return;
+    const parsed = await incomingStages.parse(context);
+    if (!parsed) return;
+    Object.assign(context, parsed);
+    if (await incomingStages.divert(context)) return;
+    return dispatchIncoming(context);
+  }
 
-    // 「不想回时的轻量参与」：给群友的消息贴个表情。
-    // **贴什么由消息语气决定**（好笑→偷笑、称赞→强、负面→不贴），不是随机抽一个；
-    // 概率也按语气给（好笑 35%、中性 3%、负面 0），见 emoji-react.js 的说明。
-    // 贴表情已改为**由模型自主决定**（它才有完整上下文）：桥接只提供
-    // /api/socialV2/react-message 端点与 qq_react_message 工具，不再在此自动贴。
-    // 曾在此按语气分类 + 概率自动贴，用户指出那本质仍是随机行为、易引起误解。
-    const roleState = readRoleState();
-
-    // 管理命令的识别（管理员专用，由桥接直接执行、不经过模型）。
-    // 判据取「已知管理命令」而非「以 / 开头」：DSH 自己的斜杠命令（/model 之类）
-    // 要原样转发给 DSH，不能被这里抢走。
-    const adminCmd = plainContent.startsWith('/')
-      && (['/reset', '/new', '/status', '/silent', '/quiet', '/active', '/speak'].includes(plainContent)
-        || plainContent.startsWith('/role ') || plainContent === '/role'
-        || /^\/(?:recall|撤回)(?:\s+\d+)?$/i.test(plainContent)
-        || parseWhitelistCommand(plainContent) !== null
-        // /yes /no /pending 是加入请求的裁决指令（只对管理员私聊生效，
-        // 非管理员发同样的词不会被消费，见 handleJoinDecisionCommand）
-        || parseJoinCommand(plainContent) !== null);
-
-    // 加好友/入群邀请的裁决指令：必须在一切之前处理。
-    // 为什么提前：它既不该进 DSH（模型不该"批准加好友"），也不该被
-    // 挂起提问逻辑吞掉。只有管理员私聊会被消费，其余返回 false 继续走正常流程。
-    if (await handleJoinDecisionCommand(key, plainContent)) return;
-
-    // 若该会话有挂起的提问/审批，先当作回答处理（用当前消息自己的文字，不含引用原文）。
-    // 审批只有管理员消息会被消费；群友消息不能因为“审批挂起”而被吞掉，应继续走正常处理。
-    //
-    // 但**管理员的管理命令优先**（2026-10-13 修）：原先 pending 判定在前且条件含 isOwner，
-    // 于是管理员发 /status 时若恰好有挂起提问，命令会被当成"回答"发给 DSH——命令不执行，
-    // 回复却是"已回答"，管理员完全不知道命令被吞了。这类静默失败只在挂起期间出现，很难查。
-    const p = pending.get(key);
-    if (p && !(isOwner && adminCmd) && (p.kind === 'question' || isOwner)) {
-      await handlePendingAnswer(p, plainContent, key, isOwner);
-      return;
-    }
-
-    // 静默模式：群友消息不投递给 agent（只记录）；管理员消息照常
-    if (roleState.mode === 'silent' && !isOwner) {
-      appendActivity(`${key}（静默模式）群友 ${event.user_id}：${textContent.slice(0, 80)}`);
-      log(`静默模式，忽略群友消息 ${key}`);
-      return;
-    }
-
-    // 控制类话语：仅管理员（ownerQQ）可下达；群友触发直接拦截
-    if (!isOwner && /进入角色扮演|退出角色扮演|切换角色|设置角色|改角色|换角色|关闭角色扮演|开启角色扮演/.test(plainContent)) {
-      await sendToQQ(key, '角色切换仅管理员可在管理端操作，群内不支持。');
-      return;
-    }
-
-    // 管理命令：仅管理员（ownerQQ）可用，且由桥接直接执行（硬性，不经过模型）
-    if (plainContent.startsWith('/')) {
-      if (!isOwner) {
-        await sendToQQ(key, '管理命令仅管理员可用。');
-        return;
-      }
-      if (plainContent === '/reset' || plainContent === '/new') {
-        const old = state.sessions[key];
-        if (old) {
-          sessionEpoch++;
-          delete state.sessions[key];
-          reverse.delete(old);
-          collectors.delete(old);
-          sendToolSucceededSessions.delete(old);
-          pendingSendToolCalls.delete(old);
-          v2TurnStartAt.delete(old);
-          toolCallNames.delete(old);
-          social.silentTurns.delete(old);
-          social.exitingSessions.delete(old);
-          const pe = pending.get(key);
-          if (pe) {
-            clearTimeout(pe.timer);
-            cancelPendingEntry(pe).catch(() => {});
-          }
-          pending.delete(key);
-          queued.delete(key);
-          queuedHintAt.delete(key);
-          sessionPromises.delete(key);
-          drainPromptQueue(key, '会话已重置');
-          social.recentMessages.delete(key);
-          messageMediaStore.delete(key);
-          social.pendingSummaries.delete(key);
-          social.states.delete(key);
-          social.silentContext.delete(key);
-          slangWindows.delete(key);
-          slangExtractionCooldowns.delete(key);
-          slangSubmitTimes.delete(key);
-          cancelSocialTimers(key);
-          clearSocialV2Timers(key);
-          pendingWakeKeys.delete(key);
-          wakeConfigUpdatedKeys.delete(key);
-          markReadCalledKeys.delete(key);
-          wakeConfigMissCount.delete(key);
-          const removedV2 = socialV2.conversations.get(key);
-          if (removedV2?.agentToken) KNOWN_AGENT_TOKENS.delete(removedV2.agentToken);
-          socialV2.conversations.delete(key);
-          seenForwardIds.delete(key);
-          saveSocialV2State();
-          saveState();
-          await sendToQQ(key, '已重置会话，下次消息将开新上下文');
-        } else {
-          // 无会话时也要有反馈：原先是静默 return，管理员会以为命令没生效。
-          await sendToQQ(key, '当前会话还没有上下文，无需重置。');
-        }
-        return;
-      }
-      if (plainContent === '/status') {
-        const rs = readRoleState();
-        await sendToQQ(key, `会话 ${state.sessions[key] ?? '未创建'}；白名单 ${allowed(kind, id, cfg) ? '通过' : '拦截'}；角色 ${rs.role ?? '无'}；模式 ${rs.mode}`);
-        return;
-      }
-      if (plainContent === '/role' || plainContent.startsWith('/role ')) {
-        const name = sanitizeRoleName(plainContent.slice(5).trim());
-        if (!name || name === 'off' || name === 'clear') {
-          writeRoleState(null, roleState.mode);
-          await sendToQQ(key, '已清除角色，恢复正常人格。');
-        } else {
-          const roleFile = path.join(ROOT, 'roles', name + '.md');
-          if (!fs.existsSync(roleFile)) {
-            await sendToQQ(key, `角色「${name}」不存在。角色文件放 qq-bridge/roles/ 目录。`);
-          } else {
-            writeRoleState(name, roleState.mode);
-            await sendToQQ(key, `已切换角色：${name}。`);
-          }
-        }
-        return;
-      }
-      if (plainContent === '/silent' || plainContent === '/quiet') {
-        writeRoleState(roleState.role, 'silent');
-        await sendToQQ(key, '已进入静默模式：群友消息不再回复，仅管理员可对话。');
-        return;
-      }
-      if (plainContent === '/active' || plainContent === '/speak') {
-        writeRoleState(roleState.role, 'active');
-        await sendToQQ(key, '已退出静默模式，恢复正常回复。');
-        return;
-      }
-      // 撤回机器人最近发出的消息：/recall 或 /撤回，可带条数（/recall 3，最多 10）。
-      // 只撤本会话（key）里登记的消息；进程重启后登记清空，撤不了重启前的。
-      if (/^\/(?:recall|撤回)(?:\s+(\d+))?$/i.test(plainContent)) {
-        const n = Math.min(10, Math.max(1, Number(plainContent.match(/(\d+)/)?.[1]) || 1));
-        const arr = sentMessages.get(key) ?? [];
-        if (!arr.length) {
-          await sendToQQ(key, '没有可撤回的记录（本会话自启动以来还没有发出过消息）。');
-          return;
-        }
-        const targets = arr.splice(Math.max(0, arr.length - n)).reverse();
-        let ok = 0;
-        const errs = [];
-        for (const t of targets) {
-          try {
-            await bot.deleteMessage(t.messageId);
-            ok += 1;
-          } catch (error) {
-            errs.push(`${String(t.messageId).slice(0, 20)}: ${error?.message ?? error}`);
-          }
-        }
-        log(`管理命令 /recall (${key}): 请求 ${targets.length} 条，成功 ${ok} 条${errs.length ? `，失败 ${errs.length} 条` : ''}`);
-        // 静默撤回：成功不发确认消息（管理员要求，撤回动作本身可见）。
-        // 一条都没撤成时把原因私聊给管理员——撤回失败属于报错，按「报错不进群」处理。
-        if (ok === 0) {
-          notifyOwnerOfError(key, '撤回失败（一条都没撤成）', errs[0] ?? '未知错误', {
-            说明: `请求撤回 ${targets.length} 条，成功 0 条`,
-            可能原因: 'QQ 对撤回有时限（约 2 分钟）/权限限制'
-          });
-        }
-        return;
-      }
-      // ── 群白名单管理：/wl [add|del] [群号...] ─────────────────────────────
-      //
-      // 需求（2026-10-17）：「添加一条管理员指令，能够控制群白名单，包含添加进白名单和从中移除」。
-      // 设计要点：
-      //   ① 落盘 + 内存同步：只改 cfg 不写 config.json，重启就丢；只写文件不同步内存，
-      //      当前进程直到重启前都不认（管理员会以为没生效）。
-      //   ② 用与 allowed() 相同的字段（allow.groups），不要另开一份"命令白名单"——
-      //      两份名单迟早不一致。
-      //   ③ 删到空必须显式说后果：allowAllWhenEmpty=false 时那等于关掉所有群。
-      const wl = parseWhitelistCommand(plainContent);
-      if (wl) {
-        if (wl.action === 'help') {
-          await sendToQQ(key, '用法：/wl 查看群白名单；/wl add 群号 [群号...] 加入；/wl del 群号 [群号...] 移除。');
-          return;
-        }
-        // 白名单只对群生效：私聊有独立的 privateMode 三态（白名单/好友放行/全放开），
-        // 在这里改私聊名单会把那套语义搅乱，所以明确不做。
-        if (kind === 'private' && wl.action !== 'list') {
-          await sendToQQ(key, '群白名单只能在群里操作（私聊准入用 allow.privateMode）。');
-          return;
-        }
-        const configFile = path.join(ROOT, 'config.json');
-        let file;
-        try {
-          // fail-fast：配置损坏时直接报错，绝不回写，避免把整个 config 清成只剩 allow/deny。
-          file = readJsonSafe(configFile, null, true);
-        } catch (error) {
-          notifyOwnerOfError(key, '群白名单读取失败，未做任何修改', String(error?.message ?? error));
-          return;
-        }
-        const current = Array.isArray(file.allow?.groups) ? file.allow.groups.map(Number).filter(Number.isFinite) : cfg.allow.groups;
-        if (wl.action === 'list') {
-          // 群名只是锦上添花：查不到（SnowLuma 未连/接口异常）就只列群号，绝不让列表本身失败。
-          const names = await (async () => {
-            const map = new Map();
-            try {
-              const list = await withTimeout(bot.getGroupList({ noCache: true }), 5000, '获取群列表');
-              for (const g of Array.isArray(list) ? list : (list?.data ?? [])) {
-                const gid = Number(g?.group_id);
-                if (Number.isFinite(gid)) map.set(gid, String(g?.group_name ?? g?.group_remark ?? '').trim());
-              }
-            } catch (error) {
-              log(`[白名单] 获取群列表失败（仅影响显示群名）：${error?.message ?? error}`);
-            }
-            return map;
-          })();
-          const lines = current.length
-            ? current.map((gid, i) => `${i + 1}. ${gid}${names.get(gid) ? `（${names.get(gid)}）` : ''}`)
-            : ['（空）'];
-          const tail = current.length ? '' : `\n${describeEmptyWhitelistRisk(cfg.allowAllWhenEmpty)}`;
-          await sendToQQ(key, `群白名单 ${current.length} 个：\n${lines.join('\n')}${tail}`);
-          return;
-        }
-        if (!wl.ids.length) {
-          await sendToQQ(key, '没看到有效的群号（5~12 位数字）。用法：/wl add 群号 [群号...] 或 /wl del 群号 [群号...]。');
-          return;
-        }
-        const { next, added, removed, unchanged } = applyWhitelistChange(current, wl.action, wl.ids);
-        // 没变化就不写盘：避免"看到回复以为重启后生效了"，实际什么都没改。
-        if (!added.length && !removed.length) {
-          await sendToQQ(key, `${wl.action === 'add' ? '这些群都已在白名单里' : '这些群本来就不在白名单里'}：${unchanged.join(', ')}`);
-          return;
-        }
-        file.allow = {
-          ...(file.allow ?? {}),
-          groups: next
-        };
-        try {
-          atomicWriteJson(configFile, file);
-        } catch (error) {
-          // 写盘失败**不能**改内存：否则进程内看似生效、重启即丢，症状比报错更迷惑。
-          notifyOwnerOfError(key, '群白名单写入失败，改动未生效', String(error?.message ?? error), {
-            尝试: `${wl.action} ${wl.ids.join(',')}`,
-            结果: 'config.json 未改动，内存也未改'
-          });
-          return;
-        }
-        cfg.allow.groups = next;
-        log(`管理命令 /wl ${wl.action} (${key}): 加入 ${added.join(',') || '无'}，移除 ${removed.join(',') || '无'}，现有 ${next.length} 个`);
-        const parts = [];
-        if (added.length) parts.push(`已加入：${added.join(', ')}`);
-        if (removed.length) parts.push(`已移出：${removed.join(', ')}`);
-        if (unchanged.length) parts.push(`未变：${unchanged.join(', ')}`);
-        parts.push(`当前群白名单 ${next.length} 个${next.length ? `：${next.join(', ')}` : ''}`);
-        // 移出当前群 = 这条消息是它在白名单里的最后一次发言，必须说清楚"之后不会再来"。
-        const removedSelf = removed.includes(Number(id));
-        if (removedSelf) parts.push('本群已被移出，之后这个群的消息不再处理。要加回就在本群发 /wl add ' + String(id) + '（仅管理员有效）。');
-        if (!next.length && wl.action === 'del') parts.push(describeEmptyWhitelistRisk(cfg.allowAllWhenEmpty));
-        await sendToQQ(key, parts.join('\n'));
-        return;
-      }
-      // 其余 / 开头内容照常发给 DSH（DSH 的斜杠命令原样执行，如 /model）
-    }
-
+  async function dispatchIncoming({ key, kind, id, event, cfg, textContent, plainContent,
+    mediaList, shareCard, messageRef, quoteTargetIsSelf, isOwner }) {
     // 二代仿真模式（reserved2）：唤醒调度
     if (currentMode === 'reserved2') {
       // 私聊也取昵称（同 reserved 路径）：让模型能认出私聊里说话的是谁，
       // 而不是一律看到 "私聊"（那会让它认不出管理员）。
-      const sender = kind === 'group'
-        ? (event.sender?.card || event.sender?.nickname || String(event.user_id))
-        : (event.sender?.nickname || event.sender?.card || '私聊');
+      const sender = senderDisplayName(event, kind);
       // 群内身份（owner=群主 / admin=群管理员 / member=普通成员）。
       // 实测 SnowLuma 的 sender 里带 role 字段（messages.db 实测三值分布：
       // member 23395 / admin 21937 / owner 9414），可靠可用。
       // 与「后台管理员」(config.ownerQQ) 是**两回事**：那个是控制台/管理命令的权限；
       // 这个是群里的身份，用于让模型知道"谁说话更有分量"。
-      const groupRole = kind === 'group' ? String(event.sender?.role ?? '').trim().toLowerCase() : '';
+      const groupRole = groupRoleOf(event, kind);
       // @ 机器人？直接看 OneBot 的 at 段，不依赖别名表（群名片可能还没查到/已改名）。
       const atSelfRaw = Array.isArray(event.message)
         && event.self_id != null
@@ -15231,16 +7547,23 @@ UP主：${info.owner || '未知'}｜分区：${info.category || '未知'}
     }
 
     // 角色扮演提示注入（仅注入给 agent，不影响群友之间的正常对话语义）
-    const roleHint = currentRoleHint();
+    const roleHint = currentRoleHint(key);
+    // 非 reserved2 分支也需要群内身份；reserved2 在更早的块里已单独声明并返回。
+    const groupRole = groupRoleOf(event, kind);
+    const sender = senderDisplayName(event, kind);
 
     // 群聊里带发送者信息，私聊不用；角色提示注入到消息开头（agent 可见）；
     // 身份标记（供 agent 识别，但其权限仍受工具面硬限制）
-    const promptText = (roleHint ? roleHint + '\n\n' : '')
-      + identityTagOf({ isOwner, isGroupOwner: groupRole === 'owner', isGroupAdmin: groupRole === 'admin' })
-      + (kind === 'group'
-        ? `${event.sender?.card || event.sender?.nickname || String(event.user_id)}：${textContent}`
-        : textContent)
-      + mediaHintFor(key, messageRef, mediaList);
+    const promptText = buildIncomingPrompt({
+      roleHint,
+      isOwner,
+      groupRole,
+      kind,
+      sender,
+      userId: event.user_id,
+      textContent,
+      mediaHint: mediaHintFor(key, messageRef, mediaList)
+    });
 
     appendActivity(`${key} ${isOwner ? '管理员' : '群友'} ${event.sender?.nickname || event.user_id}：${textContent.slice(0, 80)}`);
 
@@ -15249,11 +7572,9 @@ UP主：${info.owner || '未知'}｜分区：${info.category || '未知'}
       // 私聊原本一律记成 '私聊'，导致模型认不出私聊里说话的就是管理员本人
       // （2026-10-15 用户要求「管理员发消息时机器人应该能够认出」）。
       // 改成优先取昵称/群名片，取不到再退回 '私聊'。
-      const sender = kind === 'group'
-        ? (event.sender?.card || event.sender?.nickname || String(event.user_id))
-        : (event.sender?.nickname || event.sender?.card || '私聊');
+      const sender = senderDisplayName(event, kind);
       // 群内身份（owner=群主 / admin=群管理员），与后台管理员(isOwner)分开算。
-      const groupRole = kind === 'group' ? String(event.sender?.role ?? '').trim().toLowerCase() : '';
+      const groupRole = groupRoleOf(event, kind);
       appendRecentMessage(key, sender, textContent, plainContent, quoteTargetIsSelf, isOwner, mediaList, messageRef, groupRole, shareCard); // AI 始终感知
       const st = socialState(key);
 
@@ -15306,7 +7627,7 @@ UP主：${info.owner || '未知'}｜分区：${info.category || '未知'}
 
       // 触发成功：进入活跃，贴最近上下文 + 当前消息 + 人格（仅此一次），让 AI 回复
       enterActive(key);
-      const roleHint = currentRoleHint();
+      const roleHint = currentRoleHint(key);
       const currentLine = (isOwner && kind === 'private') ? `【管理员】${sender}：${textContent}` : `${sender}：${textContent}`;
       const directionHint = textContent.includes('[引用') ? DIRECTION_HINT + '\n' : '';
       const replyInstruction = direct
@@ -15555,558 +7876,75 @@ UP主：${info.owner || '未知'}｜分区：${info.category || '未知'}
     pending.set(key, entry);
   }
 
-  // 事件流断开后清理本轮连接遗留的追踪状态。
-  // 必须在“正常结束”与“异常中断”两条路径上都调用：WebSocket 关闭时 dsh-client 以 yield 收尾
-  // （生成器正常 return，不抛异常），因此只有 catch 分支的清理永远不会执行 —— 曾导致 DSH 重启后
-  // collectors/v2TurnStartAt 残留，isConversationBusyV2 恒为 true，该会话永久「会话繁忙」不再理人。
-  function resetStreamTracking(reason) {
-    const busyKeys = [...pendingWakeKeys];
-    collectors.clear(); // 清除旧 turn collector，避免重连后残留导致重复累加
-    social.silentTurns.clear(); // 清除未消费的摘要静默名额，避免重连后吞掉正常回复
-    sendToolSucceededSessions.clear();
-    pendingSendToolCalls.clear();
-    v2TurnStartAt.clear();
-    toolCallNames.clear();
-    pendingWakeKeys.clear();
-    clearAllPendingWakeLeases();
-    social.exitingSessions.clear();
-    wakeConfigUpdatedKeys.clear();
-    markReadCalledKeys.clear();
-    wakeConfigMissCount.clear();
-    // 长轮询占位标记同样要清：断流后残留的等待请求早已失效，留着会让该会话
-    // 后续所有 qq_wait_for_messages 都被拒（429「已有一个等待中」）。
-    if (activeWaits.size) {
-      log(`事件流断开（${reason}），清除等待占位标记：${[...activeWaits].join('、')}`);
-      activeWaits.clear();
-    }
-    // 断流时若有会话正被标记为“唤醒在途”，其 turn/end 已随连接一起丢失，必须就地解除，
-    // 否则该会话会被 isConversationBusyV2 判定为永久繁忙。正常情况下这里应为空。
-    if (busyKeys.length) log(`事件流断开（${reason}），解除唤醒占用标记：${busyKeys.join('、')}`);
-  }
-
-  // DSH 事件流 → QQ
-  async function pumpMux() {
-    for (;;) {
-      let streamEnded = false;
-      try {
-        log('连接 DSH 事件流…');
-        for await (const envelope of api.events.mux({})) {
-          const frame = envelope.payload;
-          if (frame.type === 'session/event') {
-            const key = reverse.get(frame.sessionId);
-            if (!key) {
-              // 黑话学习会话：只收集 turn，不发送 QQ，并唤醒等待中的学习任务。
-              if (learnerSessions.has(frame.sessionId)) {
-                const learnerCollector = learnerCollectors.get(frame.sessionId) ?? createTurnCollector();
-                learnerCollectors.set(frame.sessionId, learnerCollector);
-                const learnerEnded = learnerCollector.push(frame.event);
-                if (learnerEnded) {
-                  learnerCollectors.delete(frame.sessionId);
-                  const waiters = learnerWaiters.get(frame.sessionId) ?? [];
-                  const waiter = waiters.shift();
-                  if (waiters.length === 0) learnerWaiters.delete(frame.sessionId);
-                  if (waiter) {
-                    clearTimeout(waiter.timer);
-                    if (learnerEnded.reason.kind === 'completed' && learnerEnded.text.trim()) {
-                      waiter.resolve(learnerEnded.text);
-                    } else {
-                      waiter.reject(new Error(`学习会话 turn 未正常完成：${learnerEnded.reason.kind}`));
-                    }
-                  }
-                  // 旧学习会话 turn 结束后从集合移除，避免残留
-                  if (frame.sessionId !== slangLearnerSessionId) learnerSessions.delete(frame.sessionId);
-                }
-              }
-              continue;
-            }
-            // Phase 0：捕获 DSH 的压缩摘要。
-            // 它替换掉几十万 token 的历史，是"更早发生什么"的唯一线索；
-            // 以前只留在 DSH 会话文件里，桥接完全看不到。这里落一份到
-            // state/context/<key>/compactions.jsonl，记忆包在没有 episode 时用它兜底。
-            if (frame.event.type === 'compaction/summary') {
-              try {
-                const d = frame.event.data || {};
-                const rawSummary = Array.isArray(d.summary)
-                  ? d.summary.map((b) => String(b?.text ?? '')).join('\n')
-                  : String(d.summary ?? '');
-                const summary = redactSensitiveText(rawSummary).trim();
-                if (summary) {
-                  const c = contextCfg();
-                  appendCompaction(STATE_DIR, key, {
-                    at: Date.now(),
-                    sessionId: frame.sessionId,
-                    compactionId: String(d.compactionId || ''),
-                    summary: summary.slice(0, 4000),
-                    shadowedTokenCount: Number(d.shadowedTokenCount) || 0,
-                    provider: String(d.provider || ''),
-                    model: String(d.model || ''),
-                    maxTokens: Number(d.maxTokens) || 0
-                  }, c.compactionKeep);
-                  const m = contextMetrics.get(key) || {};
-                  m.lastCompactionAt = Date.now();
-                  m.lastCompactionNotch = Number(d.shadowedTokenCount) || 0;
-                  contextMetrics.set(key, m);
-                  log(`[上下文] ${key} 捕获 DSH 压缩摘要（压掉 ${Math.round((Number(d.shadowedTokenCount) || 0) / 1000)}k tokens）`);
-                }
-              } catch (error) {
-                log(`[上下文] 保存压缩摘要失败：${error?.message ?? error}`);
-              }
-            }
-            // 追踪当前 turn 是否成功调用过 MCP 发送类工具：
-            // 只有“发送成功”才跳过自动转发；如果工具调用失败，仍允许 AI 的文本正常发出。
-            if (frame.event.type === 'turn/start') {
-              sendToolSucceededSessions.delete(frame.sessionId);
-              pendingSendToolCalls.delete(frame.sessionId);
-              v2TurnStartAt.set(frame.sessionId, Date.now());
-            }
-            if (frame.event.type === 'tool/call') {
-              const toolName = String(frame.event.data?.name ?? '');
-              const callId = frame.event.data?.callId;
-              const args = sanitizeToolArgs(frame.event.data?.arguments ?? frame.event.data?.input ?? frame.event.data);
-              appendToolLog({ type: 'call', time: new Date().toISOString(), key, sessionId: frame.sessionId, tool: toolName, args });
-              if (callId != null) {
-                if (isSendToolName(toolName)) {
-                  let pending = pendingSendToolCalls.get(frame.sessionId);
-                  if (!pending) {
-                    pending = new Set();
-                    pendingSendToolCalls.set(frame.sessionId, pending);
-                  }
-                  pending.add(callId);
-                }
-                let nameMap = toolCallNames.get(frame.sessionId);
-                if (!nameMap) {
-                  nameMap = new Map();
-                  toolCallNames.set(frame.sessionId, nameMap);
-                }
-                nameMap.set(String(callId), toolName);
-              }
-            }
-            if (frame.event.type === 'tool/result') {
-              const callId = frame.event.data?.message?.source?.callId;
-              const toolName = callId != null ? (toolCallNames.get(frame.sessionId)?.get(String(callId)) ?? '') : '';
-              const resultBlock = frame.event.data?.message?.content?.[0];
-              const resultError = frame.event.data?.message?.isError === true || resultBlock?.isError === true;
-              const errorText = resultError ? String(resultBlock?.text ?? resultBlock?.error ?? frame.event.data?.message?.error ?? '') : '';
-              appendToolLog({
-                type: 'result',
-                time: new Date().toISOString(),
-                key,
-                sessionId: frame.sessionId,
-                tool: toolName,
-                ok: !resultError,
-                error: errorText ? sanitizeToolArgs(errorText) : null
-              });
-              if (callId != null) {
-                toolCallNames.get(frame.sessionId)?.delete(String(callId));
-                const pending = pendingSendToolCalls.get(frame.sessionId);
-                if (pending?.has(callId)) {
-                  pending.delete(callId);
-                  if (pending.size === 0) pendingSendToolCalls.delete(frame.sessionId);
-                  if (!resultError) {
-                    sendToolSucceededSessions.add(frame.sessionId);
-                  }
-                }
-              }
-            }
-            // collector 只在「本会话有在途回合」时才需要（turn/start 会先写 v2TurnStartAt）。
-            // 曾经的 bug：这里**无条件** set，而删除只在 ended（回合结束）时发生，
-            // 于是任何在 turn/end 之后到达的迟到帧（迟到的 chunk、session/title/usage 等）
-            // 都会重新生成一个 collector 并永久残留 —— isConversationBusyV2 因此恒为 true，
-            // 该会话表现为「永久繁忙、不理人」（实测：turn 已 completed 8 分钟，日志仍在报繁忙）。
-            // 修法：没有在途回合时既不新建、也不收集（没有回合就没有要收集的东西）。
-            let collector = collectors.get(frame.sessionId);
-            if (!collector && v2TurnStartAt.has(frame.sessionId)) {
-              collector = createTurnCollector();
-              collectors.set(frame.sessionId, collector);
-            }
-            // 初判专用 collector：初判的 prompt 是**直接投递**的，不走
-            // v2TurnStartAt 那套唤醒标记，所以上面那个 collector 不会为它创建，
-            // `ended` 永远是 false，waiter 只能等到超时（2026-10-19 实测：
-            // "初判：liked=null" 且没有超时日志，说明连超时都没等到就被别处 resolve 了）。
-            // 这里给"有 waiter 的 session"单独建一个，保证能拿到 turn/end。
-            let judgeCollector = biliJudgeCollectors.get(frame.sessionId);
-            if (!judgeCollector && biliJudgeWaiters.has(frame.sessionId)) {
-              judgeCollector = createTurnCollector();
-              biliJudgeCollectors.set(frame.sessionId, judgeCollector);
-            }
-            const judgeEnded = judgeCollector ? judgeCollector.push(frame.event) : false;
-            if (judgeEnded) {
-              biliJudgeCollectors.delete(frame.sessionId);
-              const waiter = biliJudgeWaiters.get(frame.sessionId);
-              if (waiter) {
-                const text = judgeEnded.text || '';
-                if (text.trim()) {
-                  try { waiter.resolve(text); } catch {}
-                } else {
-                  log(`[B站] 初判回合无文本（工具调用），继续等｜reason=${JSON.stringify(judgeEnded.reason)?.slice(0, 60)}`);
-                }
-              }
-            }
-            const ended = collector ? collector.push(frame.event) : false;
-            if (ended) {
-              // reserved2 无行动兜底：普通唤醒回合若既没发消息、也没 mark_read / set_wake_config，
-              // 则累计 noActionCount；达到阈值后自动重置 WakeConfig，避免 AI 卡死。
-              const silentQueueNow = social.silentTurns.get(frame.sessionId) ?? [];
-              const isSilentTurn = silentQueueNow.length > 0;
-              if (currentMode === 'reserved2' && key && !isSilentTurn) {
-                const st = getSocialV2State(key);
-                const turnStart = v2TurnStartAt.get(frame.sessionId) ?? 0;
-                const actionTaken = sendToolSucceededSessions.has(frame.sessionId) || (turnStart > 0 && st.lastActionAt >= turnStart);
-                if (actionTaken) {
-                  st.wakeConfig.noActionCount = 0;
-                } else {
-                  st.wakeConfig.noActionCount = (st.wakeConfig.noActionCount || 0) + 1;
-                  const limit = Number(cfg.socialV2?.wake?.noActionLimit) || 3;
-                  if (st.wakeConfig.noActionCount >= limit) {
-                    log(`[reserved2] ${key} 连续 ${st.wakeConfig.noActionCount} 次唤醒无行动，重置唤醒配置`);
-                    st.wakeConfig = defaultWakeConfigV2();
-                    st.bootstrapSent = true;
-                    st.wakeConfig.noActionCount = 0;
-                  }
-                }
-                saveSocialV2State();
-              }
-              v2TurnStartAt.delete(frame.sessionId);
-              collectors.delete(frame.sessionId);
-              const sendToolSucceeded = sendToolSucceededSessions.has(frame.sessionId);
-              sendToolSucceededSessions.delete(frame.sessionId);
-              pendingSendToolCalls.delete(frame.sessionId);
-              toolCallNames.delete(frame.sessionId);
-              // 标记本次 turn 是否为“活跃超时退场”发言（用于准确回到观望，避免把旧回复误判为退场）
-              const isFarewell = social.exitingSessions.has(frame.sessionId);
-              if (isFarewell) social.exitingSessions.delete(frame.sessionId);
-              // 摘要投喂触发的 turn：回复静默（不发送到 QQ）。
-              // 用 FIFO 时间戳队列 + 超时回收，避免计数残留吞掉后续正常回复。
-              const silentQueue = social.silentTurns.get(frame.sessionId) ?? [];
-              const silentNow = Date.now();
-              while (silentQueue.length && silentNow - silentQueue[0].ts > SILENT_TURN_TIMEOUT_MS) silentQueue.shift();
-              if (silentQueue.length > 0) {
-                silentQueue.shift();
-                if (silentQueue.length > 0) social.silentTurns.set(frame.sessionId, silentQueue);
-                else social.silentTurns.delete(frame.sessionId);
-                log(`摘要投喂 turn 结束，静默 (${key})`);
-                continue;
-              }
-              // reserved2 防遗忘：每次唤醒回合结束时，若 AI 没有调用 qq_set_wake_config 设置下一次唤醒条件，
-              // 则发送提醒；连续未设置达到上限后重置为默认唤醒配置。静默/后台提醒回合已在上方 continue，不触发。
-              if (pendingWakeKeys.has(key)) {
-                pendingWakeKeys.delete(key);
-                disarmPendingWakeLease(key);
-                if (wakeConfigUpdatedKeys.has(key) || markReadCalledKeys.has(key)) {
-                  ensureWakeableV2(getSocialV2State(key), { key });
-                  wakeConfigUpdatedKeys.delete(key);
-                  markReadCalledKeys.delete(key);
-                  wakeConfigMissCount.delete(key);
-                } else {
-                  const currentMiss = (wakeConfigMissCount.get(key) ?? 0) + 1;
-                  const maxReminders = Number(cfg.socialV2?.wake?.maxWakeConfigReminders) || 2;
-                  if (currentMiss < maxReminders) {
-                    wakeConfigMissCount.set(key, currentMiss);
-                    pendingWakeKeys.add(key);
-                    armPendingWakeLease(key);
-                    deliverPrompt(key, buildWakeReminderPromptV2(key)).then((result) => {
-                      if (result && result.ok === false) {
-                        pendingWakeKeys.delete(key);
-                        disarmPendingWakeLease(key);
-                      }
-                    }).catch((error) => {
-                      pendingWakeKeys.delete(key);
-                      disarmPendingWakeLease(key);
-                      log(`[reserved2] ${key} 唤醒提醒投递失败: ${error?.message ?? error}`);
-                    });
-                    log(`[reserved2] ${key} 未设置唤醒条件，发送提醒 (${currentMiss}/${maxReminders})`);
-                  } else {
-                    const st = getSocialV2State(key);
-                    st.wakeConfig = defaultWakeConfigV2();
-                    saveSocialV2State();
-                    log(`[reserved2] ${key} 连续未设置唤醒条件，已重置为默认唤醒配置`);
-                  }
-                }
-              }
-              // 繁忙期间被暂存的唤醒原因：当前 turn 结束后补一次，避免关键 @/提问被漏掉。
-              // 但如果触发它的消息已经被 AI 在当前回合处理（unread 中已不存在该 seq），则不再补发。
-              // 繁忙期间被暂存的唤醒原因：当前 turn 结束后补一次，避免关键 @/提问被漏掉。
-              //
-              // ⚠️ 2026-10-11 修：原先只 `shift()` **最旧**一条（FIFO），结果 @ 会被更早的
-              // poke/probability 插队——实测群 100001005：用户 16:08:31 @ 机器人（atMention@20893），
-              // 但补发取的是更早的 poke@20871，@ 那条一直排在队列里没补，直到 16:10:01 才被处理，
-              // 延迟 90 秒。群友感受就是「@ 它不是必回」。
-              // 现在改为：**在仍相关的项里挑优先级最高的**（atMention/question 高于 poke/probability），
-              // 与 scheduleWakeV2 合并窗口的升级逻辑保持一致。
-              {
-                const stEnd = getSocialV2State(key);
-                if (Array.isArray(stEnd.pendingWakeReasons) && stEnd.pendingWakeReasons.length) {
-                  // 先剔除「触发它的消息已被本回合处理掉」的项（unread 里已无该 seq）。
-                  // 注意：这只说明消息被读过，不代表已经回复过——所以只在确实没有更高优先级项时
-                  // 才用它来收尾，避免把 @ 误判成「已处理」而静默丢弃。
-                  const unreadSeqs = new Set((Array.isArray(stEnd.unread) ? stEnd.unread : [])
-                    .map((m) => Number(m && m.seq)).filter((n) => Number.isFinite(n)));
-                  const all = stEnd.pendingWakeReasons.filter((r) => r && typeof r === 'object');
-                  if (all.length) {
-                    const relevant = all.filter((r) => unreadSeqs.size === 0 || [...unreadSeqs].some((s) => s >= Number(r.seq)));
-                    const pool = relevant.length ? relevant : all;
-                    // 优先级最高者胜出；同优先级取最新的（seq 大者），因为最新消息更能代表当前意图
-                    const pick = pool.slice().sort((a, b) => {
-                      const dp = wakePriorityV2(b.reason) - wakePriorityV2(a.reason);
-                      if (dp !== 0) return dp;
-                      return Number(b.seq || 0) - Number(a.seq || 0);
-                    })[0];
-                    // 队列里可能只有 seq，正文已经被 30 条未读/100 条 recent 挤掉；
-                    // 回合结束时补一份正文快照，下一次唤醒提示直接带上，模型才知道要回什么。
-                    stEnd.pendingWakeMessage = pick.snapshot
-                      || pendingWakeSnapshotFromJournalV2(key, pick.seq)
-                      || stEnd.pendingWakeMessage
-                      || null;
-                    stEnd.pendingWakeReasons = [];
-                    saveSocialV2State();
-                    log(`[reserved2] ${key} 补发繁忙期间积压的唤醒：${pick.reason}@seq${pick.seq}`
-                      + (all.length > 1 ? `（队列共 ${all.length} 条，已按优先级选取）` : '')
-                      + (stEnd.pendingWakeMessage ? '，已保留触发消息正文' : ''));
-                    scheduleWakeV2(key, pick.reason);
-                  }
-                }
-              }
-              if (ended.reason.kind === 'completed' && ended.text.trim()) {
-                const plain = mdToPlain(ended.text);
-                // 纯 Markdown/空白输出按“无文本”处理，避免后续 planSocialTimeline 拿空串崩溃。
-                if (!plain.trim()) {
-                  log(`agent 回复为空（仅格式/空白）(${key})`);
-                  if (isFarewell) {
-                    const st = socialState(key);
-                    if (st.phase === 'exiting') {
-                      st.phase = 'idle';
-                      st.activeDeadlineAt = 0;
-                      st.activeExitAt = 0;
-                      log(`社交模式：${key} 空退场回合，回到观望`);
-                    }
-                  }
-                  continue;
-                }
-                // 社交模式静默标记：AI 主动选择“潜水/不接话”，不发送到 QQ
-                if (isSilentMarker(plain)) {
-                  log(`社交模式：AI 选择静默（${SILENT_MARKER}）(${key})`);
-                  if (isFarewell) {
-                    const st = socialState(key);
-                    if (st.phase === 'exiting') {
-                      st.phase = 'idle';
-                      st.activeDeadlineAt = 0;
-                      st.activeExitAt = 0;
-                      log(`社交模式：${key} 退场选择静默，回到观望`);
-                    }
-                  }
-                  continue;
-                }
-                // 本回合已经通过 MCP 发送工具成功发出消息：跳过自动转发，避免重复发送。
-                if (sendToolSucceeded) {
-                  log(`工具已发送消息，跳过自动转发 (${key})`);
-                  if (isFarewell) {
-                    const st = socialState(key);
-                    if (st.phase === 'exiting') {
-                      st.phase = 'idle';
-                      st.activeDeadlineAt = 0;
-                      st.activeExitAt = 0;
-                      log(`社交模式：${key} 工具发送后退场完成，回到观望`);
-                    }
-                  }
-                  continue;
-                }
-                // 审计（对完整文本执行，避免截断漏判；这里只判断，不发送，避免双重发送）
-                const hasKnownToken = [...KNOWN_AGENT_TOKENS].some((t) => t && plain.includes(t));
-                if (shouldAuditKey(key) && (SENSITIVE_RE.test(plain) || hasKnownToken)) {
-                  log(`⚠️ 回复被安全策略拦截 (${key})，疑似包含敏感信息${hasKnownToken ? '（含会话令牌）' : ''}`);
-                  appendActivity(`${key} agent 回复被拦截（疑似敏感信息${hasKnownToken ? '/会话令牌' : ''}）`);
-                  // 群内不再提示（会暴露内部机制）；只私聊管理员，附被拦正文便于判断误判。
-                  notifyOwnerOfError(key, '安全策略拦截了一条回复', plain, {
-                    原因: hasKnownToken ? '含会话令牌' : '疑似包含敏感信息（路径/凭据）',
-                    处置: '该条回复未发出，群友看不到'
-                  });
-                  if (isFarewell) {
-                    const st = socialState(key);
-                    if (st.phase === 'exiting') {
-                      st.phase = 'idle';
-                      st.activeDeadlineAt = 0;
-                      st.activeExitAt = 0;
-                      log(`社交模式：${key} 退场发言被拦截，回到观望`);
-                    }
-                  }
-                  continue;
-                }
-                // 仿真群友模式：时间线多段发送（主回复 + 可选二次补刀）
-                if (isSocialEnabled()) {
-                  if (shouldBlockSilentReply(key)) {
-                    log(`静默模式，拦截在途回复 (${key})`);
-                    appendActivity(`${key} 静默模式，拦截在途回复`);
-                    if (isFarewell) {
-                      const st = socialState(key);
-                      if (st.phase === 'exiting') {
-                        st.phase = 'idle';
-                        st.activeDeadlineAt = 0;
-                        st.activeExitAt = 0;
-                        log(`社交模式：${key} 静默模式下退场回合被拦截，回到观望`);
-                      }
-                    }
-                    continue;
-                  }
-                  const timeline = planSocialTimeline(plain, cfg.social);
-                  const messages = timeline.main;
-                  log(`agent 回复 (${key}) ${plain.length} 字 → ${messages.length} 条`);
-                  appendActivity(`${key} agent 回复：${messages[0].slice(0, 80)}${messages.length > 1 ? '（分' + messages.length + '条）' : ''}${messages[0].length > 80 ? '…' : ''}`);
-                  if (messages.length > 1) {
-                    await sendBurstToQQ(key, messages, cfg.social);
-                  } else {
-                    await sendToQQ(key, messages[0]);
-                  }
-                  // 发言后刷新活跃时间，并调度可能的二次补刀
-                  const st = socialState(key);
-                  if (isFarewell) {
-                    // 确认为退场发言：不再刷新活跃时间、不调度补刀，直接进入观望
-                    st.phase = 'idle';
-                    st.activeDeadlineAt = 0;
-                    st.activeExitAt = 0;
-                    log(`社交模式：${key} 退场发言完成，进入观望`);
-                  } else if (st.phase === 'exiting') {
-                    // 退场期间有旧回复恰好完成：照常发出，但不把它当作退场，也不调度补刀
-                    log(`社交模式：${key} 退场期间旧回复完成，保持退场状态`);
-                  } else {
-                    st.lastActiveMessageAt = Date.now();
-                    st.lastAiReplyAt = Date.now();
-                    log(`社交模式：发言完成，刷新活跃时间 (${key})`);
-                  }
-                } else if (currentMode === 'reserved2') {
-                  log(`[reserved2] AI 内部输出（不自动转发）(${key}): ${plain.slice(0, 80)}`);
-                  appendActivity(`${key} [reserved2] AI 内部输出：${plain.slice(0, 80)}${plain.length > 80 ? '…' : ''}`);
-                } else {
-                  if (shouldBlockSilentReply(key)) {
-                    log(`静默模式，拦截在途回复 (${key})`);
-                    appendActivity(`${key} 静默模式，拦截在途回复`);
-                    continue;
-                  }
-                  log(`agent 回复 (${key}) ${plain.length} 字`);
-                  appendActivity(`${key} agent 回复：${plain.slice(0, 80)}${plain.length > 80 ? '…' : ''}`);
-                  await sendToQQ(key, plain);
-                }
-              } else if (ended.reason.kind === 'error') {
-                const msg = ended.reason.error?.message ?? '未知错误';
-                // 先让报错拦截器处理「额度/限流」类错误（含私聊管理员详情）。
-                // 返回 false 表示不是额度类（如模型输出为空、网络抖动）。
-                const handled = await handleUpstreamError(key, msg, { sessionId: ended.sessionId ?? '' })
-                  .catch((e) => { log(`[报错拦截] 处理失败：${e?.message ?? e}`); return false; });
-                // 兜底：不论是否额度类，**一律不再往群里发任何报错字样**（用户要求），
-                // 只私聊管理员。群友侧表现为这一轮机器人没说话。
-                if (!handled) {
-                  notifyOwnerOfError(key, 'agent 处理出错', msg, { sessionId: ended.sessionId ?? '' });
-                }
-                if (isFarewell) {
-                  const st = socialState(key);
-                  if (st.phase === 'exiting') {
-                    st.phase = 'idle';
-                    st.activeDeadlineAt = 0;
-                    st.activeExitAt = 0;
-                    log(`社交模式：${key} 退场发言出错，回到观望`);
-                  }
-                }
-              } else if (ended.reason.kind === 'aborted') {
-                await sendToQQ(key, '⏹️ 已停止');
-                if (isFarewell) {
-                  const st = socialState(key);
-                  if (st.phase === 'exiting') {
-                    st.phase = 'idle';
-                    st.activeDeadlineAt = 0;
-                    st.activeExitAt = 0;
-                    log(`社交模式：${key} 退场发言中止，回到观望`);
-                  }
-                }
-              } else if (!ended.text.trim()) {
-                // completed 但没文本（纯工具调用回合）
-                log(`回合完成但无文本 (${key})`);
-                if (isFarewell) {
-                  const st = socialState(key);
-                  if (st.phase === 'exiting') {
-                    st.phase = 'idle';
-                    st.activeDeadlineAt = 0;
-                    st.activeExitAt = 0;
-                    log(`社交模式：${key} 退场回合无文本，回到观望`);
-                  }
-                }
-              }
-            }
-          } else if ((frame.type === 'question/requested' || frame.type === 'approval/requested') && learnerSessions.has(frame.sessionId)) {
-            // 黑话学习会话不应向用户提问/请求审批；自动跳过，避免阻塞学习任务。
-            try {
-              if (frame.type === 'question/requested') {
-                await api.respond({
-                  type: 'client-response',
-                  rpcId: envelope.rpcId,
-                  result: { ok: true, value: { sessionId: frame.sessionId, answer: { answers: frame.questions.map((q) => ({ id: q.id, selected: [], custom: '' })) } } }
-                });
-              } else {
-                await api.respond({
-                  type: 'client-response',
-                  rpcId: envelope.rpcId,
-                  result: { ok: true, value: { sessionId: frame.sessionId, approvalId: frame.approvalId, outcome: 'rejected' } }
-                });
-              }
-              log('黑话学习会话自动跳过提问/审批');
-            } catch (error) {
-              log('自动响应学习会话提问/审批失败:', error?.message ?? error);
-            }
-          } else if (frame.type === 'question/requested') {
-            const key = reverse.get(frame.sessionId);
-            if (!key) continue;
-            const lines = frame.questions.map((q, i) => {
-              const qText = String(q.question ?? '');
-              const sensitive = shouldAuditKey(key) && SENSITIVE_RE.test(qText);
-              if (sensitive) log(`⚠️ 提问文本含敏感信息，已隐藏 (${key})`);
-              const safeQuestion = sensitive ? '（含敏感信息，已隐藏）' : qText;
-              let s = `${i + 1}. ${safeQuestion}`;
-              if (q.options?.length) {
-                const opts = q.options.map((o) => {
-                  const label = String(o.label ?? '');
-                  const optSensitive = shouldAuditKey(key) && SENSITIVE_RE.test(label);
-                  if (optSensitive) log(`⚠️ 提问选项含敏感信息，已隐藏 (${key})`);
-                  return `「${optSensitive ? '（含敏感信息，已隐藏）' : label}」`;
-                });
-                s += '\n   ' + opts.join(' ');
-              }
-              return s;
-            });
-            await sendToQQ(key, '❓ agent 需要你回答：\n' + lines.join('\n') + '\n（直接回复选项文字或输入你的回答）');
-            await registerPending(key, { kind: 'question', rpcId: envelope.rpcId, sessionId: frame.sessionId, questions: frame.questions });
-          } else if (frame.type === 'approval/requested') {
-            const key = reverse.get(frame.sessionId);
-            if (!key) continue;
-            const rawReason = frame.reason ?? '';
-            const sensitiveReason = shouldAuditKey(key) && SENSITIVE_RE.test(rawReason);
-            if (sensitiveReason) log(`⚠️ 审批理由含敏感信息，已隐藏 (${key})`);
-            const safeReason = sensitiveReason ? '（含敏感信息，已隐藏）' : rawReason;
-            const reason = safeReason ? `\n理由：${safeReason}` : '';
-            const rawToolName = frame.toolName ?? '';
-            const sensitiveTool = shouldAuditKey(key) && SENSITIVE_RE.test(rawToolName);
-            if (sensitiveTool) log(`⚠️ 审批工具名含敏感信息，已隐藏 (${key})`);
-            const safeToolName = sensitiveTool ? '（含敏感信息，已隐藏）' : rawToolName;
-            await sendToQQ(key, `🔐 agent 请求审批：${safeToolName}${reason}\n回复「通过」或「拒绝」`);
-            await registerPending(key, { kind: 'approval', rpcId: envelope.rpcId, sessionId: frame.sessionId, approvalId: frame.approvalId, toolName: frame.toolName });
-          } else if (frame.type === 'stream/error') {
-            log('事件流错误:', frame.error);
-          }
-        }
-        // WebSocket 正常关闭（DSH 重启/退出）也会走到这里：dsh-client 以 yield 收尾而非抛异常。
-        streamEnded = true;
-      } catch (error) {
-        log('事件流中断:', error?.message ?? error);
-      }
-      // 两条退出路径共用清理：漏掉正常结束这条曾导致会话永久「繁忙」。
-      resetStreamTracking(streamEnded ? 'WebSocket 正常关闭' : '读取异常');
-      await sleep(3000);
-    }
-  }
+  // 第 4C 步：DSH 事件分派、回合收尾和断流恢复由独立模块处理。
+  const { pumpMux } = createDshEventPump({
+    api,
+    reverse,
+    collectors,
+    currentTurnBySession,
+    v2TurnStartAt,
+    sendToolSucceededSessions,
+    pendingSendToolCalls,
+    toolCallNames,
+    biliJudgeWaiters,
+    biliJudgeCollectors,
+    learnerSessions,
+    learnerCollectors,
+    learnerWaiters,
+    getSlangLearnerSessionId: () => slangLearnerSessionId,
+    getMode: () => currentMode,
+    cfg,
+    social,
+    getSocialV2State,
+    defaultWakeConfigV2,
+    saveSocialV2State,
+    pendingWakeKeys,
+    wakeConfigUpdatedKeys,
+    markReadCalledKeys,
+    wakeConfigMissCount,
+    activeWaits,
+    clearAllPendingWakeLeases,
+    armPendingWakeLease,
+    disarmPendingWakeLease,
+    ensureWakeableV2,
+    deliverPrompt,
+    buildWakeReminderPromptV2,
+    wakePriorityV2,
+    pendingWakeSnapshotFromJournalV2,
+    scheduleWakeV2,
+    SILENT_TURN_TIMEOUT_MS,
+    contextRecovery,
+    contextCfg,
+    recordTokenUsage: (sessionId, usage) => tokenFuse.recordUsage(sessionId, usage),
+    recordSessionProcessed: (key) => sessionGap.markProcessed(key),
+    STATE_DIR,
+    appendCompaction,
+    contextMetrics,
+    redactSensitiveText,
+    sanitizeToolArgs,
+    appendToolLog,
+    isSendToolName,
+    KNOWN_AGENT_TOKENS,
+    shouldAuditKey,
+    SENSITIVE_RE,
+    isSilentMarker,
+    SILENT_MARKER,
+    isSocialEnabled,
+    socialState,
+    shouldBlockSilentReply,
+    planSocialTimeline,
+    sendBurstToQQ,
+    sendToQQ,
+    registerPending,
+    handleUpstreamError,
+    appendActivity,
+    notifyOwnerOfError,
+    log,
+    sleep,
+  });
 
   // QQ 侧（SnowLuma OneBot WebSocket 客户端）
-  const bot = new SnowLumaWebSocketClient({
-    url: cfg.snowluma.wsUrl,
-    accessToken: cfg.snowluma.accessToken || undefined,
-    reconnect: true
-  });
+
 
   bot.onPrivateMessage(async (event) => {
     if (event.user_id === event.self_id) return;
@@ -16302,62 +8140,6 @@ UP主：${info.owner || '未知'}｜分区：${info.category || '未知'}
     appendActivity(`[加入请求] #${n} ${item.requestType === 'friend' ? '好友' : '入群'} ${item.userId}${item.groupId ? `→${item.groupId}` : ''}，等管理员裁决`);
   }
 
-  /**
-   * 处理管理员在私聊里发来的裁决指令。
-   * @returns {Promise<boolean>} 是否已消费这条消息（true 表示不要再转给 DSH）
-   */
-  async function handleJoinDecisionCommand(key, text) {
-    const cmd = parseJoinCommand(text);
-    if (!cmd) return false;
-    // 只认管理员私聊：群里的"同意"可能是别人说的（账号级权限变更不能这么随便）
-    const owner = String(cfg.ownerQQ ?? '').trim();
-    if (!owner || key !== `private:${owner}`) {
-      // 不是管理员：不消费，让消息走正常流程（它在群里说"同意"不该被当成指令）
-      return false;
-    }
-
-    if (cmd.action === 'list') {
-      const all = joinQueue.list();
-      if (!all.length) {
-        sendToQQ(key, '现在没有待处理的好友/入群请求。');
-      } else {
-        const mins = Math.round((joinQueue.ttlMs || JOIN_TTL_MS) / 60000);
-        sendToQQ(key, `待处理 ${all.length} 条（${mins} 分钟内有效）：\n\n`
-          + all.map((it) => `#${it.n}　${describeJoinRequest(it)}`).join('\n\n')
-          + `\n\n用 /yes 编号 或 /no 编号 处理。`);
-      }
-      return true;
-    }
-
-    const taken = joinQueue.take(cmd.index);
-    if (!taken.ok) {
-      const extra = Array.isArray(taken.candidates) && taken.candidates.length
-        ? `\n\n当前待处理：\n${taken.candidates.map((it) => `#${it.n}　${describeJoinRequest(it).replace(/\n/g, ' ')}`).join('\n')}`
-        : '';
-      sendToQQ(key, `${taken.error}${extra}`);
-      return true;
-    }
-
-    const item = taken.item;
-    const approve = cmd.action === 'approve';
-    const res = await submitJoinDecision(item, approve);
-    const what = item.requestType === 'friend' ? '好友请求' : '入群邀请';
-    let reply;
-    if (res.ok && res.alreadyJoined) {
-      // 不是失败：QQ 已经替我们同意了（或对方已在群里），没必要再操作
-      reply = `#${item.n} 已经处理过了：机器人已在群里，不需要再${approve ? '同意' : '拒绝'}。`;
-    } else if (res.ok) {
-      reply = `已${approve ? '同意' : '拒绝'} #${item.n}（${what}，${item.nickname || item.userId}${item.groupId ? ` → ${item.groupId}` : ''}）`;
-    } else if (res.expired) {
-      reply = `#${item.n} 的请求已经失效（QQ 侧可能已自动同意或过期），请到 QQ 侧确认一下。`;
-    } else {
-      reply = `#${item.n} 的裁决提交失败，请稍后在 QQ 侧手动处理（${what}）`;
-    }
-    sendToQQ(key, reply);
-    appendActivity(`[加入请求] 管理员${approve ? '同意' : '拒绝'} #${item.n}`);
-    return true;
-  }
-
   bot.onRequest(async (event) => {
     try { await handleJoinRequest(event); } catch (error) { log(`处理加入请求出错：${error?.message ?? error}`); }
   });
@@ -16429,6 +8211,7 @@ UP主：${info.owner || '未知'}｜分区：${info.category || '未知'}
 
   // 上下文持久化（Phase 1）：启动 90 秒后补扫一次（把积压的最近消息总结成 episode），
   // 之后每 5 分钟扫一次。串行执行、失败只记日志，不影响消息收发。
+  log('[上下文] 扫描定时器已启动（首次 90s，之后每 5 分钟）');
   setTimeout(() => { void contextSweep(); }, 90 * 1000).unref?.();
   const contextSweepTimer = setInterval(() => { void contextSweep(); }, 5 * 60 * 1000);
   contextSweepTimer.unref?.();
@@ -16680,7 +8463,332 @@ UP主：${info.owner || '未知'}｜分区：${info.category || '未知'}
   });
 
   startDshWatch();
-  startConsoleServer();
+  createConsoleServer({
+    ACTIVITY_LOG,
+    CACHE_GROUPS,
+    CREDENTIAL_ITEMS,
+    DEFAULT_AUTO_AT,
+    DEFAULT_ERROR_MESSAGES,
+    DEFAULT_SOVITS_DIR,
+    FEEDBACK_FILE,
+    FORCE_WRAPUP_HINT,
+    KNOWN_AGENT_TOKENS,
+    MAX_MEDIA_BYTES,
+    MAX_MEDIA_PIXELS,
+    REACTION_EMOJIS,
+    ROOT,
+    SENSITIVE_RE,
+    SLANG_STATUS,
+    SOCIAL_V2_FILE,
+    STATE_DIR,
+    STICKER_CACHE_DIR,
+    TOOL_FLAGS,
+    TOOL_LOG_FILE,
+    TTS_DEFAULT_PROBABILITY,
+    WAIT_QUIET_CAP_MS,
+    WAIT_TURN_MAX_COUNT,
+    WAIT_TURN_MAX_MS,
+    WAIT_WINDOW_MAX,
+    WAIT_WINDOW_MS,
+    activeWaits,
+    allowSlangSubmit,
+    allowed,
+    api,
+    appendActivity,
+    appendFeedbackEntry,
+    appendMemoryV2,
+    applyPixivAuth,
+    applyStickerNoteV2,
+    archiveImage,
+    atomicWriteJson,
+    atomicWriteText,
+    backfillLongTermMemory,
+    biliBrowseState,
+    biliInfoCache,
+    bot,
+    buildSlangContext,
+    buildStickerContext,
+    buildStickerStrategyHint,
+    buildTokenReport,
+    cancelAllSocialTimers,
+    cancelPendingEntry,
+    cancelReplyCheckV2,
+    cancelSocialTimers,
+    canonicalV2Key,
+    cfg,
+    cleanupSocialForModeChange,
+    clearAllPendingWakeLeases,
+    clearAllSocialV2Timers,
+    clearSocialV2Timers,
+    collectCacheItems,
+    collectStickerV2,
+    collectors,
+    computeGapsV2,
+    computeWakeSafetyV2,
+    confirmedSlangListV2,
+    contextCfg,
+    contextDir,
+    contextDisplayName,
+    contextMetrics,
+    contextStats,
+    countContextPendingV2,
+    crawlAigengtu,
+    crawlUrl,
+    createSlangEntry,
+    crypto,
+    currentRoleHint,
+    currentRoleHintV2,
+    deleteStickerV2,
+    deliverPrompt,
+    drainAllPromptQueues,
+    drainPromptQueue,
+    emojiCatalogIds,
+    emojiReactGate,
+    ensureSession,
+    ensureWakeableV2,
+    enterActive,
+    escapeCqText,
+    extractGitHubUrl,
+    feedbackTimes,
+    fetchMediaData,
+    fetchVideoInfo,
+    findCallersV2,
+    findCjkSpaceWarning,
+    findMessageMediaAsync,
+    findSplitBoundaryWarning,
+    flushSummaries,
+    formatForwardResponse,
+    formatMemoryV2,
+    formatParticipationV2,
+    formatStickerList,
+    formatSummary,
+    fs,
+    getImageDimensions,
+    getRecallIndexV2,
+    clearRecallIndex,
+    journalCoverage,
+    readRecallAudit,
+    recallAuditStats,
+    readBacklogHistory,
+    getSocialV2State,
+    getStickerImageData,
+    gitHubShotTimes,
+    groupActivityScore,
+    groupedToolFlags,
+    http,
+    humanBytes,
+    humanSize,
+    imagePreflightV2,
+    imageSendAllowed,
+    imageSendTimes,
+    imageStore,
+    imagesEnabled,
+    invalidateSlangLearnerSession,
+    isAigengtuUrl,
+    isConversationBusyV2,
+    isOwnerTurn,
+    isSessionAllowedInCurrentMode,
+    isSleepingConfigV2,
+    isSymbolicPokeRef,
+    isSymbolicReplyRef,
+    joinQueue,
+    journalStats,
+    lastSentImage,
+    leaveActive,
+    deleteRole,
+    listRoles,
+    loadEpisodes,
+    loadLongTermMemory,
+    loadOrCreateConsoleToken,
+    loadTokenUsage,
+    log,
+    longTermStats,
+    looksLikeUnfinished,
+    makeEpisodeNow,
+    markReadCalledKeys,
+    maskValue,
+    mergeEvidence,
+    messageMediaStore,
+    mimeFromBuffer,
+    mimeFromUrl,
+    modeAllowed,
+    normalizeMessagesInput,
+    normalizeOwnerQQ,
+    normalizePrivateMode,
+    normalizeSourceFilter,
+    normalizeSpeakerIdsV2,
+    notifyOwnerOfError,
+    onebotSendImageFile,
+    onebotSendVideoFile,
+    onebotSendVoiceFile,
+    parseGitHubUrl,
+    path,
+    pending,
+    pendingSendToolCalls,
+    pendingWakeKeys,
+    preSleepWaitBlockedV2,
+    promptQueues,
+    pruneTokenReportCache,
+    publicSlangEntry,
+    purgeCache,
+    queueSlangTask,
+    queued,
+    queuedHintAt,
+    readActivityTail,
+    readConversationRoles,
+    readFeedbackEntries,
+    readJsonSafe,
+    readRoleState,
+    readToolLog,
+    recordSentMessage,
+    recordSentMessagesV2,
+    redactKnownTokensOnly,
+    refreshAllDefaultWakeConfigsV2,
+    refreshContextNames,
+    refreshFriendList,
+    refreshImageLib,
+    refreshTokenUsage,
+    releaseLock,
+    rememberBiliInfo,
+    renderFeatureMenu,
+    renderTokenReport,
+    resolveBiliId,
+    resolveGroupMemberName,
+    resolvePokeTarget,
+    resolveReplyInfo,
+    resolveReplyTargetV2,
+    reverse,
+    reverseSearcher,
+    roleExists,
+    roleFor,
+    runBiliBrowse,
+    runSlangExtraction,
+    runSlangResearch,
+    safeFetchBuffer,
+    sanitizeRoleName,
+    saveSlangStore,
+    saveSocialV2State,
+    saveState,
+    saveStickerImage,
+    scheduleBiliBrowse,
+    scheduleProactiveCheckV2,
+    scheduleReplyCheckV2,
+    screenshotGitHubRepo,
+    searchGroupFiles,
+    searchMemory,
+    searchVideos,
+    seenForwardIds,
+    sendImageV2,
+    sendMessagesV2,
+    sendStickerV2,
+    sendToQQ,
+    sendToolSucceededSessions,
+    sendWakePromptV2,
+    sessionFileBytes,
+    sessionPromises,
+    setEmojiLike,
+    setStickerRemarkV2,
+    setupSleepTimerV2,
+    shouldBlockSilentReply,
+    slangExtractionCooldowns,
+    slangResearchingIds,
+    slangSubmitTimes,
+    slangWindows,
+    sleep,
+    sniffImageMime,
+    social,
+    socialV2,
+    sourcePageOf,
+    state,
+    stickerCacheOpts,
+    stickerEnabled,
+    stripLeadingMetaMarker,
+    stripLeadingMetaMarkers,
+    suggestQuietMsV2,
+    summarizeCache,
+    summarizeGroupFiles,
+    summarizeTokenReport,
+    syncStickerLibrary,
+    text,
+    toolCallNames,
+    toolNamesOf,
+    ttsNum,
+    ttsSpeechParams,
+    unquoteJsonString,
+    unwrap,
+    v2TurnStartAt,
+    validateEmojiId,
+    waitTurnStats,
+    waitTurnTotals,
+    wakeConfigMissCount,
+    wakeConfigUpdatedKeys,
+    watchVideo,
+    writeConversationRole,
+    writeRoleState,
+    writeStickerCacheImage,
+    xMonitor,
+    live: {
+      get asrEngine() { return asrEngine; },
+      set asrEngine(value) { asrEngine = value; },
+      get biliAuth() { return biliAuth; },
+      set biliAuth(value) { biliAuth = value; },
+      get biliBrowsing() { return biliBrowsing; },
+      set biliBrowsing(value) { biliBrowsing = value; },
+      get biliMem() { return biliMem; },
+      set biliMem(value) { biliMem = value; },
+      get biliNextDelay() { return biliNextDelay; },
+      set biliNextDelay(value) { biliNextDelay = value; },
+      get biliScheduledAt() { return biliScheduledAt; },
+      set biliScheduledAt(value) { biliScheduledAt = value; },
+      get biliTimer() { return biliTimer; },
+      set biliTimer(value) { biliTimer = value; },
+      get closedAgentPreset() { return closedAgentPreset; },
+      set closedAgentPreset(value) { closedAgentPreset = value; },
+      get contextNameCache() { return contextNameCache; },
+      set contextNameCache(value) { contextNameCache = value; },
+      get currentMode() { return currentMode; },
+      set currentMode(value) { currentMode = value; },
+      get dshReady() { return dshReady; },
+      set dshReady(value) { dshReady = value; },
+      get friendIds() { return friendIds; },
+      set friendIds(value) { friendIds = value; },
+      get imageFetchedAt() { return imageFetchedAt; },
+      set imageFetchedAt(value) { imageFetchedAt = value; },
+      get imageFetching() { return imageFetching; },
+      set imageFetching(value) { imageFetching = value; },
+      get lastBiliBrowseAt() { return lastBiliBrowseAt; },
+      set lastBiliBrowseAt(value) { lastBiliBrowseAt = value; },
+      get lastBiliSearchKeyword() { return lastBiliSearchKeyword; },
+      set lastBiliSearchKeyword(value) { lastBiliSearchKeyword = value; },
+      get lastBiliShareAt() { return lastBiliShareAt; },
+      set lastBiliShareAt(value) { lastBiliShareAt = value; },
+      get lastBiliWatch() { return lastBiliWatch; },
+      set lastBiliWatch(value) { lastBiliWatch = value; },
+      get lastForcedAgentStickerSync() { return lastForcedAgentStickerSync; },
+      set lastForcedAgentStickerSync(value) { lastForcedAgentStickerSync = value; },
+      get lastMode() { return lastMode; },
+      set lastMode(value) { lastMode = value; },
+      get pickPathBusy() { return pickPathBusy; },
+      set pickPathBusy(value) { pickPathBusy = value; },
+      get slangEntries() { return slangEntries; },
+      set slangEntries(value) { slangEntries = value; },
+      get stickerEntries() { return stickerEntries; },
+      set stickerEntries(value) { stickerEntries = value; },
+      get stickerSyncedAt() { return stickerSyncedAt; },
+      set stickerSyncedAt(value) { stickerSyncedAt = value; },
+      get tokenUsage() { return tokenUsage; },
+      set tokenUsage(value) { tokenUsage = value; },
+      get ttsEngine() { return ttsEngine; },
+      set ttsEngine(value) { ttsEngine = value; }
+    },
+    ops: {
+      clearSessionTracking, clearAllSessionTracking,
+      recordSessionHistory: (sessionId, key, reason) => sessionHistory.record(sessionId, key, reason),
+      tokenFuseStatus: () => tokenFuse.status(),
+      resetTokenFuse: (key) => tokenFuse.resetKey(key),
+      bumpSessionEpoch() { sessionEpoch++; }
+    }
+  });
 
   await pumpMux();
 }

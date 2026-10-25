@@ -3,7 +3,7 @@
 // 背景（2026-10-12 用户第三次反馈，截图原文「这两下 @ 我都应过了，管理员的「在的」、
 // 喊口号那个也拒了」）：
 // 这条是**被桥接逼出来的**，不是模型自己想总结自己。转录里的完整因果链
-// （群 100001033，事件 17398~17410）：
+// （群 100002033，事件 17398~17410）：
 //   1. 模型 qq_wait_for_messages 完成观察窗口
 //   2. 模型 qq_set_wake_config 想潜水 → 被拒，报错原文：
 //      「未读里有人在叫你，不能先潜水走人：…。请先正面回应…；
@@ -12,90 +12,62 @@
 //
 // 根因：findCallersV2 把未读里的 @ 分成 answered（已答过）/ pending（还没答），
 // 但拦截判的是 **callerMsgs.length（总数）**，没看 pending。拿当时的真实状态复现：
-//   unread 中被判定为「在叫我」: 2 条（seq=1220 群友P、seq=1226 群友Z4）
+//   unread 中被判定为「在叫我」: 2 条（seq=1220 群友U、seq=1226 群友S）
 //   answered: 2    pending: 0
 //   => 旧判据 callerMsgs.length = 2 → 拦截（明明都答过了）
 // 那两条 @ 之所以还在未读里，是因为模型用 qq_send_message 回复时没带
 // replyToMessageId，而未读清理只在 quotedInfo?.messageId != null 时才执行
 // （bridge.js 的 send 端点）——于是旧 @ 长期滞留，每轮想收尾都被拦。
 //
-// 这个测试直接从 bridge.js 抽真实实现来跑，避免复制品与产品代码漂移。
+// 这个测试直接 import pipeline/wake.js 的真实实现，避免复制品与产品代码漂移。
 import fs from 'node:fs';
+import { findPendingCallers } from '../src/pipeline/wake.js';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
-const src = fs.readFileSync(new URL('../src/bridge.js', import.meta.url), 'utf8');
+const consoleServer = fs.readFileSync(new URL('../src/console-server.js', import.meta.url), 'utf8');
 
-// ── 1. 从源码抽真实的 findCallersV2 ────────────────────────────────────────
-function grabFn(name) {
-  const start = src.indexOf(`function ${name}(`);
-  if (start < 0) throw new Error(`找不到 ${name}()`);
-  // 从函数头开始做花括号配对，避免函数体里有 } 时截断
-  let depth = 0, i = src.indexOf('{', start);
-  for (; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}') { depth--; if (depth === 0) break; }
-  }
-  return src.slice(start, i + 1);
-}
-const findCallersSrc = grabFn('findCallersV2');
-
-// findCallersV2 依赖闭包里的别名函数；注入一个最小实现（与 bridge 的
-// botAliasNamesV2 同形：角色名 + 唤醒关键词）。
-const makeFindCallers = new Function(
-  `let selfNickname = '大肥鱼';
-   function botAliasNamesV2(key, st) {
-     const keywords = Array.isArray(st?.wakeConfig?.triggers?.keywords) ? st.wakeConfig.triggers.keywords : [];
-     const all = [...new Set([selfNickname, '大肥鱼', ...keywords].map((x) => String(x ?? '').trim()).filter(Boolean))];
-     return { primary: [...new Set([selfNickname, '大肥鱼'])], keywords, all };
-   }
-   ${findCallersSrc}
-   return findCallersV2;`
-)();
-const findCallersV2 = makeFindCallers;
+// ── 1. import 真实判定；只替换别名来源 ──
+const findCallersV2 = (_key, st) => findPendingCallers(st, {
+  all: ['大肥鱼', ...(st?.wakeConfig?.triggers?.keywords || [])]
+});
 
 // ── 2. 断言两处拦截都只看 pending ──────────────────────────────────────────
 // 直接检查源码：拦截条件里不得再出现 callerMsgs.length / callerMsgs2.length
 {
-  const badMark = /if\s*\(\s*callerMsgs\.length\s*&&/.test(src);
-  const badWake = /if\s*\(\s*callerMsgs2\.length\s*&&/.test(src);
+  const badMark = /if\s*\(\s*callerMsgs\.length\s*&&/.test(consoleServer);
+  const badWake = /if\s*\(\s*callerMsgs2\.length\s*&&/.test(consoleServer);
   check('qq_mark_read 拦截条件不再用 callerMsgs.length', !badMark);
   check('qq_set_wake_config 拦截条件不再用 callerMsgs2.length', !badWake);
   check('qq_mark_read 拦截改用 callerMsgs.pending.length',
-    /if\s*\(\s*callerMsgs\.pending\.length\b/.test(src));
+    /if\s*\(\s*callerMsgs\.pending\.length\b/.test(consoleServer));
   check('qq_set_wake_config 拦截改用 callerMsgs2.pending.length',
-    /if\s*\(\s*callerMsgs2\.pending\.length\b/.test(src));
+    /if\s*\(\s*callerMsgs2\.pending\.length\b/.test(consoleServer));
   // 2026-10-22 回归：pending 已按 lastAiReplyAt 判定「答没答过」，不能再叠
   // “本轮发过言”这种更宽的判据——早于新 @ 的回复也会让它成立，导致 @ 被标读。
   check('拦截条件不再依赖 repliedThisTurn（回复早于新 @ 时也必须拦）',
-    !/!\s*repliedThisTurn2?\b/.test(src));
+    !/!\s*repliedThisTurn2?\b/.test(consoleServer));
 }
 
 // 诱导性措辞必须已从两处报错里移除（它正是"总结自己"的诱因）
 {
-  const occurrences = (src.match(/也要先发一句说明/g) || []).length;
+  const occurrences = (consoleServer.match(/也要先发一句说明/g) || []).length;
   check('报错里不再出现「也要先发一句说明」（诱导来源）', occurrences === 0, `出现 ${occurrences} 次`);
   check('报错改为要求「说给对方听，不要报告处理流程」',
-    (src.match(/不要报告自己的处理流程或调度状态/g) || []).length >= 2,
-    `出现 ${(src.match(/不要报告自己的处理流程或调度状态/g) || []).length} 次`);
+    (consoleServer.match(/不要报告自己的处理流程或调度状态/g) || []).length >= 2,
+    `出现 ${(consoleServer.match(/不要报告自己的处理流程或调度状态/g) || []).length} 次`);
 }
 
 
-// ── answeredSeqs 必须持久化：只存不读/只读不存都会让严格判据失效 ──
-{
-  check('answeredSeqs 进入保存白名单', /answeredSeqs: Array\.isArray\(st\.answeredSeqs\)/.test(src));
-  check('加载时读取 answeredSeqs', /answeredSeqs: Array\.isArray\(val\.answeredSeqs\)/.test(src));
-  check('旧状态加载时补种 answeredSeqs', /if \(!Array\.isArray\(val\.answeredSeqs\)\)/.test(src));
-}
-
+// answeredSeqs 往返/旧格式恢复由 test-social-state.mjs 覆盖。
 // ── 3. 用真实故障现场的数据验证判定 ────────────────────────────────────────
 const RE = 1791782044023;                 // 真实 lastAiReplyAt（13:14:04 那条发送）
 const msg = (seq, text, time, extra = {}) => ({
   seq, text, plain: text, time, sender: '群友', isSelf: false, ...extra
 });
 
-console.log('\n── 真实故障现场（群 100001033，unread 快照）──');
+console.log('\n── 真实故障现场（群 100002033，unread 快照）──');
 {
   // 复刻当时的两条 @：都在 lastAiReplyAt 之前 → 都算 answered
   const st = {
@@ -147,7 +119,7 @@ console.log('\n── 2026-10-22：本轮早先发过言，之后才来新 @（r
     wakeConfig: { lastWakeAt: wakeAt, triggers: { keywords: [] } },
     unread: [msg(8071, '@大肥鱼 从 aigengtu 找几张 DeepSeek 娘的表情包存起来', atTime, { atSelf: true })]
   };
-  const c = findCallersV2('group:100001004', st);
+  const c = findCallersV2('group:100002004', st);
   check('新 @ 在 lastAiReplyAt 之后 → pending', c.pending.length === 1, `pending=${c.pending.length}`);
   const oldRepliedThisTurn = !!st.lastActionAt && st.lastActionAt >= (st.wakeConfig.lastWakeAt || 0);
   check('旧判据的 repliedThisTurn 为 true（复现放行）', oldRepliedThisTurn === true);
@@ -171,7 +143,7 @@ console.log('\n── 2026-10-23：引用回复了 A，不代表更新的 B 答�
       msg(7066, '@大肥鱼 继续学吗', replyAt + 10000)
     ]
   };
-  const c = findCallersV2('group:100001006', st);
+  const c = findCallersV2('group:100002005', st);
   check('引用目标 7061 算 answered', c.answered.some((m) => m.seq === 7061));
   check('更新的 7064 仍算 pending（引用回复没答它）', c.pending.some((m) => m.seq === 7064));
   check('回复之后才到的 7066 也算 pending', c.pending.some((m) => m.seq === 7066));
@@ -179,7 +151,7 @@ console.log('\n── 2026-10-23：引用回复了 A，不代表更新的 B 答�
     (replyAt && (replyAt - 6000) <= replyAt + 5000) === true);
   check('新判据只认明确引用回复的 seq，7064 仍待答', c.pending.some((m) => m.seq === 7064));
   // 严格模式：answeredSeqs 存在（哪怕是空数组）时，不再用时间猜。
-  const strict = findCallersV2('group:100001006', { ...st, answeredSeqs: [] });
+  const strict = findCallersV2('group:100002005', { ...st, answeredSeqs: [] });
   check('answeredSeqs 为空时所有未答 @ 都 pending', strict.pending.length === 3, `pending=${strict.pending.length}`);
 }
 

@@ -353,3 +353,126 @@ export async function prepareImageForModel(buffer, opts = {}) {
 
   return { buffer: cur, mimeType, changed: notes.length > 0, notes };
 }
+
+/**
+ * QQ 收藏表情（custom face）上传前的压缩。
+ *
+ * 背景（2026-10-23 实测）：`add_custom_face` 走 QQ highway HTTP 上传，
+ * 单次 body 超过约 4MiB 时 Tencent 侧直接 RST，SnowLuma 只能报
+ * `fetch failed`。群友发了一张 5.1MB / 480×270 / 140 帧的 GIF，
+ * 模型连续三次收藏都失败，只能回「这张存不下来」。
+ *
+ * 实测边界：4,028,437 字节成功，4,222,487 失败 → 上限就是 4MiB。
+ * 这里按 4MiB 减 256KiB 作为目标，给 highway 帧头留余量。
+ *
+ * GIF 保留动画：优先降 fps/尺寸/调色板；实在压不下去才退化成首帧静态图
+ * （静态图也比「收藏失败」好）。静态图走 JPEG 逐级缩放。
+ */
+export const STICKER_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
+export const STICKER_UPLOAD_TARGET_BYTES = STICKER_UPLOAD_MAX_BYTES - 256 * 1024;
+
+export async function shrinkStickerForUpload(buffer, opts = {}) {
+  const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer ?? []);
+  const mimeType = String(opts.mimeType || 'image/gif');
+  const maxBytes = Number(opts.maxBytes) || STICKER_UPLOAD_TARGET_BYTES;
+  const timeoutMs = Number(opts.timeoutMs) || 15000;
+  const log = typeof opts.log === 'function' ? opts.log : () => {};
+  const passthrough = (reason) => ({ buffer: buf, mimeType, shrunk: false, reason });
+
+  if (!buf.length) return passthrough('empty');
+  if (buf.length <= maxBytes) return passthrough('within-limit');
+
+  const ffmpeg = findFfmpeg();
+  if (!ffmpeg) return passthrough('no-ffmpeg');
+
+  const isGif = buf.subarray(0, 6).toString('ascii') === 'GIF87a'
+    || buf.subarray(0, 6).toString('ascii') === 'GIF89a';
+  const dims = imageSizeOf(buf);
+  const srcWidth = dims?.width || 0;
+  const tag = crypto.randomBytes(6).toString('hex');
+  const inFile = path.join(os.tmpdir(), `qqb-sticker-${tag}.img`);
+  try {
+    fs.writeFileSync(inFile, buf);
+
+    if (isGif) {
+      // 先保动画：降 fps + 缩尺寸 + 减色。多数 5~10MB 的 GIF 第一档就能过。
+      const attempts = [
+        { width: 480, fps: 12, colors: 128 },
+        { width: 400, fps: 10, colors: 96 },
+        { width: 340, fps: 8, colors: 64 },
+        { width: 280, fps: 6, colors: 48 }
+      ];
+      for (const a of attempts) {
+        const width = srcWidth ? Math.min(a.width, srcWidth) : a.width;
+        const outFile = path.join(os.tmpdir(), `qqb-sticker-${tag}-${a.width}-${a.fps}.gif`);
+        try {
+          const vf = `fps=${a.fps},scale=${width}:-1:flags=lanczos,`
+            + `split[s0][s1];[s0]palettegen=max_colors=${a.colors}[p];[s1][p]paletteuse=dither=bayer`;
+          const r = await runFfmpeg(ffmpeg, [
+            '-hide_banner', '-loglevel', 'error', '-y',
+            '-i', inFile, '-vf', vf, '-loop', '0', outFile
+          ], timeoutMs);
+          if (!r.ok || !fs.existsSync(outFile)) continue;
+          const out = fs.readFileSync(outFile);
+          if (!out.length) continue;
+          if (out.length <= maxBytes) {
+            log(`[收藏表情] 压缩 ${(buf.length / 1048576).toFixed(1)}MB → ${(out.length / 1048576).toFixed(1)}MB（GIF ${width}px/${a.fps}fps）`);
+            return { buffer: out, mimeType: 'image/gif', shrunk: true, from: buf.length, to: out.length, width, fps: a.fps };
+          }
+        } finally {
+          try { fs.unlinkSync(outFile); } catch {}
+        }
+      }
+
+      // 兜底：取首帧转静态 JPEG（不再有动画，但至少能收藏）
+      const outFile = path.join(os.tmpdir(), `qqb-sticker-${tag}-first.jpg`);
+      try {
+        const width = srcWidth ? Math.min(480, srcWidth) : 480;
+        const r = await runFfmpeg(ffmpeg, [
+          '-hide_banner', '-loglevel', 'error', '-y',
+          '-i', inFile, '-frames:v', '1',
+          '-vf', `scale=${width}:-1:flags=lanczos`,
+          '-q:v', '4', outFile
+        ], timeoutMs);
+        if (r.ok && fs.existsSync(outFile)) {
+          const out = fs.readFileSync(outFile);
+          if (out.length && out.length <= maxBytes) {
+            log(`[收藏表情] GIF 压不进 4MB，已转静态首帧 ${(buf.length / 1048576).toFixed(1)}MB → ${(out.length / 1048576).toFixed(1)}MB`);
+            return { buffer: out, mimeType: 'image/jpeg', shrunk: true, static: true, from: buf.length, to: out.length };
+          }
+        }
+      } finally {
+        try { fs.unlinkSync(outFile); } catch {}
+      }
+    } else {
+      // 静态图：逐级缩到长边 <= 各档，JPEG 质量 82。
+      const attempts = [1568, 1200, 900, 700, 500, 320];
+      for (const edge of attempts) {
+        const width = srcWidth ? Math.min(edge, srcWidth) : edge;
+        const outFile = path.join(os.tmpdir(), `qqb-sticker-${tag}-${edge}.jpg`);
+        try {
+          const r = await runFfmpeg(ffmpeg, [
+            '-hide_banner', '-loglevel', 'error', '-y',
+            '-i', inFile,
+            '-vf', `scale=${width}:-1:flags=lanczos`,
+            '-frames:v', '1', '-q:v', '4', outFile
+          ], timeoutMs);
+          if (!r.ok || !fs.existsSync(outFile)) continue;
+          const out = fs.readFileSync(outFile);
+          if (!out.length) continue;
+          if (out.length <= maxBytes) {
+            log(`[收藏表情] 压缩 ${(buf.length / 1048576).toFixed(1)}MB → ${(out.length / 1048576).toFixed(1)}MB（长边≤${width}）`);
+            return { buffer: out, mimeType: 'image/jpeg', shrunk: true, from: buf.length, to: out.length, width };
+          }
+        } finally {
+          try { fs.unlinkSync(outFile); } catch {}
+        }
+      }
+    }
+    return passthrough('cannot-shrink');
+  } catch (error) {
+    return passthrough(`error:${String(error?.message ?? error).slice(0, 100)}`);
+  } finally {
+    try { fs.unlinkSync(inFile); } catch {}
+  }
+}

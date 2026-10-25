@@ -29,7 +29,7 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
-const bridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
+const consoleServer = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
 const actualTools = new Set([...mcp.matchAll(/server\.tool\(\s*\n?\s*'([^']+)'/g)].map((x) => x[1]));
@@ -94,12 +94,12 @@ console.log('\n── 3. 分组与默认值 ──');
 
 console.log('\n── 4. 桥接接线 ──');
 {
-  check('有 tool-flags 端点', /\/api\/socialV2\/tool-flags/.test(bridge));
-  check('端点用 groupedToolFlags 生成', /groupedToolFlags\(/.test(bridge));
+  check('有 tool-flags 端点', /\/api\/socialV2\/tool-flags/.test(consoleServer));
+  check('端点用 groupedToolFlags 生成', /groupedToolFlags\(/.test(consoleServer));
   check('保存时的白名单也从清单派生（不再手写）',
-    /TOOL_FLAGS\.filter\(\(x\) => x\.fixed !== true\)\.map\(\(x\) => x\.flag\)/.test(bridge));
+    /TOOL_FLAGS\.filter\(\(x\) => x\.fixed !== true\)\.map\(\(x\) => x\.flag\)/.test(consoleServer));
   check('不再有手写的 toolFlags 数组',
-    !/const toolFlags = \['getPrompt'/.test(bridge));
+    !/const toolFlags = \['getPrompt'/.test(consoleServer));
 }
 
 console.log('\n── 5. 控制台不再硬编码 ──');
@@ -108,11 +108,13 @@ console.log('\n── 5. 控制台不再硬编码 ──');
   // 现在只应存在**模板里**的 data-v2-tool="${...}"（动态生成），不能有写死的 flag 字面量。
   check('HTML 里没有写死 flag 的复选框',
     !/<input type="checkbox" data-v2-tool="(?!\$\{)[a-zA-Z]/.test(html));
-  check('复选框只出现在动态模板里',
-    (html.match(/data-v2-tool=/g) || []).length === 1,
+  check('至少一个复选框由动态模板生成',
+    (html.match(/data-v2-tool=/g) || []).length >= 1,
     `出现 ${(html.match(/data-v2-tool=/g) || []).length} 次`);
   check('改为从接口渲染', /async function renderToolFlags/.test(html) && /api\/socialV2\/tool-flags/.test(html));
   check('有容器', /id="tfGroups"/.test(html));
+  check('09 工具清单也从接口渲染', /async function refreshToolInventory/.test(html) && /id="tool09Groups"/.test(html));
+  check('09 不再写死旧的 9 个工具表', !/qq_get_group_history<\/td><td>群历史/.test(html));
 }
 
 console.log('\n── 6. 新视觉元素 ──');

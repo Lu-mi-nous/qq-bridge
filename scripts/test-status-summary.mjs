@@ -1,6 +1,6 @@
 // 回归测试：状态摘要不能只截开头（引用类消息的指令在末尾）。
 //
-// 事故（2026-10-21，group:100001033）：群友发
+// 事故（2026-10-21，group:100002033）：群友发
 //   "[引用 群友D：[图片]]（被引用的这条消息含 1 个图片/表情。要看到它请调用
 //    mcp__snowluma__qq_get_message_images，参数 key="…", messageId="…"）@大肥鱼 超分一下"
 // 桥接把它判成 atMention 唤醒（判定是对的），但【此刻状态】只显示前 30 字 →
@@ -16,7 +16,7 @@ let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const src = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
+const src = fs.readFileSync(path.join(root, 'src/pipeline/wake.js'), 'utf8');
 
 // 复刻实现（与 bridge.js 中 showText / lastSummary 保持一致）
 const summarize = (text) => {
@@ -27,7 +27,7 @@ const summarize = (text) => {
 
 console.log('── 1. 事故原文必须露出指令 ──');
 {
-  const real = '[引用 群友D：[图片]]（被引用的这条消息含 1 个图片/表情。要看到它请调用 mcp__snowluma__qq_get_message_images，参数 key="group:100001033", messageId="-1669323357"）@大肥鱼 超分一下';
+  const real = '[引用 群友D：[图片]]（被引用的这条消息含 1 个图片/表情。要看到它请调用 mcp__snowluma__qq_get_message_images，参数 key="group:100002033", messageId="-1669323357"）@大肥鱼 超分一下';
   const out = summarize(real);
   check('含 @大肥鱼', out.includes('@大肥鱼'), out);
   check('含指令「超分一下」', out.includes('超分一下'));

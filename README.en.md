@@ -107,7 +107,7 @@ The goal: from a clean Windows machine to a reply in your QQ group. Full depende
 ### Step 2 · Clone and install
 
 ```bash
-git clone https://github.com/Lu-mi-nous/qq-bridge.git
+git clone https://github.com/群友U/qq-bridge.git
 cd qq-bridge
 npm install
 ```

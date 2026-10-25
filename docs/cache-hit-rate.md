@@ -1,6 +1,6 @@
 # 缓存命中率分析
 
-> 数据来源：`~/.dsh/sessions/--<repo>-state-agents--/` 下 10 个 QQ 会话转录
+> 数据来源：`~/.dsh/sessions/--E-Downloads-qq-bridge-main-state-agents--/` 下 10 个 QQ 会话转录
 > 统计时间：2026-10-12　│　样本：24,788 次 LLM 调用
 
 ## 结论

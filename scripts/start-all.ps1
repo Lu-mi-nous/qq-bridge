@@ -18,8 +18,7 @@ $SnowLumaDir  = if ($env:SNOWLUMA_DIR) { $env:SNOWLUMA_DIR } else { Join-Path $e
 $SnowLumaExe  = Join-Path $SnowLumaDir 'node.exe'
 $SnowLumaMain = Join-Path $SnowLumaDir 'index.mjs'
 $BridgeDir    = Split-Path -Parent $PSScriptRoot
-$NodeExe      = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
-if (-not $NodeExe) { $NodeExe = Join-Path $env:ProgramFiles 'nodejs\node.exe' }
+$NodeExe      = 'C:\Program Files\nodejs\node.exe'
 # DSH 由全局 npm 安装，用 .cmd 启动器（内部会挑 node）而不是硬编码 bin.js 路径
 $DshCmd       = Join-Path $env:APPDATA 'npm\dsh.cmd'
 $DshWorkDir   = $env:USERPROFILE

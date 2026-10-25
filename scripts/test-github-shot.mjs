@@ -69,7 +69,7 @@ console.log('── 1. 链接解析 ──');
 // ── 2. 桥接接线 ──
 console.log('\n── 2. 桥接接线 ──');
 {
-  const bridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
+  const bridge = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
   const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
   const preset = fs.readFileSync(path.join(root, 'dsh', 'agent-presets', 'qq-chat-v2', 'agent.cordis.yml'), 'utf8');
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));

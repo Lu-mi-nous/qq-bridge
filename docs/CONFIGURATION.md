@@ -38,24 +38,16 @@ cp config.example.json config.json      # Windows CMD: copy config.example.json 
 | `socialV2.agentPreset` | `reserved2` 用的 preset，默认 `qq-chat-v2` |
 | `allow.*` / `deny.*` | 聊天模式的准入名单，`deny` 优先；群白名单与私聊策略分别判断 |
 | `allow.privateMode` | `friends` / `all` / `list`（默认）；模板未写该字段时按 `list` 处理 |
-| `socialV2.wake.*` | 唤醒/潜水/批窗口/防永眠参数；`preSleepReplyGraceMs`（默认 30000）= 本回合已发言后允许收尾的宽限 |
-| `socialV2.wait.*` | 等待参数：`defaultMs`/`minMs`/`maxMs`、`defaultQuietMs`/`minQuietAfterNewMs`、`maxQuietMs`（单次静默上限，默认 15000）、`turnMaxCount`（单回合最多等待次数，默认 2）、`turnMaxMs`（单回合累计上限，默认 120000） |
+| `socialV2.wake.*` | 唤醒/潜水/批窗口/防永眠参数 |
 | `socialV2.send.*` | 分条发送、频率上限、字长上限 |
 | `socialV2.images.*` | 图库：开关、图源、上限、代理、冷却；`sources.pixiv.authFile`（默认 `state/pixiv-auth.json`，文件存在就带登录态，不存在则匿名——没有额外开关） |
 | `socialV2.sticker.*` | 表情包：同步、收藏、备注 |
 | `socialV2.tools.getFeatureMenu` | 功能声明图开关，默认 `true`；需本地 Chrome/Edge 生成首次缓存 |
 | `socialV2.tools.tokenReport` | Token 用量图开关，默认 `true`；同样需本地 Chrome/Edge |
-| `socialV2.tools.sendVoice` | 主动发语音工具 `qq_send_voice` 开关，默认 `true`；TTS 不可用时该工具不注册 |
-| `socialV2.tools.crawl` | 按需爬网页 / 图片存表情工具 `qq_crawl_web` 开关，默认 `true` |
 | `socialV2.comply` / `emojiReact` / `gifFrames` | 点单判定 / 贴表情 / 动图抽帧 |
 | `socialV2.upscale` | 超分：`enabled`、`model`（默认 `upscayl-standard-4x`）、`binDir` / `modelDir`（Upscayl 安装路径）、`timeoutMs`；`enabled:false` 时小图回退 lanczos |
 | `socialV2.upscale.cache` | 缓存：`enabled`、`dir`（默认 `state/upscale-cache`）、`maxAgeDays`（默认 3）、`maxBytes`（默认 500MB）、`sweepEveryHours`（默认 6）；超阈值按最旧优先删除 |
 | `socialV2.bili` | B 站：`enabled`；`authFile`（默认 `state/bili-auth.json`，配了才有字幕）；`selfBrowsing.*`（`dailyBudgetSec` 默认 7200、`minIntervalMs`/`maxIntervalMs`、`scanSeconds`/`likedSeconds`、`framesPerSecond`=每秒取样帧数、`maxFramesTotal`=单次帧数上限、`tilesPerSheet`=每张拼图格数、`gameBoost`、`poolPages`、`search.*`、`seenCooldownMs`、`onlyWhenDiving`）；`asr.*`（`enabled`、`model`=本地目录或模型名、`cpuThreads` 默认 8、`timeoutMs`）；`share.*`（`minInterest`/`probability`/`minGapMs`/`askModel`）；`watchShared.*`；`memory.file`/`maxItems` |
-| `socialV2.contextMemory.*` | 上下文记忆：`enabled`、`episodeEveryMessages`（默认 40）、`episodeIdleMs`、`episodeInputLimit`、`episodeKeep`、`compactionKeep`、`journalKeep`、`journalCompactBytes`、`longTermKeepPeople`/`longTermKeepFacts`/`longTermKeepThreads`、`memoryPackChars`、`gatewayUrl`/`model`/`apiKey`/`timeoutMs` |
-| `socialV2.tts.*` | 语音合成：`enabled`（默认关）、`dir`（GPT-SoVITS 目录）、`probability`、`maxPerHour`、`maxChars`、`timeoutMs` |
-| `socialV2.media.*` | 媒体：`maxMessageBytes`；`asr` 段在 `socialV2.bili.asr` 下配置 |
-| `socialV2.githubShot.*` | GitHub 截图：`enabled`、`sliceHeight`、`maxHeight`、`waitMs`、`timeoutMs`、`proxy` |
-| `socialV2.joinRequest.*` | 加好友/入群裁决：`enabled`、`autoApprove`（默认 `false`，fail-closed）、`ttlMs` |
 | `imageReverseSearch.*` | SauceNAO 反向搜图（`apiKey`、`db`、`minsim`、`proxy`） |
 | `webSearch.*` | 搜索引擎链与顺序（`engines` 数组，mtime 热加载） |
 | `xMonitor.*` | X 按需查询：抓取条数、媒体、视频上限、代理、翻译；该名字沿用旧版，不表示定时监控 |
@@ -96,7 +88,7 @@ restart.bat        # 杀旧实例 → 清锁 → 重启（异常时用）
 - **只允许一个实例**（单实例锁；重复启动会被拒绝）
 - 用 `start.bat` 启动，窗口别关——崩溃后 5 秒自动拉起
 - **重启 DSH 不用动桥接**：桥接每 5 秒探活，DSH 重启期间消息入队缓存
-- 手工修改桥接主配置通常需重启桥接；`roles/*.md` 与当前角色状态按 mtime 在后续提示词读取时更新
+- 手工修改桥接主配置通常需重启桥接；`roles/*.md`、默认角色状态与每群覆盖 `state/conversation-roles.json` 按 mtime 在后续提示词读取时更新
 - 搜索引擎配置、X 查询配置按 mtime 热加载；MCP 的部分开关在进程启动时读取，修改 MCP 源码、挂载或 preset 后需重启 **DSH**（preset 模板改动先运行安装脚本同步）
 - 修改 `src/feature-menu*.js` 后重启桥接加载新模块；可先执行 `npm run build:menu` 生成本地预览与缓存，HTML 预览文件本身不是菜单数据源
 
@@ -115,7 +107,7 @@ restart.bat        # 杀旧实例 → 清锁 → 重启（异常时用）
 ## 测试
 
 ```bash
-npm test                                # 跑全部（106 个脚本）
+npm test                                # 跑全部（124 个脚本）
 npm test -- share-card                  # 只跑名字含 "share-card" 的
 node scripts/test-share-card.mjs        # 或直接跑单个
 ```
@@ -136,6 +128,15 @@ node scripts/test-feature-menu.mjs --render  # 额外验证真实截图、并发
 | `test-vision*` / `test-local-*` / `test-model-route` | `local` provider 已注册、`state/vision-*.jpg` 等测试图片存在 |
 | `test-mcp-*` / `test-onebot-connection` | SnowLuma / DSH 在运行 |
 | `test-console` | 运行中的控制台及可用于测试的配置/状态 |
+
+**4D / 4E 本地验收（2026-10-25）**：最终全量 114/124、4479 条断言，10 个未通过脚本与 4C 基线相同，退出码 1（控制台 :3100 未启动）；隔离控制台 50 项接口检查、24 个功能页导航和 WebSocket 发送回放均通过。完整结论与线上待验收项见 [4D 验收记录](docs/refactor-4d-acceptance.md)。
+
+| 当前规模 | 数值 |
+| --- | --- |
+| 有效源码（.js/.mjs） | 93 个文件，41,897 行 |
+| bridge.js | 8,621 行（目标 ≤ 9,000） |
+| 读取 bridge 文本的测试 | 10 个（目标 ≤ 10） |
+| 测试脚本 | 124 个 |
 
 测试按模块组织，重点覆盖三类容易**静默**出错的场景：
 
@@ -159,7 +160,6 @@ qq-bridge/
   docs/
     PROJECT_GUIDE.md       # 项目说明书（架构、数据流、调试）
     DSH_SETUP.md           # DSH 端安装
-    DEPENDENCIES.md        # 依赖清单（必需/可选组件、端口、环境变量）
     feature-comparison.md  # 功能对比（vs 原版）
     cache-hit-rate.md      # 缓存命中率实测分析
     topology.html          # 系统拓扑图（离线单文件，浏览器直接打开）
@@ -167,14 +167,14 @@ qq-bridge/
   plugins/qq-mode-console  # DSH 设置页 qq-mode 卡片
   roles/                   # 人格卡片（Markdown，热更新）
   public/console.html      # 本地控制台前端
-  src/                     # 约 38.7k 行（.js/.mjs，排除备份）
-    bridge.js              # 主程序（约 16.7k 行）
+  src/                     # 约 41.9k 行（.js/.mjs，排除备份）
+    bridge.js              # 主程序（8,621 行，模式派发与模块接线）
+    console-server.js      # 控制台与 MCP 回调 HTTP 路由（约 6.7k 行）
+    admin-commands.js      # 管理命令：识别、准入例外、执行（命令表唯一事实源）
+    context-recovery.js    # DSH 上下文超限识别、会话轮换与单次重试
+    pipeline/              # 消息管线（入站分段、社交状态、唤醒、发送、B 站编排与 DSH 事件泵）
     dsh-client.js          # DSH API 客户端（WS 下行）
-    mcp-snowluma-safe.js   # QQ 工具 MCP（58 工具）
-    context-memory.js      # 情节记忆 / 全量消息日志 / 长期记忆
-    cache-manager.js       # 磁盘缓存清单与清理
-    token-usage.js         # Token 用量统计（zstd 多帧解析）
-    web-crawler.js         # 按需爬网页 / 图片存表情
+    mcp-snowluma-safe.js   # QQ 工具 MCP（59 工具）
     mcp-host-server.js     # SnowLuma 进程控制 MCP
     mcp-web-search-safe.js # 联网 MCP（含微信文章解析、图片抓取）
     share-card.js          # QQ 分享卡片解析
@@ -186,8 +186,6 @@ qq-bridge/
     image-*.js             # 图库 / 画风 / 反馈 / 搜图 / 存档
     x-monitor/             # X 帖子按需查询（抓取 / 渲染 / 翻译 / 缓存）
     web-search/            # 搜索引擎注册表（engines/ 即插件）
-      query-plan.mjs       # 查询分词 / 实体词 / 天气意图 / 降级判定
-      engines/weather.mjs  # Open-Meteo 天气引擎（免 key）
     proxy-tunnel.js        # CONNECT 代理隧道
     safe-fetch.js          # SSRF 安全抓取
     sensitive.js           # 脱敏正则

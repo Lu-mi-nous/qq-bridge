@@ -1,7 +1,7 @@
 // 回归测试：繁忙期间积压的唤醒，补发时必须**按优先级选**，不能按 FIFO。
 //
 // 背景（2026-10-11 用户反馈「群里 @ 它不是必回」）：
-// 实测群 100001005 的日志——用户 16:08:31 @ 机器人（atMention@seq20893），
+// 实测群 100002007 的日志——用户 16:08:31 @ 机器人（atMention@seq20893），
 // 那一刻会话正忙，唤醒被暂存。但 16:08:46 补发时**只 shift() 最旧一条**，
 // 取到了 anyMessage@20779（或 poke@20871），用户的 @ 被留在队列里，
 // 直到 16:10:01 才被处理 —— 延迟 90 秒，感受就是「@ 不理人」。
@@ -11,25 +11,13 @@
 //
 // 为什么这个测试值得写：这是**静默**故障——机器人最终确实回了，只是晚 90 秒，
 // 日志里两条「暂存/补发」看着都正常，只有把队列按优先级重排才发现选错了项。
-import fs from 'node:fs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
-// 从 bridge.js 抽出真实的优先级表与选取逻辑（保证测的是跑着的代码）
-const src = fs.readFileSync(new URL('../src/bridge.js', import.meta.url), 'utf8');
+import { WAKE_PRIORITY, wakePriorityV2, pickPendingWake as pickHighest } from '../src/pipeline/wake.js';
 
-// 1) 抽出 WAKE_PRIORITY
-const priBlock = /const WAKE_PRIORITY = \{([\s\S]*?)\};/.exec(src);
-if (!priBlock) { console.log('❌ 抽不到 WAKE_PRIORITY'); process.exit(1); }
-const WAKE_PRIORITY = {};
-for (const line of priBlock[1].split('\n')) {
-  const m = /^\s*([A-Za-z_]+)\s*:\s*(\d+)/.exec(line);
-  if (m) WAKE_PRIORITY[m[1]] = Number(m[2]);
-}
-const wakePriorityV2 = (reason) => WAKE_PRIORITY[String(reason ?? '').split(':')[0]] ?? 0;
-
-console.log('── 优先级表（从源码抽出）──');
+console.log('── 优先级表（真实模块）──');
 {
   check('表里含 atMention', WAKE_PRIORITY.atMention !== undefined, '=' + WAKE_PRIORITY.atMention);
   check('表里含 question', WAKE_PRIORITY.question !== undefined, '=' + WAKE_PRIORITY.question);
@@ -50,19 +38,6 @@ console.log('── 优先级表（从源码抽出）──');
     && wakePriorityV2('pokeSelf') > wakePriorityV2('question'),
     `pokeSelf=${wakePriorityV2('pokeSelf')}`);
   check('带子类型前缀也能识别（keyword:大肥鱼）', wakePriorityV2('keyword:大肥鱼') === wakePriorityV2('keyword'));
-}
-
-// 2) 复刻新的选取逻辑（与 bridge.js 里那段保持一致）
-function pickHighest(queue, unreadSeqs) {
-  const all = queue.filter((r) => r && typeof r === 'object');
-  if (!all.length) return null;
-  const relevant = all.filter((r) => unreadSeqs.size === 0 || [...unreadSeqs].some((s) => s >= Number(r.seq)));
-  const pool = relevant.length ? relevant : all;
-  return pool.slice().sort((a, b) => {
-    const dp = wakePriorityV2(b.reason) - wakePriorityV2(a.reason);
-    if (dp !== 0) return dp;
-    return Number(b.seq || 0) - Number(a.seq || 0);
-  })[0];
 }
 
 console.log('\n── 真实故障现场（16:08:46 那一刻的队列）──');

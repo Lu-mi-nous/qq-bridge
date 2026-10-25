@@ -25,7 +25,8 @@ const m = await import(new URL('../src/feature-menu.js', import.meta.url));
 const { MENU_SECTIONS, MENU_HEADER, MENU_FOOTER, buildFeatureMenuHtml, menuStats, escapeHtml } = m;
 
 const renderSrc = fs.readFileSync(path.join(root, 'src/feature-menu-render.js'), 'utf8');
-const bridgeSrc = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
+const wakeSrc = fs.readFileSync(path.join(root, 'src/pipeline/wake.js'), 'utf8');
+const consoleServerSrc = fs.readFileSync(path.join(root, 'src/console-server.js'), 'utf8');
 const mcpSrc = fs.readFileSync(path.join(root, 'src/mcp-snowluma-safe.js'), 'utf8');
 const roleSrc = fs.readFileSync(path.join(root, 'roles/大肥鱼.md'), 'utf8');
 
@@ -122,22 +123,22 @@ console.log('\n── 6. 渲染实现（高度自适应 + 缓存 + 可读报错�
 
 console.log('\n── 7. 桥接侧：直接发送而不是回传 base64 ──');
 {
-  check('端点名表示发送语义', /\/api\/socialV2\/send-feature-menu/.test(bridgeSrc));
-  check('端点调用了发图函数', /onebotSendImageFile\(key, r\.file/.test(bridgeSrc));
-  check('发送前校验 agent token', /send-feature-menu[\s\S]{0,900}agentTokenOk/.test(bridgeSrc));
-  check('发送前校验模式准入', /send-feature-menu[\s\S]{0,1200}modeAllowed/.test(bridgeSrc));
-  check('发送前检查静默开关', /send-feature-menu[\s\S]{0,1000}socialV2\.paused/.test(bridgeSrc));
-  check('支持 refresh 强制重渲染', /refresh.*===.*'1'/.test(bridgeSrc));
-  check('发送成功写活动日志', /已发送功能菜单图/.test(bridgeSrc));
-  check('不再回传 image.data（避免模型误以为要自己发）', !/send-feature-menu[\s\S]{0,600}image: \{ mimeType/.test(bridgeSrc));
+  check('端点名表示发送语义', /\/api\/socialV2\/send-feature-menu/.test(consoleServerSrc));
+  check('端点调用了发图函数', /onebotSendImageFile\(key, r\.file/.test(consoleServerSrc));
+  check('发送前校验 agent token', /send-feature-menu[\s\S]{0,900}agentTokenOk/.test(consoleServerSrc));
+  check('发送前校验模式准入', /send-feature-menu[\s\S]{0,1200}modeAllowed/.test(consoleServerSrc));
+  check('发送前检查静默开关', /send-feature-menu[\s\S]{0,1000}socialV2\.paused/.test(consoleServerSrc));
+  check('支持 refresh 强制重渲染', /refresh.*===.*'1'/.test(consoleServerSrc));
+  check('发送成功写活动日志', /已发送功能菜单图/.test(consoleServerSrc));
+  check('不再回传 image.data（避免模型误以为要自己发）', !/send-feature-menu[\s\S]{0,600}image: \{ mimeType/.test(consoleServerSrc));
 
   // ── 安全：agent token 必须是**必需**的 ──
   // 踩过：最初写成 `if (agentToken && !agentTokenOk(...))`，空 token 会跳过全部校验。
   // 控制台显式关闭鉴权时尤其不能依赖管理令牌兜底，发送仍需有效会话令牌。
-  const segStart = bridgeSrc.indexOf("'/api/socialV2/send-feature-menu'");
+  const segStart = consoleServerSrc.indexOf("if (req.method === 'GET' && url.pathname === '/api/socialV2/send-feature-menu')");
   // 只截到本端点结束（下一个端点声明之前），避免把别的端点的旧写法算进来
-  const nextRoute = bridgeSrc.indexOf("url.pathname === '/api/socialV2/", segStart + 10);
-  const rawBody = bridgeSrc.slice(segStart, nextRoute > 0 ? nextRoute : segStart + 2600);
+  const nextRoute = consoleServerSrc.indexOf("if (req.method === 'POST' && url.pathname === '/api/socialV2/sticker-note')", segStart);
+  const rawBody = consoleServerSrc.slice(segStart, nextRoute > 0 ? nextRoute : segStart + 2600);
   // 去掉注释行再断言：本端点的注释里为说明历史而引用了旧写法，
   // 直接在原文上匹配会命中注释（误判为"仍在使用可选写法"）。
   const body = rawBody.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
@@ -209,25 +210,25 @@ console.log('\n── 10. 实际启用能力、准确声明与缓存失效 ─�
   check('功能关闭使缓存失效', key !== menuCacheKey({ ...options, config: { ...fullConfig, webSearch: { enabled: false } } }));
   check('不相关的配置不引起重渲染', key === menuCacheKey({ ...options, config: { ...fullConfig, sendDelayMs: 999 } }));
   check('已配置凭据换值不改变可见内容与缓存', key === menuCacheKey({ ...options, config: { ...fullConfig, imageReverseSearch: { apiKey: 'another-test-secret' } } }));
-  check('任何角色的唤醒都能获知功能声明工具', bridgeSrc.includes('const menuLine =') && /const base = .*menuLine/.test(bridgeSrc));
+  check('任何角色的唤醒都能获知功能声明工具', wakeSrc.includes('const menuLine =') && /const base = .*menuLine/.test(wakeSrc));
 }
 
 console.log('\n── 11. 实际发送路由的隔离验证（发送器为本地替身）──');
 {
-  const start = bridgeSrc.indexOf("if (req.method === 'GET' && url.pathname === '/api/socialV2/send-feature-menu')");
-  const end = bridgeSrc.indexOf("if (req.method === 'POST' && url.pathname === '/api/socialV2/sticker-note')", start);
+  const start = consoleServerSrc.indexOf("if (req.method === 'GET' && url.pathname === '/api/socialV2/send-feature-menu')");
+  const end = consoleServerSrc.indexOf("if (req.method === 'POST' && url.pathname === '/api/socialV2/sticker-note')", start);
   if (start < 0 || end <= start) throw new Error('找不到功能菜单路由边界');
-  const route = bridgeSrc.slice(start, end);
+  const route = consoleServerSrc.slice(start, end);
   async function invoke(overrides = {}) {
     let response, renders = 0, sends = 0, renderOptions;
     const context = {
       req: { method: 'GET', headers: { 'x-agent-token': 'session-test' } },
       url: new URL('http://127.0.0.1/api/socialV2/send-feature-menu?key=group:123'),
       cfg: { socialV2: { tools: { getFeatureMenu: true } } },
-      currentMode: 'reserved2', socialV2: { paused: false },
+      deps: { live: { currentMode: 'reserved2' } }, socialV2: { paused: false },
       agentTokenOk: (_key, token) => token === 'session-test',
       v2SessionAllowed: () => true, v2ToolEnabled: () => true, modeAllowed: () => true,
-      shouldBlockSilentReply: () => false, readRoleState: () => ({ role: '测试角色' }),
+      shouldBlockSilentReply: () => false, readRoleState: () => ({ role: '测试角色' }), roleFor: () => '测试角色',
       renderFeatureMenu: async (options) => { renders++; renderOptions = options; return { ok: true, file: 'local-menu.png', bytes: 4096, cached: true }; },
       onebotSendImageFile: async () => { sends++; },
       log: () => {}, appendActivity: () => {},

@@ -148,21 +148,12 @@ console.log('\n── 3b. cid 缺失与补全 ──');
 console.log('\n── 4. 接线 ──');
 {
   const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
-  const bridge = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
+  const consoleServer = fs.readFileSync(path.join(root, 'src/console-server.js'), 'utf8');
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
 
-  check('桥接导入凭据与搜索', /loadBiliAuth, searchVideos, buildSearchKeywords/.test(bridge)
-    || /from '\.\/bili-auth\.js'/.test(bridge));
-  check('候选池合并搜索结果', /searchHits/.test(bridge) && /\.\.\.searchHits/.test(bridge));
-  check('搜索失败降级而非中断', /\[B站\] 搜索失败（改用热门榜）/.test(bridge));
-  check('凭据只报状态不打印内容', /账号凭据已加载/.test(bridge) && !/log\(.*biliAuth\.cookie/.test(bridge));
-  check('有推荐分享实现', /maybeShareBiliVideo/.test(bridge));
-  check('分享消息包含标题与链接', /《\$\{title\}》/.test(bridge) && /\$\{url\}/.test(bridge));
-  check('链接由 bvid 拼接（不让模型编）', /video\/\$\{info\.bvid\}/.test(bridge));
-  check('分享有间隔限制', /minGapMs/.test(bridge) && /lastBiliShareAt/.test(bridge));
-  check('推荐语由模型写但有兜底', /composeBiliRecommendation/.test(bridge) && /挺对味/.test(bridge));
-  check('状态端点暴露搜索关键词', /lastKeyword: lastBiliSearchKeyword/.test(bridge));
-  check('状态端点不暴露 cookie', !/cookie:/.test(bridge.split("pathname === '/api/socialV2/bili-status'")[1]?.slice(0, 3000) || ''));
+  // 列表/搜索降级与最终推荐行为见 test-bili-runtime / test-bili-sharing。
+  check('状态端点暴露搜索关键词', /lastKeyword: deps\.live\.lastBiliSearchKeyword/.test(consoleServer));
+  check('状态端点不暴露 cookie', !/cookie:/.test(consoleServer.split("pathname === '/api/socialV2/bili-status'")[1]?.slice(0, 3000) || ''));
 
   // ── 群友要推荐时必须"现场搜新视频"（2026-10-19 用户反馈「为什么没有新增的视频」）──
   //
@@ -171,9 +162,9 @@ console.log('\n── 4. 接线 ──');
   const mcp = fs.readFileSync(path.join(root, 'src/mcp-snowluma-safe.js'), 'utf8');
   const preset = fs.readFileSync(path.join(root, 'dsh', 'agent-presets', 'qq-chat-v2', 'agent.cordis.yml'), 'utf8');
 
-  check('有现场搜索端点', /\/api\/socialV2\/bili-search/.test(bridge));
-  check('搜索端点过滤已看过的（推荐"新的"）', /fresh = videos\.filter\(\(v\) => !biliMem\?\.get\(v\.bvid\)\)/.test(bridge));
-  check('全看过时明确告知（allSeen）', /allSeen: fresh\.length === 0/.test(bridge));
+  check('有现场搜索端点', /\/api\/socialV2\/bili-search/.test(consoleServer));
+  check('搜索端点过滤已看过的（推荐"新的"）', /fresh = videos\.filter\(\(v\) => !deps\.live\.biliMem\?\.get\(v\.bvid\)\)/.test(consoleServer));
+  check('全看过时明确告知（allSeen）', /allSeen: fresh\.length === 0/.test(consoleServer));
   check('MCP 有 qq_bili_search 工具', /'qq_bili_search'/.test(mcp));
   check('工具返回带真实 URL', /https:\/\/www\.bilibili\.com\/video\/\$\{v\.bvid\}/.test(mcp));
   check('工具要求原样使用标题和链接', /标题和链接必须原样使用|不要自己编/.test(mcp));

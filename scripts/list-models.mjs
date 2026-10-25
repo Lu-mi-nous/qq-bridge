@@ -15,17 +15,14 @@
 //   node scripts/list-models.mjs --switch <模型ID|序号>  直接切换（复用 switch-realm-model.mjs）
 //   node scripts/list-models.mjs --switch <...> --no-restart   只改配置，不重启桥接
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { execFileSync, spawn } from 'node:child_process';
 
 const GATEWAY = 'http://127.0.0.1:7863';
-const BRIDGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BRIDGE_NAME = path.basename(BRIDGE_DIR);
+const BRIDGE_DIR = 'E:\\Downloads\\qq-bridge-main';
 const CONFIG = path.join(BRIDGE_DIR, 'config.json');
 const SWITCH_SCRIPT = path.join(BRIDGE_DIR, 'scripts', 'switch-realm-model.mjs');
-const NODE_EXE = process.execPath;
+const NODE_EXE = 'C:\\Program Files\\nodejs\\node.exe';
 
 const argv = process.argv.slice(2);
 const hasFlag = (f) => argv.includes(f);
@@ -271,7 +268,7 @@ function restartBridge() {
   const killedGuards = ps(`
     $n = 0
     Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" |
-      Where-Object { $_.CommandLine -like '*${BRIDGE_NAME}*start.bat*' } |
+      Where-Object { $_.CommandLine -like '*qq-bridge-main\\start.bat*' -or $_.CommandLine -like '*qq-bridge-main/start.bat*' } |
       ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $n++ }
     Write-Output $n
   `).trim();

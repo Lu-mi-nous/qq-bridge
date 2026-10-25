@@ -23,7 +23,8 @@
 ┌─────────────┐   OneBot WS   ┌──────────────────────┐   HTTP/WS   ┌──────────────────┐
 │  SnowLuma   │◄─────────────►│      qq-bridge       │◄───────────►│   DSH Harness    │
 │  (QQ 网关)  │               │   src/bridge.js      │             │  (agent 会话)    │
-└─────────────┘               │   src/dsh-client.js  │             └──────────────────┘
+└─────────────┘               │   src/console-server.js │          └──────────────────┘
+                              │   src/dsh-client.js  │
                               │   src/mcp-*.js       │
                               └──────────────────────┘
                                       │ 控制台
@@ -33,7 +34,11 @@
 
 | 层 | 文件 | 职责 |
 |---|---|---|
-| 内核 | `src/bridge.js` | 主程序：QQ 消息接入、社交状态机、DSH 投递、发送链、控制台 API、安全审计 |
+| 内核 | `src/bridge.js` | 主程序：QQ 消息接入、社交状态机、DSH 投递、发送链、安全审计 |
+| 内核 | `src/console-server.js` | 控制台与 MCP 回调 HTTP 路由；显式依赖注入、Agent 路由允许清单 |
+| 内核 | `src/admin-commands.js` | 管理命令：识别、准入例外、执行；命令表唯一事实源 |
+| 内核 | `src/context-recovery.js` | DSH 上下文超限识别、会话轮换与单次重试 |
+| 内核 | `src/pipeline/` | 消息管线纯计算层：身份/提示拼装/消息段/出站归一化 |
 | 内核 | `src/dsh-client.js` | DSH 协议客户端：RPC + WebSocket 事件流 + turn 收集 |
 | 内核 | `src/mcp-snowluma-safe.js` | 给 DSH agent 用的安全 QQ 工具（只读 + 白名单发送） |
 | 内核 | `src/mcp-host-server.js` | 给 DSH agent 用的 SnowLuma 进程管理（默认禁用启停） |
@@ -54,6 +59,10 @@
 qq-bridge/
 ├── src/
 │   ├── bridge.js               # 主程序（核心）
+│   ├── console-server.js       # 控制台与 MCP 回调 HTTP 路由
+│   ├── admin-commands.js       # 管理命令：识别、准入例外、执行
+│   ├── context-recovery.js     # DSH 上下文超限：识别、轮换、单次重试
+│   ├── pipeline/               # 消息管线纯计算层（身份/提示/消息段/归一化）
 │   ├── dsh-client.js           # DSH API 客户端
 │   ├── mcp-snowluma-safe.js    # 安全 MCP（QQ 读/发工具）
 │   ├── mcp-host-server.js      # MCP（SnowLuma 进程管理，默认禁用启停）
@@ -285,7 +294,7 @@ DSH 事件流（api.events.mux）→ pumpMux()
 
 - `start.bat`：守护启动（自动拉起、崩溃重启）。
 - `restart.bat`：停止旧 bridge 进程并重新拉起。
-- 控制台：`http://127.0.0.1:3100`（模式、人格、社交参数、白名单/管理员、黑话管理、控制台访问令牌、会话/挂起/日志）。
+- 控制台：`http://127.0.0.1:3100`（模式、人格、社交参数、白名单/管理员、黑话管理、控制台访问令牌、会话/挂起/日志）。人格支持全局默认 + 每个群单独覆盖（`state/conversation-roles.json`）。
 - 模式：`state/mode.json` 或 DSH settings 的 `qq-mode`；运行 `scripts/setup-dsh.mjs` 的全新环境默认 `reserved2`。
 
 ### 常用调试/测试脚本

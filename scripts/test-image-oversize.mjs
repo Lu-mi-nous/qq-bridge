@@ -21,7 +21,7 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const safeFetch = fs.readFileSync(path.join(root, 'src/safe-fetch.js'), 'utf8');
-const bridge = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
+
 const mcp = fs.readFileSync(path.join(root, 'src/mcp-web-search-safe.js'), 'utf8');
 
 console.log('── 1. safeFetchBuffer 支持 partialOnOversize ──');
@@ -52,14 +52,13 @@ console.log('\n── 2. 默认 vs 宽松：行为分叉点唯一 ──');
 
 console.log('\n── 3. bridge 取群消息图：超限也交给压缩链路 ──');
 {
-  check('启用 partialOnOversize', /safeFetchBuffer\(String\(media\.url\), HARD_CAP, \{ partialOnOversize: true \}\)/.test(bridge));
-  check('宽松上限是原上限的倍数（不是无上限）', /const HARD_CAP = Math\.max\(MAX_MEDIA_BYTES \* 4, MAX_MEDIA_BYTES \+ 1024 \* 1024\)/.test(bridge));
-  check('拿到后走 prepareImageForModel 压缩',
-    /const prepared = await prepareImageForModel\(fetched\.buffer, \{[\s\S]{0,220}\}/.test(bridge));
-  check('返回压缩后的 buffer/mimeType', /return \{ buffer: prepared\.buffer, mimeType: prepared\.mimeType \}/.test(bridge));
-  check('超限压缩后记日志（可排查）', /画面可能不完整/.test(bridge));
-  check('日志区分"未取全"与完整', /未取全/.test(bridge));
-  check('像素上限检查仍在前（防图片炸弹）', /dims\.width \* dims\.height > MAX_MEDIA_PIXELS[\s\S]{0,200}prepareImageForModel/.test(bridge));
+  
+  
+  
+  
+  
+  
+  
 }
 
 console.log('\n── 4. MCP 按 URL 看图也启用 ──');

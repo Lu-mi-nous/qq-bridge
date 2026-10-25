@@ -18,7 +18,7 @@ let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
-const bridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8').replace(/\r\n/g, '\n');
+const bridge = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8').replace(/\r\n/g, '\n');
 const revSrc = fs.readFileSync(path.join(root, 'src', 'image-reverse-search.mjs'), 'utf8');
 const consoleHtml = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
@@ -38,7 +38,7 @@ console.log('\n── 2. 桥接端点 ──');
 {
   check('端点存在', /\/api\/socialV2\/image-quota/.test(bridge));
   check('报图库容量', /library: lib/.test(bridge));
-  check('报拉取冷却 + 是否正在拉', /cooling/.test(bridge) && /fetching: !!imageFetching/.test(bridge));
+  check('报拉取冷却 + 是否正在拉', /cooling/.test(bridge) && /fetching: !!deps\.live\.imageFetching/.test(bridge));
   check('报反查额度（含剩余）', /remainingToday: rs\.remainingToday/.test(bridge));
   check('报发送限频（冷却/每小时）', /maxSendPerHour: Math\.max\(0, Number\(ic\.maxSendPerHour\)/.test(bridge));
   check('报各图源开关（"源没开"常被误当成额度问题）', /\n\s+sources\n/.test(bridge));

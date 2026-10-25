@@ -9,34 +9,12 @@
 // 这个前提**只对 sub_type='friend' 成立**。于是引入三态策略，默认推荐 'friends'：
 //   好友自动放行（免手动维护）+ 非好友（临时会话）仍需白名单。
 //
-// 这个测试直接跑真实实现（从 bridge.js 抽函数），保证测的是跑着的代码。
-import fs from 'node:fs';
+// 这个测试直接跑真实实现（直接 import 准入模块），保证测的是跑着的代码。
+import { normalizePrivateMode, privateAllowed } from '../src/pipeline/admission.js';
+import { incomingHarness } from './helpers/pipeline-harness.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
-
-// 抽 allowed() 与 normalizePrivateMode()（纯函数，和 bridge.js 里一致）
-const src = fs.readFileSync(new URL('../src/bridge.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-function grabFn(name) {
-  const start = src.indexOf(`function ${name}(`);
-  if (start < 0) throw new Error(`找不到 ${name}`);
-  const end = src.indexOf('\n}\n', start);
-  return src.slice(start, end + 3);
-}
-const mod = new Function(
-  `${grabFn('normalizeIdList')}\n${grabFn('normalizePrivateMode')}\n${grabFn('allowed')}\n`
-  + `function privateAllowed(id, cfg, friendIds) {
-       const s = String(id);
-       const denyList = (Array.isArray(cfg.deny?.private) ? cfg.deny.private : []).map(String);
-       if (denyList.includes(s)) return false;
-       const mode = cfg.allow?.privateMode ?? 'list';
-       if (mode === 'all') return true;
-       if (mode === 'friends' && friendIds.has(s)) return true;
-       return allowed('private', id, cfg);
-     }\n`
-  + `return { normalizePrivateMode, allowed, privateAllowed };`
-)();
-const { normalizePrivateMode, privateAllowed } = mod;
 
 const cfgOf = (privateMode, allowPrivate = [], denyPrivate = []) => ({
   allow: { private: allowPrivate.map(String), groups: [], privateMode },
@@ -105,30 +83,26 @@ console.log('\n── 边界 ──');
 
 console.log('\n── 新加好友必须立刻能用（2026-10-13「私聊怎么不回人了」）──');
 {
-  // 实测现场：好友列表缓存 6 人（5 分钟 TTL），用户新加好友 100001050（昵称"群友Q"），
-  // 之后发了两条私聊全被丢弃，日志只有 `忽略未授权会话 private:100001050`。
+  // 实测现场：好友列表缓存 6 人（5 分钟 TTL），用户新加好友 100002029（昵称"牢"），
+  // 之后发了两条私聊全被丢弃，日志只有 `忽略未授权会话 private:100002029`。
   // SnowLuma 侧查同一个人是好友 —— 纯属缓存过期，不是陌生人。
   //
   // 修法：私聊被拒时强制刷新一次好友列表（带全局限流）再定论。
   const cfg = cfgOf('friends', []);
-  const stale = new Set(['100001000', '100001003']);            // 旧缓存（缺新好友）
-  const fresh = new Set([...stale, '100001050']);                 // 刷新后
-  check('缓存过期时新好友被拒（复现 bug）', privateAllowed(100001050, cfg, stale) === false);
-  check('刷新后同一好友放行（修复生效）', privateAllowed(100001050, cfg, fresh) === true);
+  const stale = new Set(['100002000', '100002003']);            // 旧缓存（缺新好友）
+  const fresh = new Set([...stale, '100002029']);                 // 刷新后
+  check('缓存过期时新好友被拒（复现 bug）', privateAllowed(100002029, cfg, stale) === false);
+  check('刷新后同一好友放行（修复生效）', privateAllowed(100002029, cfg, fresh) === true);
   check('刷新不会误放陌生人', privateAllowed(9999999999, cfg, fresh) === false);
 
-  // 桥接侧必须有「强制刷新 + 限流」的实现
-  const bridgeSrc = fs.readFileSync(new URL('../src/bridge.js', import.meta.url), 'utf8');
-  check('私聊被拒时会强制刷新好友列表', /refreshFriendList\(\{ force: true \}\)/.test(bridgeSrc));
-  check('强制刷新只对 friends 策略生效', /kind === 'private'[\s\S]{0,160}privateMode === 'friends'/.test(bridgeSrc));
-  check('强制刷新有全局限流（防打爆 SnowLuma）', /FRIEND_FORCE_REFRESH_MS/.test(bridgeSrc));
-  check('限流窗口合理（10~120 秒）', (() => {
-    const m = /FRIEND_FORCE_REFRESH_MS = (\d+) \* 1000/.exec(bridgeSrc);
-    if (!m) return false;
-    const s = Number(m[1]);
-    return s >= 10 && s <= 120;
-  })());
-  check('仍保留"忽略未授权会话"日志（拒绝路径可观测）', /忽略未授权会话/.test(bridgeSrc));
+  const h = incomingHarness({ refreshFriendList: async () => h.friends.add('3') });
+  check('私聊被拒时刷新后重判放行', await h.stages.admit(h.context('你好', {}, 'private', '3')));
+  const denied = incomingHarness();
+  await denied.stages.admit(denied.context('你好', {}, 'private', '3'));
+  await denied.stages.admit(denied.context('你好', {}, 'private', '4'));
+  check('强刷限流', denied.calls.filter(c => c[0] === 'refresh').length === 1);
+  check('拒绝路径可观测', denied.calls.some(c => c[0] === 'log' && c[1].includes('忽略未授权会话')));
+
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

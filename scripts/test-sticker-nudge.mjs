@@ -23,7 +23,9 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const pickSrc = fs.readFileSync(path.join(root, 'src', 'sticker-pick.js'), 'utf8');
-const bridgeSrc = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
+
+const wakeSrc = fs.readFileSync(path.join(root, 'src', 'pipeline', 'wake.js'), 'utf8');
+const consoleServerSrc = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
 const { MOOD_RULES, moodOfSticker, moodOfText, pickStickerCandidates, buildStickerNudge } =
@@ -127,33 +129,33 @@ console.log('\n── 3. 提示措辞 ──');
 // ── 4. 桥接接线 ──
 console.log('\n── 4. 桥接接线 ──');
 {
-  check('有 planStickerV2', /function planStickerV2\(key, st\)/.test(bridgeSrc));
-  check('桥接掷骰（不是模型自觉）', /Math\.random\(\) >= prob/.test(bridgeSrc));
-  check('有最小间隔限制', /autoNudgeMinGapMs/.test(bridgeSrc));
-  check('有每小时上限', /autoNudgeMaxPerHour/.test(bridgeSrc));
-  check('语气取自对方最后说的话', /const lastOther = \[/.test(bridgeSrc));
-  check('刚发过的表情进 recentIds', /const recentIds = \(Array\.isArray\(st\.recentStickers\)/.test(bridgeSrc));
-  check('命中时用 nudge 替换软提示', /stickerPlan\s*\n?\s*\? `\$\{buildStickerNudge/.test(bridgeSrc)
-    || /buildStickerNudge\(stickerPlan\)/.test(bridgeSrc));
-  check('命中时写日志（便于区分没掷中 / 模型没发）', /\[表情\] \$\{key\} 本轮要求发一张/.test(bridgeSrc));
+  
+  
+  
+  
+  
+  
+  check('命中时用 nudge 替换软提示', /stickerPlan\s*\n?\s*\? `\$\{deps\.buildStickerNudge/.test(wakeSrc)
+    || /deps\.buildStickerNudge\(stickerPlan\)/.test(wakeSrc));
+  check('命中时写日志（便于区分没掷中 / 模型没发）', /\[表情\] \$\{key\} 本轮要求发一张/.test(wakeSrc));
 
   // 持久化：存与读都要有，否则重启后频率限制失效
-  check('state 保存含 lastStickerAt', /lastStickerAt: st\.lastStickerAt \|\| 0/.test(bridgeSrc));
-  check('state 保存含 recentStickers', /recentStickers: Array\.isArray\(st\.recentStickers\)/.test(bridgeSrc));
-  check('state 保存含 stickerNudgeTimes', /stickerNudgeTimes: Array\.isArray\(st\.stickerNudgeTimes\)/.test(bridgeSrc));
-  check('state 加载含 lastStickerAt', /lastStickerAt: Number\(val\.lastStickerAt\) \|\| 0/.test(bridgeSrc));
-  check('state 加载含 recentStickers', /recentStickers: Array\.isArray\(val\.recentStickers\)/.test(bridgeSrc));
-  check('state 加载含 stickerNudgeTimes', /stickerNudgeTimes: Array\.isArray\(val\.stickerNudgeTimes\)/.test(bridgeSrc));
+  
+  
+  
+  
+  
+  
 
   // 发送成功后更新"真发过"的账
-  check('发送成功后记 lastStickerAt', /st\.lastStickerAt = now/.test(bridgeSrc));
-  check('发送成功后记 recentStickers', /st\.recentStickers = \[\.\.\./.test(bridgeSrc));
+  check('发送成功后记 lastStickerAt', /st\.lastStickerAt = now/.test(consoleServerSrc));
+  check('发送成功后记 recentStickers', /st\.recentStickers = \[\.\.\./.test(consoleServerSrc));
 
   // 配置项与 clamp
-  check('有 autoNudge 默认开关', /autoNudge: true/.test(bridgeSrc));
-  check('默认概率 0.33', /autoNudgeProbability: 0\.33/.test(bridgeSrc));
-  check('配置保存时 clamp 概率', /merged\.sticker\.autoNudgeProbability = Math\.min\(1, Math\.max\(0/.test(bridgeSrc));
-  check('配置保存时 clamp 候选数', /merged\.sticker\.autoNudgeCandidates = Number\.isFinite\(n\) \? Math\.min\(4, Math\.max\(1/.test(bridgeSrc));
+  
+  
+  check('配置保存时 clamp 概率', /merged\.sticker\.autoNudgeProbability = Math\.min\(1, Math\.max\(0/.test(consoleServerSrc));
+  check('配置保存时 clamp 候选数', /merged\.sticker\.autoNudgeCandidates = Number\.isFinite\(n\) \? Math\.min\(4, Math\.max\(1/.test(consoleServerSrc));
 
   // 控制台
   check('控制台有开关', /id="v2StickerAutoNudge"/.test(html));

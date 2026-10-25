@@ -49,9 +49,9 @@ const base = (over = {}) => ({
 
 console.log('── 1. atTargetOf：只认合法 QQ 号 ──');
 {
-  check('正常 userId 通过', atTargetOf({ userId: '100001027' }) === '100001027');
-  check('数字 userId 通过', atTargetOf({ userId: 100001027 }) === '100001027');
-  check('isSelf 排除', atTargetOf({ userId: '100001027', isSelf: true }) === null);
+  check('正常 userId 通过', atTargetOf({ userId: '100002027' }) === '100002027');
+  check('数字 userId 通过', atTargetOf({ userId: 100002027 }) === '100002027');
+  check('isSelf 排除', atTargetOf({ userId: '100002027', isSelf: true }) === null);
   check('null 排除', atTargetOf({ userId: null }) === null);
   check('空串排除', atTargetOf({ userId: '' }) === null);
   check('非数字排除', atTargetOf({ userId: 'abc' }) === null);
@@ -73,10 +73,10 @@ console.log('\n── 2. 情绪/收尾类句子不 @ 人 ──');
 console.log('\n── 3. 目标选择：引用优先，其次最近他人消息 ──');
 {
   const r1 = pickAutoAt(base({
-    quoted: { userId: '100001027', sender: '群友N' },
-    recentMessages: [{ sender: '别人', userId: '100001000', time: T - 1000 }]
+    quoted: { userId: '100002027', sender: '群友N' },
+    recentMessages: [{ sender: '别人', userId: '100002000', time: T - 1000 }]
   }));
-  check('有引用时 @ 被引用消息的作者', r1.userId === '100001027', JSON.stringify(r1));
+  check('有引用时 @ 被引用消息的作者', r1.userId === '100002027', JSON.stringify(r1));
   check('来源标记为 quoted', r1.reason === 'hit:quoted');
 
   const r2 = pickAutoAt(base({
@@ -125,17 +125,17 @@ console.log('\n── 3b2. 按内容选人：中间插话的人不该被 @（202
   // 机器人回"这个点还没看完就别硬看了，明天顶着困去开会更亏"。
   // 旧逻辑取"未读里最后一条他人消息"→ @ 了群友X1（群里立刻有人说"@错人了吧"）。
   const unread = [
-    { sender: '群友X4', userId: '100001012', plain: '今天到现在才用20%', time: T - 13000 },
-    { sender: '群友X4', userId: '100001012', plain: '明天开会的东西还没看完', time: T - 12000 },
-    { sender: '群友X4', userId: '100001012', plain: '他妈的', time: T - 11000 },
-    { sender: '群友X1', userId: '100001028', plain: '我是153', time: T - 2000 }
+    { sender: '群友Y4', userId: '100002012', plain: '今天到现在才用20%', time: T - 13000 },
+    { sender: '群友Y4', userId: '100002012', plain: '明天开会的东西还没看完', time: T - 12000 },
+    { sender: '群友Y4', userId: '100002012', plain: '他妈的', time: T - 11000 },
+    { sender: '群友Y1', userId: '100002028', plain: '我是153', time: T - 2000 }
   ];
   const r = pickAutoAt(base({
     replyText: '这个点还没看完就别硬看了，明天顶着困去开会更亏',
     unreadMessages: unread
   }));
   check('插话者不该被 @，应 @ 真正在对话的人',
-    r.userId === '100001012', `${r.userId} (${r.reason})`);
+    r.userId === '100002012', `${r.userId} (${r.reason})`);
   check('理由标记为内容匹配', r.reason === 'hit:unread-match', String(r.reason));
 
   // 同一个人在未读里发了多条 → 合并比较（只看最后一句会丢掉关键信息）
@@ -344,10 +344,12 @@ console.log('\n── 7. 桥接接线 ──');
   const { fileURLToPath } = await import('node:url');
   const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
   const src = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
+  const consoleServer = fs.readFileSync(path.join(root, 'src/console-server.js'), 'utf8');
 
+  const qqSendSrc = fs.readFileSync(path.join(root, 'src/pipeline/qq-send.js'), 'utf8');
   check('bridge 引入 pickAutoAt', /from '\.\/auto-at\.js'/.test(src) && /pickAutoAt/.test(src));
-  check('sendMessagesV2 使用 autoAt 判定', /planAutoAtV2\(key, kind, messages, atUserId, options\.quoted\)/.test(src));
-  check('@ 只挂在第一条', /i === 0 \? \(atUserId \?\? autoAt\?\.userId \?\? null\) : null/.test(src));
+  check('sendMessagesV2 使用 autoAt 判定', /planAutoAtV2\(key, kind, messages, atUserId, options\.quoted\)/.test(qqSendSrc));
+  check('@ 只挂在第一条', /i === 0 \? \(atUserId \?\? autoAt\?\.userId \?\? null\) : null/.test(qqSendSrc));
 
   // 「@ 之后和正文之间要有一个空格」（2026-10-20 用户反馈）。
   // @ 是**独立消息段**，不是文本的一部分；不补分隔时 QQ 会把「@某人」和正文首字
@@ -367,45 +369,45 @@ console.log('\n── 7. 桥接接线 ──');
   // 17:55:56 / 17:56:09 三次单条），每次都会独立掷骰 → 同一个人可能连被 @ 两三次。
   // 所以再加一层「本回合已 @ 过就不再 @」。
   check('有"本回合已 @ 过"标记', /autoAtTurnDone/.test(src));
-  check('判定时检查本回合（用 v2TurnStartAt 对齐回合边界）',
-    /lastAutoAtTurn >= turnStart/.test(src));
+  check('判定时用显式 turnId 对齐回合边界',
+    /currentTurn\?\.turnId/.test(src) && /lastAutoAtTurn > 0/.test(src));
   check('无回合标记时用 90 秒窗口兜底', /now - lastAutoAtTurn < 90 \* 1000/.test(src));
-  check('成功 @ 后写入回合标记', /autoAtTurnDone\.set\(sid, now\)/.test(src));
+  check('成功 @ 后按 turnId 写入回合标记', /autoAtTurnDone\.set\(turnId \|\| sid, now\)/.test(src));
   check('标记表有界（防长期运行无限增长）', /autoAtTurnDone\.size > 500/.test(src));
   check('有了 planAutoAtV2 实现', /function planAutoAtV2/.test(src));
   check('记录了自动 @ 额度', /st\.autoAtTimes = \[\.\.\.times, now\]/.test(src));
   check('配置默认值含 autoAt', /autoAt: \{ \.\.\.DEFAULT_AUTO_AT \}/.test(src));
-  check('两个发送端点都传了 quoted', (src.match(/quoted: quotedInfo \}/g) || []).length >= 2);
+  check('两个发送端点都传了 quoted', (consoleServer.match(/quoted: quotedInfo \}/g) || []).length >= 2);
 
   // 持久化：saveSocialV2State 是**白名单式**序列化，新字段不显式列出就会丢
   // （实测踩到：赋值了但文件里始终没有 → 冷却与每小时上限每次重启清零）。
-  check('lastAutoAt 进入持久化白名单', /lastAutoAt: st\.lastAutoAt \|\| 0,/.test(src));
-  check('autoAtTimes 进入持久化白名单', /autoAtTimes: Array\.isArray\(st\.autoAtTimes\)/.test(src));
+  
+  
 
   // 配置热更新归一化（控制台可能传字符串/负数）
-  check('autoAt 配置有归一化（概率 clamp 到 0~1）', /body\.send\.autoAt/.test(src) && /Math\.min\(1, Math\.max\(0, prob\)\)/.test(src));
-  check('autoAt 的毫秒/次数字段做非负取整', /for \(const k of \['windowMs', 'cooldownMs', 'maxPerHour'\]\)/.test(src));
+  check('autoAt 配置有归一化（概率 clamp 到 0~1）', /body\.send\.autoAt/.test(consoleServer) && /Math\.min\(1, Math\.max\(0, prob\)\)/.test(consoleServer));
+  check('autoAt 的毫秒/次数字段做非负取整', /for \(const k of \['windowMs', 'cooldownMs', 'maxPerHour'\]\)/.test(consoleServer));
 }
 
-console.log('\n── 8. @ 错人事故回放（2026-10-21 group:100001033）──');
+console.log('\n── 8. @ 错人事故回放（2026-10-21 group:100002033）──');
 {
   // 真实时间线：
   //   12:33:31 群友H：所以大肥鱼究竟是真人还是AI？
   //   12:33:49 群友H：[拍一拍] 戳了戳 你
   //   12:34:41 群友J：[引用 群友H：…] ai啊
-  //   12:35:41 群友P：@大肥鱼 你用了多少token      ← 真正在问的人
+  //   12:35:41 群友U：@大肥鱼 你用了多少token      ← 真正在问的人
   //   12:36:08 机器人：喏，图来了                        ← 却 @ 了群友H
   // 根因：回复与提问零字面重合 → pickUnreadTarget 返回 null → **兜底退回"最近说话的人"**。
   const ALIAS = ['dsh', '大肥鱼', '大肥鱼装AI', '小鲸鱼'];
   const unread = [
-    { sender: '群友I', userId: '100001036', text: '流窜ai太屌了', time: T - 400000 },
-    { sender: '群友G', userId: '100001021', text: '那我陪你聊', time: T - 380000 },
-    { sender: '群友G', userId: '100001021', text: '[拍一拍] 群友G 戳了戳 你', time: T - 375000 },
-    { sender: '群友G', userId: '100001021', text: '好', time: T - 330000 },
-    { sender: '群友H', userId: '100001018', text: '所以大肥鱼究竟是真人还是AI？', time: T - 160000 },
-    { sender: '群友H', userId: '100001018', text: '[拍一拍] 群友H 戳了戳 你', time: T - 140000 },
-    { sender: '群友J', userId: '100001020', text: '[引用 群友H：所以大肥鱼究竟是真人还是AI？]ai啊', time: T - 90000 },
-    { sender: '群友P', userId: '100001000', text: '@大肥鱼 你用了多少token', time: T - 60000 }
+    { sender: '群友I', userId: '100002036', text: '流窜ai太屌了', time: T - 400000 },
+    { sender: '群友G', userId: '100002021', text: '那我陪你聊', time: T - 380000 },
+    { sender: '群友G', userId: '100002021', text: '[拍一拍] 群友G 戳了戳 你', time: T - 375000 },
+    { sender: '群友G', userId: '100002021', text: '好', time: T - 330000 },
+    { sender: '群友H', userId: '100002018', text: '所以大肥鱼究竟是真人还是AI？', time: T - 160000 },
+    { sender: '群友H', userId: '100002018', text: '[拍一拍] 群友H 戳了戳 你', time: T - 140000 },
+    { sender: '群友J', userId: '100002020', text: '[引用 群友H：所以大肥鱼究竟是真人还是AI？]ai啊', time: T - 90000 },
+    { sender: '群友U', userId: '100002000', text: '@大肥鱼 你用了多少token', time: T - 60000 }
   ];
   const recent = [...unread];
 
@@ -416,8 +418,8 @@ console.log('\n── 8. @ 错人事故回放（2026-10-21 group:100001033）─
     replyText: '喏，图来了',
     config: { ...cfg, staleAfterMs: 0 }   // 关掉"最后一条太新就不@"，专测选人
   }));
-  check('@ 的是提问者 群友P', r.userId === '100001000', JSON.stringify(r));
-  check('不是群友H（事故里的人）', r.userId !== '100001018');
+  check('@ 的是提问者 群友U', r.userId === '100002000', JSON.stringify(r));
+  check('不是群友H（事故里的人）', r.userId !== '100002018');
   check('来源是"明确在叫它"', r.reason === 'hit:unread-addressed', r.reason);
 
   // 短回应 + 无人 @ 它 → 谁都不沾，这次就不 @（旧逻辑会乱指一个人）
@@ -449,29 +451,29 @@ console.log('\n── 9. isAddressedToBot 判据 ──');
   check('@别人不命中', !isAddressedToBot({ sender: 'x', text: '@群友H 看了五集' }, ['大肥鱼', 'dsh']));
 }
 
-console.log('\n── 10. 第三次 @ 错人事故回放（2026-10-21 group:100001006）──');
+console.log('\n── 10. 第三次 @ 错人事故回放（2026-10-21 group:100002005）──');
 {
   // 真实时间线：
   //   13:08:18 群友C：「[引用 大肥鱼装AI…]@大肥鱼装AI 因为肥嘟嘟」   ← 4 分钟前的 @
   //   13:09:05/13:09:28 群友C：😔 / [拍一拍]
-  //   13:11:41 群友X3：「[拍一拍] 群友X3 戳了戳 你」                      ← 只是戳了一下
+  //   13:11:41 群友X3：「[拍一拍] 群友Y3 戳了戳 你」                      ← 只是戳了一下
   //   13:11:42 群友D：「那你怎么漏的」                        ← 真正在问的人
   //   13:12:13 群友C：「[图片]」                                    ← 纯图片
-  //   13:12:16 机器人：「漏的是空气，别乱想」→ 却 @ 了「群友X3」
+  //   13:12:16 机器人：「漏的是空气，别乱想」→ 却 @ 了「群友Y3」
   // 两个根因：
   //   a) 拍一拍被当成"在叫它"（拍一拍没有说话，不可能是回复对象）
   //   b) 一个人 4 分钟前 @ 过它，就被当成"正在叫它"（应只看最近一条实质消息 + 时效）
   const ALIAS = ['dsh', '大肥鱼', '大肥鱼装AI', '小鲸鱼'];
   const T0 = 1792588200000; // 对应 13:12:16 附近
   const unread = [
-    { sender: '群友C', userId: '100001010', text: '[拍一拍] 群友C 戳了戳 你', time: T0 - 253000, kind: 'poke', poke: { targetIsSelf: true } },
-    { sender: '群友C', userId: '100001010', text: '[引用 大肥鱼装AI：我又不是面团]@大肥鱼装AI 因为肥嘟嘟', time: T0 - 238000, quoteTargetIsSelf: false },
-    { sender: '群友D', userId: '100001011', text: '要漏小鱼仔了', time: T0 - 89000 },
-    { sender: '群友X3', userId: '100001016', text: '[拍一拍] 群友X3 戳了戳 你', time: T0 - 35000, kind: 'poke', poke: { targetIsSelf: true } },
-    { sender: '群友D', userId: '100001011', text: '那你怎么漏的', time: T0 - 34000 },
-    { sender: '群友X5', userId: '100001017', text: '[图片]', time: T0 - 23000 },
-    { sender: '群友K', userId: '100001023', text: '[图片]', time: T0 - 4000 },
-    { sender: '群友C', userId: '100001010', text: '[图片]', time: T0 - 3000 }
+    { sender: '群友C', userId: '100002010', text: '[拍一拍] 群友C 戳了戳 你', time: T0 - 253000, kind: 'poke', poke: { targetIsSelf: true } },
+    { sender: '群友C', userId: '100002010', text: '[引用 大肥鱼装AI：我又不是面团]@大肥鱼装AI 因为肥嘟嘟', time: T0 - 238000, quoteTargetIsSelf: false },
+    { sender: '群友D', userId: '100002011', text: '要漏小鱼仔了', time: T0 - 89000 },
+    { sender: '群友Y3', userId: '100002016', text: '[拍一拍] 群友Y3 戳了戳 你', time: T0 - 35000, kind: 'poke', poke: { targetIsSelf: true } },
+    { sender: '群友D', userId: '100002011', text: '那你怎么漏的', time: T0 - 34000 },
+    { sender: '群友Y5', userId: '100002017', text: '[图片]', time: T0 - 23000 },
+    { sender: '群友K', userId: '100002023', text: '[图片]', time: T0 - 4000 },
+    { sender: '群友C', userId: '100002010', text: '[图片]', time: T0 - 3000 }
   ];
   const r = pickAutoAt(base({
     unreadMessages: unread,
@@ -481,9 +483,9 @@ console.log('\n── 10. 第三次 @ 错人事故回放（2026-10-21 group:1000
     now: T0,
     config: { ...cfg, staleAfterMs: 0 }
   }));
-  check('@ 的是提问者 群友D', r.userId === '100001011', JSON.stringify(r));
-  check('不是只戳过它的「群友X3」', r.userId !== '100001016');
-  check('不是 4 分钟前 @ 过它的「群友C」', r.userId !== '100001010');
+  check('@ 的是提问者 群友D', r.userId === '100002011', JSON.stringify(r));
+  check('不是只戳过它的「群友Y3」', r.userId !== '100002016');
+  check('不是 4 分钟前 @ 过它的「群友C」', r.userId !== '100002010');
 
   // 单纯戳一下（没有任何文字）不能成为 @ 目标
   const onlyPoke = pickAutoAt(base({
@@ -536,7 +538,7 @@ console.log('\n── 12. @ 信号有时效（话题换了就别再拿旧 @ 当�
   check('默认时效 2 分钟', DEFAULT_AUTO_AT.addressedTtlMs === 2 * 60 * 1000);
 }
 
-console.log('\n── 13. 第四次 @ 错人事故回放（2026-10-22 group:100001006）──');
+console.log('\n── 13. 第四次 @ 错人事故回放（2026-10-22 group:100002005）──');
 {
   // 真实时间线：
   //   04:13:13 群友C：「@大肥鱼装AI 能给我一些比较雷霆的奶龙图片吗？」     ← 提问
@@ -553,12 +555,12 @@ console.log('\n── 13. 第四次 @ 错人事故回放（2026-10-22 group:1000
   const ALIAS = ['dsh', '大肥鱼', '大肥鱼装AI', '小鲸鱼'];
   const T1 = 1792642390000; // 近似 04:14:32
   const unread = [
-    { sender: '群友C', userId: '100001010', text: '@大肥鱼装AI 能给我一些比较雷霆的奶龙图片吗？', time: T1 - 80000 },
-    { sender: '群友X3', userId: '100001016', text: '@大肥鱼装AI 咱是正经鱼 不存这种', time: T1 - 76000 },
-    { sender: '群友L', userId: '100001026', text: '正经鱼还立规矩了。', time: T1 - 74000 },
-    { sender: '群友D', userId: '100001011', text: '[引用 群友X3：[图片]]（被引用的这条消息含 1 个图片/表情）@大肥鱼装AI 那存这张，遇到不喜欢的就发出来', time: T1 - 63000 },
-    { sender: '群友C', userId: '100001010', text: '[图片]', time: T1 - 42000 },
-    { sender: '群友C', userId: '100001010', text: '[拍一拍] 群友C 戳了戳 你', time: T1 - 8000, kind: 'poke', poke: { targetIsSelf: true } }
+    { sender: '群友C', userId: '100002010', text: '@大肥鱼装AI 能给我一些比较雷霆的奶龙图片吗？', time: T1 - 80000 },
+    { sender: '群友Y3', userId: '100002016', text: '@大肥鱼装AI 咱是正经鱼 不存这种', time: T1 - 76000 },
+    { sender: '群友L', userId: '100002026', text: '正经鱼还立规矩了。', time: T1 - 74000 },
+    { sender: '群友D', userId: '100002011', text: '[引用 群友Y3：[图片]]（被引用的这条消息含 1 个图片/表情）@大肥鱼装AI 那存这张，遇到不喜欢的就发出来', time: T1 - 63000 },
+    { sender: '群友C', userId: '100002010', text: '[图片]', time: T1 - 42000 },
+    { sender: '群友C', userId: '100002010', text: '[拍一拍] 群友C 戳了戳 你', time: T1 - 8000, kind: 'poke', poke: { targetIsSelf: true } }
   ];
   const r = pickAutoAt(base({
     unreadMessages: unread,
@@ -568,8 +570,8 @@ console.log('\n── 13. 第四次 @ 错人事故回放（2026-10-22 group:1000
     now: T1,
     config: { ...cfg, staleAfterMs: 0 }
   }));
-  check('@ 的是提问者「群友C」', r.userId === '100001010', JSON.stringify(r));
-  check('不是后说话的「群友D」', r.userId !== '100001011');
+  check('@ 的是提问者「群友C」', r.userId === '100002010', JSON.stringify(r));
+  check('不是后说话的「群友D」', r.userId !== '100002011');
   check('来源 hit:unread-addressed', r.reason === 'hit:unread-addressed', r.reason);
 
   // 内容完全分不出时应保持"取最新"（短回应场景，别把行为改坏）
@@ -587,12 +589,12 @@ console.log('\n── 13. 第四次 @ 错人事故回放（2026-10-22 group:1000
   check('内容分不出时取最新的乙', ambiguous.userId === '2222222222', JSON.stringify(ambiguous));
 }
 
-console.log('\n── 14. 第五次 @ 错人事故回放（2026-10-22 group:100001005）──');
+console.log('\n── 14. 第五次 @ 错人事故回放（2026-10-22 group:100002007）──');
 {
   // 真实时间线（未读上限 30 条，窗口 seq 39750–39779）：
   //   14:36:17 群友B：「[引用 机器人图片]@?！哦鲸鲸  ? ! 大肥鱼可爱」   ← 只是顺口夸名字
   //   14:38:27 群友E：「@?！哦鲸鲸  ? ! 给我发张百亿鲸元券」                ← 真正点单的人
-  //   14:39:00 群友Z1：「@?！哦鲸鲸  ? ! 来段小星星」
+  //   14:39:00 群友P：「@?！哦鲸鲸  ? ! 来段小星星」
   //   14:39:21 机器人发「【百亿鲸元券】…给大肥鱼买鱼食…」→ 却 @ 了群友B
   //
   // 两个根因：
@@ -608,36 +610,36 @@ console.log('\n── 14. 第五次 @ 错人事故回放（2026-10-22 group:1000
     ...over
   });
   const unread = [
-    M(39750, '100001000', '群友P', '接的workbuddy所以免费用'),
-    M(39751, '100001000', '群友P', '语音模型网上有现成的'),
-    M(39752, '100001000', '群友P', '直接下载本地推理就行了'),
-    M(39753, '100001015', '群友E', '强强[表情76]'),
-    M(39754, '100001035', '群友X2', '强强[表情76]'),
-    M(39755, '100001050', '群友Z1', '强强[表情76]'),
-    M(39756, '100001035', '群友X2', '[图片]'),
-    M(39757, '100001014', '群友B', `@${CARD} 大肥鱼可爱`, { time: T2 - 183406, quoteTargetIsSelf: true }),
-    M(39758, '100001035', '群友X2', '[拍一拍] 群友X2 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
-    M(39759, '100001035', '群友X2', '[图片]'),
-    M(39760, '100001050', '群友Z1', '[拍一拍] 群友Z1 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
-    M(39761, '100001015', '群友E', '[拍一拍] 群友E 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
-    M(39762, '100001000', '群友P', `@${CARD} 你算算你一共用的token按deepseek官方谷时价格大概多少钱`),
-    M(39763, '100001050', '群友Z1', '[图片]'),
-    M(39764, '100001015', '群友E', '还分白天晚上'),
-    M(39765, '100001015', '群友E', '考虑到电费差别了吗'),
-    M(39766, '100001001', '群友Z3', '[图片]'),
-    M(39767, '100001015', '群友E', '[拍一拍] 群友E 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
-    M(39768, '100001035', '群友X2', '[拍一拍] 群友X2 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
-    M(39769, '100001050', '群友Z1', '[拍一拍] 群友Z1 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
-    M(39770, '100001014', '群友B', '[拍一拍] 群友B 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
-    M(39771, '100001000', '群友P', '[拍一拍] 群友P 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
-    M(39772, '100001015', '群友E', `@${CARD} 给我发张百亿鲸元券`, { time: T2 - 53821, atSelf: true }),
-    M(39773, '100001024', '群友Z2', '[拍一拍] 群友Z2 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
-    M(39774, '100001050', '群友Z1', `@${CARD} 来段小星星`, { atSelf: true }),
-    M(39775, '100001000', '群友P', '怎么不回了'),
-    M(39776, '100001050', '群友Z1', '[图片]'),
-    M(39777, '100001000', '群友P', '[图片]'),
-    M(39778, '100001050', '群友Z1', '[图片]'),
-    M(39779, '100001000', '群友P', '反正要是按官方计价大概几千块')
+    M(39750, '100002000', '群友U', '接的workbuddy所以免费用'),
+    M(39751, '100002000', '群友U', '语音模型网上有现成的'),
+    M(39752, '100002000', '群友U', '直接下载本地推理就行了'),
+    M(39753, '100002015', '群友E', '强强[表情76]'),
+    M(39754, '100002035', '群友Y2', '强强[表情76]'),
+    M(39755, '100002029', '群友P', '强强[表情76]'),
+    M(39756, '100002035', '群友Y2', '[图片]'),
+    M(39757, '100002014', '群友B', `@${CARD} 大肥鱼可爱`, { time: T2 - 183406, quoteTargetIsSelf: true }),
+    M(39758, '100002035', '群友Y2', '[拍一拍] 群友Y2 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
+    M(39759, '100002035', '群友Y2', '[图片]'),
+    M(39760, '100002029', '群友P', '[拍一拍] 群友P 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
+    M(39761, '100002015', '群友E', '[拍一拍] 群友E 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
+    M(39762, '100002000', '群友U', `@${CARD} 你算算你一共用的token按deepseek官方谷时价格大概多少钱`),
+    M(39763, '100002029', '群友P', '[图片]'),
+    M(39764, '100002015', '群友E', '还分白天晚上'),
+    M(39765, '100002015', '群友E', '考虑到电费差别了吗'),
+    M(39766, '100002001', '群友R', '[图片]'),
+    M(39767, '100002015', '群友E', '[拍一拍] 群友E 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
+    M(39768, '100002035', '群友Y2', '[拍一拍] 群友Y2 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
+    M(39769, '100002029', '群友P', '[拍一拍] 群友P 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
+    M(39770, '100002014', '群友B', '[拍一拍] 群友B 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
+    M(39771, '100002000', '群友U', '[拍一拍] 群友U 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
+    M(39772, '100002015', '群友E', `@${CARD} 给我发张百亿鲸元券`, { time: T2 - 53821, atSelf: true }),
+    M(39773, '100002024', '群友Q', '[拍一拍] 群友Q 戳了戳 你', { kind: 'poke', poke: { targetIsSelf: true } }),
+    M(39774, '100002029', '群友P', `@${CARD} 来段小星星`, { atSelf: true }),
+    M(39775, '100002000', '群友U', '怎么不回了'),
+    M(39776, '100002029', '群友P', '[图片]'),
+    M(39777, '100002000', '群友U', '[图片]'),
+    M(39778, '100002029', '群友P', '[图片]'),
+    M(39779, '100002000', '群友U', '反正要是按官方计价大概几千块')
   ];
   const reply = '【百亿鲸元券】面额：10000000000 鲸元 仅限在群里给大肥鱼买鱼食使用，不找零，不可提现';
   const opts = { aliasNames: ALIAS, ignoreNames: PRIMARY, ignoreAtNames: ALIAS };
@@ -651,8 +653,8 @@ console.log('\n── 14. 第五次 @ 错人事故回放（2026-10-22 group:1000
     config: { ...cfg, staleAfterMs: 0 },
     ...opts
   }));
-  check('@ 的是点单的群友E', fixed.userId === '100001015', JSON.stringify(fixed));
-  check('不是只顺口说「大肥鱼可爱」的群友B', fixed.userId !== '100001014');
+  check('@ 的是点单的群友E', fixed.userId === '100002015', JSON.stringify(fixed));
+  check('不是只顺口说「大肥鱼可爱」的群友B', fixed.userId !== '100002014');
   check('来源是"明确在叫它"', fixed.reason === 'hit:unread-addressed', fixed.reason);
 
   // ② 就算别名表仍然缺群名片、消息也没有 atSelf（老状态/重启前入库），
@@ -668,8 +670,8 @@ console.log('\n── 14. 第五次 @ 错人事故回放（2026-10-22 group:1000
     ignoreNames: ['dsh', '大肥鱼'],
     ignoreAtNames: ['dsh', '大肥鱼']
   }));
-  check('缺群名片时也不再选群友B', legacy.userId !== '100001014', JSON.stringify(legacy));
-  check('退化为内容匹配时仍能选中群友E', legacy.userId === '100001015', String(legacy.reason));
+  check('缺群名片时也不再选群友B', legacy.userId !== '100002014', JSON.stringify(legacy));
+  check('退化为内容匹配时仍能选中群友E', legacy.userId === '100002015', String(legacy.reason));
   check('退化时来源是内容匹配', legacy.reason === 'hit:unread-match', legacy.reason);
 
   // ③ 入站 at 段判据：完全不给别名也能认出 @ 了它
@@ -677,7 +679,7 @@ console.log('\n── 14. 第五次 @ 错人事故回放（2026-10-22 group:1000
     isAddressedToBot({ atSelf: true, plain: `@${CARD} 给我发张百亿鲸元券` }, []) === true);
   const byAt = pickAutoAt(base({
     unreadMessages: [
-      M(39772, '100001015', '群友E', `@${CARD} 给我发张百亿鲸元券`, { atSelf: true })
+      M(39772, '100002015', '群友E', `@${CARD} 给我发张百亿鲸元券`, { atSelf: true })
     ],
     recentMessages: [],
     replyText: reply,
@@ -685,11 +687,11 @@ console.log('\n── 14. 第五次 @ 错人事故回放（2026-10-22 group:1000
     config: { ...cfg, staleAfterMs: 0 },
     aliasNames: [] // 故意不给任何别名
   }));
-  check('atSelf 单独就足以选中群友E', byAt.userId === '100001015', JSON.stringify(byAt));
+  check('atSelf 单独就足以选中群友E', byAt.userId === '100002015', JSON.stringify(byAt));
 
   // ④ 多句闲话不再稀释精确命中（逐条取最大值）
   const diluted = pickUnreadTarget(unread, reply, { ignoreNames: PRIMARY, ignoreAtNames: ALIAS });
-  check('群友E的精确命中不再被 3 句闲话稀释', diluted?.userId === '100001015', JSON.stringify(diluted));
+  check('群友E的精确命中不再被 3 句闲话稀释', diluted?.userId === '100002015', JSON.stringify(diluted));
   check('分数高于旧实现的 0.1667', (diluted?.overlap || 0) > 0.1667, String(diluted?.overlap));
 
   // ⑤ 短文本禁用反向覆盖率（单独验证算法层）

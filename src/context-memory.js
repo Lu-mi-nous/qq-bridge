@@ -30,10 +30,19 @@ export const DEFAULT_CONTEXT_MEMORY = {
   longTermKeepThreads: 40,
   // 每次自动扫描最多处理几个会话（按最近活跃排序），避免启动补扫一次性打满网关
   sweepMaxPerRun: 6,
+  // 每个会话每轮最多连续消化几个 60 条窗口：活跃群消息增速可能超过每 5 分钟
+  // 只生成 1 条 episode 的速度，必须允许追积压；单轮总量另有上限防止打满网关。
+  sweepChunksPerKey: 2,
+  sweepMaxEpisodesPerRun: 12,
   sweepActiveWithinMs: 7 * 24 * 60 * 60 * 1000, // 只自动总结最近 7 天活跃过的会话
   memoryPackChars: 1500,         // 注入 wake prompt 的记忆包字符上限
   promptBudgetChars: 20000,      // 唤醒提示超过这个字符数就在日志里告警
   promptMaxChars: 6000,          // 摘要请求里聊天记录的最大字符数
+  // Phase 3 P1：积压阈值/历史、召回审计。积压不是硬丢弃，而是控制台告警与追赶依据。
+  backlogWarnMessages: 200,
+  backlogCriticalMessages: 800,
+  backlogHistoryKeep: 288,       // 5 分钟一次 × 24h
+  recallAuditKeep: 200,          // 每会话保留最近 200 次检索
   gatewayUrl: 'http://127.0.0.1:7863/v1',
   model: 'cn:deepseek-v4.1-flash',
   apiKey: '',
@@ -174,6 +183,80 @@ export function journalStats(stateDir, key) {
   }
 }
 
+/**
+ * 最近 N 小时消息进入检索索引的覆盖率（Phase 3 P1-1）。
+ *
+ * 检索索引只读 messages.jsonl 的最后 indexLimit 条（默认 3000）。如果 24 小时
+ * 消息量超过这个窗口，更早的消息会搜不到——控制台要能提前看到这个缺口，
+ * 而不是等群友问起上周的事才发现“记忆里没有”。
+ */
+export function journalCoverage(stateDir, key, { hours = 24, now = Date.now(), indexLimit = 3000 } = {}) {
+  const arr = readJsonl(fileFor(stateDir, key, 'messages.jsonl'));
+  const h = Math.max(1, Number(hours) || 24);
+  const cutoff = Number(now) - h * 3600 * 1000;
+  const recent = arr.filter((m) => m && Number(m.time) >= cutoff);
+  const limit = Math.max(1, Number(indexLimit) || 3000);
+  const indexed = new Set(arr.slice(-limit));
+  const indexedRecent = recent.filter((m) => indexed.has(m));
+  return {
+    hours: h,
+    cutoff,
+    journalMessages: arr.length,
+    messages24h: recent.length,
+    indexed24h: indexedRecent.length,
+    coveragePct: recent.length ? Math.round((indexedRecent.length / recent.length) * 100) : 100,
+    indexLimit: limit,
+    oldestIndexedAt: Number(arr[Math.max(0, arr.length - limit)]?.time) || 0
+  };
+}
+
+/** 追加一条检索命中审计（Phase 3 P1-1：唤醒时到底检索了哪几条）。 */
+export function appendRecallAudit(stateDir, key, record, keep = DEFAULT_CONTEXT_MEMORY.recallAuditKeep) {
+  const file = fileFor(stateDir, key, 'recall-audit.jsonl');
+  const arr = readJsonl(file);
+  arr.push(record);
+  writeJsonlBounded(file, arr, keep);
+  return record;
+}
+
+/** 读最近 N 条检索审计（旧 → 新）。 */
+export function readRecallAudit(stateDir, key, limit = 20) {
+  return readJsonl(fileFor(stateDir, key, 'recall-audit.jsonl'), limit);
+}
+
+/** 从审计记录汇总召回次数/命中率/平均延迟（重启后仍可显示）。 */
+export function recallAuditStats(stateDir, key, limit = 200) {
+  const arr = readRecallAudit(stateDir, key, limit);
+  const calls = arr.length;
+  const hits = arr.filter((a) => Number(a.hits) > 0).length;
+  const msTotal = arr.reduce((sum, a) => sum + (Number(a.ms) || 0), 0);
+  return {
+    calls,
+    hits,
+    hitRate: calls ? Math.round((hits / calls) * 100) : 0,
+    avgMs: calls ? Math.round(msTotal / calls) : 0,
+    last: arr[arr.length - 1] || null
+  };
+}
+
+function backlogHistoryFile(stateDir) {
+  return path.join(String(stateDir), 'context', 'backlog-history.jsonl');
+}
+
+/** 追加一条全局积压样本（5 分钟一次，保留 24h）。 */
+export function appendBacklogSample(stateDir, sample, keep = DEFAULT_CONTEXT_MEMORY.backlogHistoryKeep) {
+  const file = backlogHistoryFile(stateDir);
+  const arr = readJsonl(file);
+  arr.push(sample);
+  writeJsonlBounded(file, arr, keep);
+  return sample;
+}
+
+/** 读最近 N 条积压样本（旧 → 新）。 */
+export function readBacklogHistory(stateDir, limit = 48) {
+  return readJsonl(backlogHistoryFile(stateDir), limit);
+}
+
 // ── Phase 2：长期记忆（人物 / 稳定事实 / 线索） ──────────────────────────
 // episode 是“最近发生了什么”，只注入最近 2 条；这里把每条的 people/facts/threads
 // 合并成持续累积的 memory.json，避免上周认识的人/约定的事在两条 episode 后消失。
@@ -229,10 +312,34 @@ export function mergeEpisodeToMemory(stateDir, key, ep, {
   const norm = (s) => String(s ?? '').trim().toLowerCase();
   const stamp = Number(now) || Date.now();
 
+  // 人物别名合并：同一个人可能先以群名片出现、后来带 QQ 号，或反过来。
+  // 只按 `id||name` 当 key 会产生两份人物卡，记忆包里就永远只显示其中一份。
+  const personById = new Map();
+  const personByName = new Map();
+  for (const [k, v] of Object.entries(mem.people || {})) {
+    if (!v || typeof v !== 'object') continue;
+    if (v.id) personById.set(String(v.id), k);
+    if (v.name) personByName.set(norm(v.name), k);
+  }
   for (const p of Array.isArray(ep.people) ? ep.people : []) {
     if (!p || (!p.id && !p.name && !p.note)) continue;
-    const k = norm(p.id || p.name);
+    const idKey = p.id ? personById.get(String(p.id)) : '';
+    const nameKey = p.name ? personByName.get(norm(p.name)) : '';
+    // 优先按 QQ 号合并；没有 QQ 号时按名字。两个 key 都命中且不同时，把 name 卡并入 id 卡。
+    let k = idKey || nameKey || norm(p.id || p.name);
     if (!k) continue;
+    if (idKey && nameKey && idKey !== nameKey) {
+      const drop = mem.people[nameKey];
+      if (drop) {
+        const target = mem.people[idKey] || {};
+        for (const f of ['name', 'note']) if (!target[f] && drop[f]) target[f] = drop[f];
+        target.mentions = (Number(target.mentions) || 0) + (Number(drop.mentions) || 0);
+        target.firstSeenAt = Math.min(Number(target.firstSeenAt) || stamp, Number(drop.firstSeenAt) || stamp);
+        target.lastSeenAt = Math.max(Number(target.lastSeenAt) || 0, Number(drop.lastSeenAt) || 0);
+        mem.people[idKey] = target;
+        delete mem.people[nameKey];
+      }
+    }
     const cur = mem.people[k] || {
       id: '', name: '', note: '', mentions: 0,
       firstSeenAt: stamp, lastSeenAt: 0
@@ -244,19 +351,39 @@ export function mergeEpisodeToMemory(stateDir, key, ep, {
     cur.firstSeenAt = Number(cur.firstSeenAt) || stamp;
     cur.lastSeenAt = stamp;
     mem.people[k] = cur;
+    if (cur.id) personById.set(String(cur.id), k);
+    if (cur.name) personByName.set(norm(cur.name), k);
   }
 
+  // 单值谓语（身份/称呼/所在地等）出现新值且置信度更高时，旧值标 superseded；
+  // “喜欢/在玩”这类多值事实保留并存，避免把“喜欢原神”和“喜欢星铁”误判成冲突。
+  const SINGLE_VALUE_PREDICATES = /^(是|叫|名叫|本名|真名|昵称|名字|身份|位于|住在|在|年龄|生日|账号|QQ|qq|id|ID)$/;
   for (const f of Array.isArray(ep.facts) ? ep.facts : []) {
     if (!f || !f.subject || !f.object) continue;
     const confidence = Number(f.confidence) || 0;
     if (confidence < 0.6) continue;
     const k = [norm(f.subject), norm(f.predicate), norm(f.object)].join('|');
+    const pred = String(f.predicate || '').trim();
     const cur = mem.facts[k] || {
-      subject: String(f.subject), predicate: String(f.predicate || ''),
+      subject: String(f.subject), predicate: pred,
       object: String(f.object), confidence: 0, hits: 0,
-      firstSeenAt: stamp, lastSeenAt: 0
+      status: 'active', firstSeenAt: stamp, lastSeenAt: 0
     };
+    if (SINGLE_VALUE_PREDICATES.test(pred)) {
+      for (const [oldKey, old] of Object.entries(mem.facts || {})) {
+        if (!old || oldKey === k || old.status === 'superseded') continue;
+        if (norm(old.subject) !== norm(f.subject)) continue;
+        if (norm(old.predicate) !== norm(pred)) continue;
+        if (norm(old.object) === norm(f.object)) continue;
+        if (confidence + 1e-9 >= (Number(old.confidence) || 0) + 0.05) {
+          old.status = 'superseded';
+          old.supersededAt = stamp;
+          old.supersededBy = k;
+        }
+      }
+    }
     cur.confidence = Math.max(Number(cur.confidence) || 0, confidence);
+    cur.status = 'active';
     cur.hits = (Number(cur.hits) || 0) + 1;
     cur.firstSeenAt = Number(cur.firstSeenAt) || stamp;
     cur.lastSeenAt = stamp;
@@ -279,6 +406,25 @@ export function mergeEpisodeToMemory(stateDir, key, ep, {
     cur.firstSeenAt = Number(cur.firstSeenAt) || stamp;
     cur.lastSeenAt = stamp;
     mem.threads[k] = cur;
+  }
+
+  // 线索太久没被提到就自动收束；事实超过半年且置信度不高则降为 stale。
+  // 不删数据，只在记忆包里过滤，保留可追溯性。
+  const STALE_THREAD_MS = 30 * 24 * 60 * 60 * 1000;
+  const STALE_FACT_MS = 180 * 24 * 60 * 60 * 1000;
+  for (const t of Object.values(mem.threads || {})) {
+    if (!t || t.status !== 'open') continue;
+    if (t.lastSeenAt && stamp - Number(t.lastSeenAt) > STALE_THREAD_MS) {
+      t.status = 'stale';
+      t.staleAt = stamp;
+    }
+  }
+  for (const f of Object.values(mem.facts || {})) {
+    if (!f || f.status === 'superseded' || f.status === 'stale') continue;
+    if (f.lastSeenAt && stamp - Number(f.lastSeenAt) > STALE_FACT_MS && Number(f.confidence) < 0.8) {
+      f.status = 'stale';
+      f.staleAt = stamp;
+    }
   }
 
   mem.people = topByRecent(mem.people, keepPeople);
@@ -304,7 +450,7 @@ export function longTermStats(stateDir, key) {
     people: Object.keys(mem.people || {}).length,
     facts: Object.keys(mem.facts || {}).length,
     threads: threads.length,
-    openThreads: threads.filter((t) => t && t.status !== 'closed').length,
+    openThreads: threads.filter((t) => t && t.status === 'open').length,
     updatedAt: Number(mem.updatedAt) || 0
   };
 }
@@ -516,7 +662,7 @@ export function formatMemoryPack({ episodes = [], compactions = [], longTerm = n
   if (facts.length) {
     lines.push('【长期记忆·稳定事实】');
     const topFacts = facts
-      .filter((f) => f && f.subject && f.object)
+      .filter((f) => f && f.subject && f.object && f.status !== 'superseded' && f.status !== 'stale')
       .sort((a, b) => (Number(b.confidence) || 0) - (Number(a.confidence) || 0)
         || (Number(b.lastSeenAt) || 0) - (Number(a.lastSeenAt) || 0))
       .slice(0, 4);
@@ -529,7 +675,7 @@ export function formatMemoryPack({ episodes = [], compactions = [], longTerm = n
   const seen = new Set();
   const threads = [];
   for (const t of ltThreads) {
-    if (!t || !t.title || t.status === 'closed' || seen.has(t.title)) continue;
+    if (!t || !t.title || t.status !== 'open' || seen.has(t.title)) continue;
     seen.add(t.title);
     threads.push(t);
     if (threads.length >= 4) break;
@@ -576,11 +722,16 @@ export function formatMemoryPack({ episodes = [], compactions = [], longTerm = n
 
 /**
  * 直接调用本地模型网关做摘要（OpenAI 兼容）。
- * @returns {(prompt:string)=>Promise<string>}
+ * 2026-10-25 增加 usage 回调：摘要器直连网关、不经过 DSH，转录里没有它的
+ * usage；调用方靠 `onUsage({input,output,cacheRead,hasUsage}, meta)` 把它记进
+ * `state/token-usage.json` 的 `summarizer` 桶。网关不返回 usage 时仍回调一次
+ * （hasUsage=false），保证调用次数可见而不是静默消失。
+ *
+ * @returns {(prompt:string, meta?:object)=>Promise<string>}
  */
-export function createSummarizer({ baseUrl = DEFAULT_CONTEXT_MEMORY.gatewayUrl, apiKey = '', model = DEFAULT_CONTEXT_MEMORY.model, timeoutMs = DEFAULT_CONTEXT_MEMORY.timeoutMs, log = () => {} } = {}) {
+export function createSummarizer({ baseUrl = DEFAULT_CONTEXT_MEMORY.gatewayUrl, apiKey = '', model = DEFAULT_CONTEXT_MEMORY.model, timeoutMs = DEFAULT_CONTEXT_MEMORY.timeoutMs, log = () => {}, onUsage = null } = {}) {
   const url = `${String(baseUrl || '').replace(/\/+$/, '')}/chat/completions`;
-  return async function summarize(prompt) {
+  return async function summarize(prompt, meta = {}) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), Math.max(5000, Number(timeoutMs) || 60000));
     try {
@@ -624,6 +775,28 @@ export function createSummarizer({ baseUrl = DEFAULT_CONTEXT_MEMORY.gatewayUrl, 
       // 有些模型会把内容放进 reasoning_content；只要里面有 JSON 就兜住。
       if (!content && msg.reasoning_content) content = String(msg.reasoning_content);
       if (!content) throw new Error(`模型返回空内容（finish=${json?.choices?.[0]?.finish_reason ?? '?'}）`);
+      if (typeof onUsage === 'function') {
+        const u = json?.usage && typeof json.usage === 'object' ? json.usage : null;
+        // 与 DSH 口径保持一致：input = 未命中缓存的输入，cacheRead = 命中缓存的输入，
+        // provider 的 prompt_tokens = 两者之和。直接把 prompt_tokens 塞进 input
+        // 会让上层「总输入 = input + cacheRead」重复计算缓存部分。
+        const promptTokens = Number(u?.prompt_tokens ?? u?.input_tokens ?? 0) || 0;
+        // 本地网关同时给 prompt_cache_hit_tokens / cache_read_input_tokens /
+        // prompt_tokens_details.cached_tokens；优先用前两者（实测 DSH 同口径）。
+        const cacheRead = Number(u?.prompt_cache_hit_tokens
+          ?? u?.cache_read_input_tokens
+          ?? u?.prompt_tokens_details?.cached_tokens ?? 0) || 0;
+        try {
+          onUsage({
+            input: Math.max(0, promptTokens - cacheRead),
+            output: Number(u?.completion_tokens ?? u?.output_tokens ?? 0) || 0,
+            cacheRead,
+            hasUsage: !!u
+          }, meta);
+        } catch (error) {
+          log(`摘要器 usage 回调失败（不影响摘要）：${error?.message ?? error}`);
+        }
+      }
       return content;
     } finally {
       clearTimeout(timer);

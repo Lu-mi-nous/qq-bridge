@@ -47,6 +47,7 @@ export const TOOL_FLAGS = [
   { flag: 'setWakeConfig', tools: ['qq_set_wake_config'], group: '调度与记忆', desc: '设置唤醒/潜水条件：无限期、有限时间、@/名字/关键词/概率等' },
   { flag: 'markRead', tools: ['qq_mark_read'], group: '调度与记忆', desc: '标记当前未读为已读（看过但决定不回复）' },
   { flag: 'memory', tools: ['qq_memory_append', 'qq_memory_query', 'qq_memory_remove', 'qq_memory_clear'], group: '调度与记忆', desc: '轻量记忆：话题/想说的话/群友印象（含清空）' },
+  { flag: 'recallMemory', tools: ['qq_recall_memory'], group: '调度与记忆', desc: '按话题检索历史消息与 episode 摘要（Phase 3）' },
   { flag: 'waitMessages', tools: ['qq_wait_for_messages'], group: '调度与记忆', desc: '短暂等待新消息，有新消息立即返回或超时返回' },
   { flag: 'feedback', tools: ['qq_report_feedback'], group: '调度与记忆', desc: '向控制台反馈 AI 遇到的问题/困惑' },
 

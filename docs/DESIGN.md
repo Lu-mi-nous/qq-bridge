@@ -21,8 +21,8 @@
 | --- | --- |
 | **QQ 侧** | `@snowluma/sdk` 的 `SnowLumaWebSocketClient`（OneBot v11，自动重连） |
 | **DSH 侧** | 复用官方 `@deepseek-ai/dsh-host-apiproxy` 的 `AbstractApiClient` 与 zod schema；桥接实现 Node 传输层（fetch unary + WS 下行事件流） |
-| **会话模型** | 一个 QQ 会话 ↔ 一个 DSH 会话；人格/preset 可按模式切换 |
-| **控制台** | 自带 Web UI（`127.0.0.1:3100`），默认令牌鉴权；可显式设 `consoleAuth: false` 关闭令牌检查 |
+| **会话模型** | 一个 QQ 会话 ↔ 一个 DSH 会话；人格支持全局默认 + 每群单独覆盖 |
+| **控制台** | 自带 Web UI（`127.0.0.1:3100`），默认令牌鉴权；可显式设 `consoleAuth: false` 关闭令牌检查。`src/console-server.js` 独立承载控制台与 MCP 回调路由，Agent 仅可访问显式允许清单 |
 
 ---
 
@@ -30,7 +30,7 @@
 
 | Server | 文件 | 工具数 | 职责 |
 | --- | --- | --- | --- |
-| `snowluma` | `src/mcp-snowluma-safe.js` | 54 | QQ 动作安全子集：查状态/查群/收发消息/看图/超分/B站观看与搜索/图库/表情包/记忆/黑话/X 抓取 |
+| `snowluma` | `src/mcp-snowluma-safe.js` | 59 | QQ 动作安全子集：查状态/查群/收发消息/看图/超分/B站观看与搜索/图库/表情包/记忆/黑话/X 抓取 |
 | `snowluma-host` | `src/mcp-host-server.js` | 3 | SnowLuma 探活；`start`/`stop` 需显式开启 `allowProcessControl` 且仅 `closed-agent` |
 | `web-search-safe` | `src/mcp-web-search-safe.js` | 3 | 只读搜索；网页和图片 URL 抓取带 SSRF 防护 |
 

@@ -13,7 +13,7 @@ async function call(method, payload = {}) {
   return j.result.value;
 }
 
-const created = await call('session.create', { cwd: path.join(ROOT, 'state', 'vision-e2e') });
+const created = await call('session.create', { cwd: 'E:\\Downloads\\qq-bridge-main\\state\\vision-e2e' });
 const sessionId = created.sessionId;
 
 try {

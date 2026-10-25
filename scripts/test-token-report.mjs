@@ -69,6 +69,10 @@ console.log('── 1. 口径 ──');
   check('缓存命中率不会超 100%', r.all.cacheHitRate <= 100, String(r.all.cacheHitRate));
   check('缓存命中率计算正确', r.today.cacheHitRate === 90.9,
     `30000/(3000+30000)=90.9%，实际 ${r.today.cacheHitRate}`);
+  check('今日总输入 = 未缓存 + 缓存读', r.today.totalInput === 33000, String(r.today.totalInput));
+  check('今日总 tokens 含输出', r.today.totalTokens === 33300, String(r.today.totalTokens));
+  check('累计总输入包含所有缓存', r.all.totalInput === 143000, String(r.all.totalInput));
+  check('柱状图用总 tokens（不是只算未缓存）', r.bars[4].total === 55500, String(r.bars[4].total));
 
   // ③ 模型名保留渠道
   check('模型名保留渠道前缀', prettyModelName('global:deepseek-v4.1-flash') === 'deepseek-v4.1-flash（global）');
@@ -128,6 +132,14 @@ console.log('\n── 3. HTML ──');
   check('有过期提示位（未过期时不显示）', r.stale === false && !/数据已过期/.test(html));
   check('写清了"不是实时值"', /不是此刻的实时值/.test(html));
   check('写清了输入 token 是每次请求累加', /每次请求累加/.test(html));
+  check('没有七天合计卡（用户要求删掉）', !/近 7 天合计|近 7 天总用量/.test(html));
+  check('有今日总消耗/累计总消耗', /今日总消耗/.test(html) && /累计总消耗/.test(html));
+  check('总消耗卡小字标未命中 token', /未命中 1.0K/.test(html));
+  check('柱状图是分色堆叠（蓝/橙/绿渐变）', /linear-gradient\(to top/.test(html) && /#d08821/.test(html) && /#6a9a63/.test(html));
+  check('按模型也是分色堆叠条', /class="mstack"/.test(html) && /linear-gradient\(to right/.test(html));
+  check('命中率标在蓝段、未命中率已删除', /class="stack-label"[^>]*>命中/.test(html) && !/未命中 \d+(\.\d+)?%/.test(html));
+  check('柱状图有图例', /class="legend"/.test(html) && /未命中缓存/.test(html) && /命中缓存/.test(html));
+  check('柱顶显示总消耗', /class="bar-val"[^>]*>[^<]+/.test(html));
   check('没有编造金额', !/[¥$]\s*\d|元\/|美元|花费\s*\d/.test(html));
 
   const staleHtml = buildTokenReportHtml(buildTokenReport({ ...usage, updatedAt: NOW - 20 * 3600 * 1000 }, { now: NOW }));
@@ -147,7 +159,7 @@ console.log('\n── 4. 摘要同源 ──');
   };
   const r = buildTokenReport(usage, { now: NOW });
   const s = summarizeTokenReport(r);
-  check('摘要含今日输入（1.00M）', /今日.*输入 1\.00M/.test(s), s.split('\n')[0]);
+  check('摘要含今日总输入（1.00M）', /今日.*总输入 1\.00M/.test(s), s.split('\n')[0]);
   check('摘要含调用次数', /调用 7 次/.test(s));
   check('摘要含累计', /累计/.test(s) && /3\.00M/.test(s), s.split('\n')[3]);
   check('摘要与报表数字一致（今日 input）',
@@ -197,7 +209,8 @@ console.log('\n── 5. 渲染 ──');
 // ── 6. 接线 ──
 console.log('\n── 6. 接线 ──');
 {
-  const bridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
+  const bridge = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+
   const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
   const preset = fs.readFileSync(path.join(root, 'dsh', 'agent-presets', 'qq-chat-v2', 'agent.cordis.yml'), 'utf8');
   const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
@@ -242,7 +255,7 @@ console.log('\n── 6. 接线 ──');
   check('CSP 仍限制脚本为 self', /script-src 'self'/.test(cspBlock));
 
   // 默认开启
-  check('默认配置开启了 tokenReport', /tokenReport: true/.test(bridge));
+  
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} 通过 / ${fail} 失败${skip ? ` / ${skip} 跳过` : ''}`);

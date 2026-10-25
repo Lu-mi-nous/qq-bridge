@@ -108,24 +108,24 @@ const k = (x) => x >= 1e9 ? (x / 1e9).toFixed(2) + 'B' : x >= 1e6 ? (x / 1e6).to
 console.log('═══ 合计（已去重）═══');
 console.log(`  模型调用次数: ${n(totals.calls)}`);
 console.log(`  turn 数:      ${n(totals.turns)}`);
-console.log(`  输入 tokens:  ${n(totals.input)}  (${k(totals.input)})`);
+console.log(`  未缓存输入:   ${n(totals.input)}  (${k(totals.input)})`);
+console.log(`  缓存读:       ${n(totals.cacheRead)}  (${k(totals.cacheRead)})`);
+console.log(`  总输入(prompt): ${n(totals.input + totals.cacheRead)} (${k(totals.input + totals.cacheRead)})`);
 console.log(`  输出 tokens:  ${n(totals.output)}  (${k(totals.output)})`);
 if (totals.reasoning) console.log(`    其中推理:   ${n(totals.reasoning)}  (${k(totals.reasoning)})`);
-console.log(`  缓存读:       ${n(totals.cacheRead)}  (${k(totals.cacheRead)})`);
-console.log(`  计费当量(input+output): ${n(totals.input + totals.output)} (${k(totals.input + totals.output)})`);
-console.log(`  含缓存的实际处理量:     ${n(totals.input + totals.output + totals.cacheRead)} (${k(totals.input + totals.output + totals.cacheRead)})`);
+console.log(`  总 tokens:    ${n(totals.input + totals.cacheRead + totals.output)} (${k(totals.input + totals.cacheRead + totals.output)})`);
 
 if (byModel.size) {
   console.log('\n═══ 按模型 ═══');
   for (const [m, v] of [...byModel.entries()].sort((a, b) => b[1].input - a[1].input)) {
-    console.log(`  ${m}: in=${k(v.input)} out=${k(v.output)} 缓存读=${k(v.cacheRead)} 调用=${n(v.calls)}`);
+    console.log(`  ${m}: 未缓存=${k(v.input)} 缓存读=${k(v.cacheRead)} 总输入=${k(v.input + v.cacheRead)} out=${k(v.output)} 调用=${n(v.calls)}`);
   }
 }
 
 if (byDay.size) {
   console.log('\n═══ 按日期 ═══');
   for (const [d, v] of [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-    console.log(`  ${d}: in=${k(v.input).padStart(8)} out=${k(v.output).padStart(8)} 缓存读=${k(v.cacheRead).padStart(9)} 调用=${String(v.calls).padStart(5)}`);
+    console.log(`  ${d}: 总输入=${k(v.input + v.cacheRead).padStart(9)} 未缓存=${k(v.input).padStart(8)} 缓存读=${k(v.cacheRead).padStart(9)} out=${k(v.output).padStart(8)} 调用=${String(v.calls).padStart(5)}`);
   }
 }
 
