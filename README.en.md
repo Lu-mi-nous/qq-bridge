@@ -232,6 +232,7 @@ More: [docs/DSH_SETUP.md](docs/DSH_SETUP.md) · [docs/CONFIGURATION.md](docs/CON
 | [docs/DESIGN.md](docs/DESIGN.md) | Design principles, architecture, MCP server split |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Changelog (entry by entry) |
 | [docs/DEVLOG.md](docs/DEVLOG.md) | Development log (chronological narrative) |
+| [docs/COMPLEXITY.md](docs/COMPLEXITY.md) | Complexity assessment (size, coupling, risks, metrics) |
 | [AGENTS.md](AGENTS.md) | Development conventions (read before changing code) |
 | [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) | Third-party licenses, SnowLuma boundaries, data egress |
 
