@@ -266,7 +266,8 @@ node scripts/setup-dsh.mjs      # 目录没变也建议跑一次，确保 MCP �
 | [docs/MODEL_SETUP.md](docs/MODEL_SETUP.md) | 模型接入：本地网关 / DeepSeek 官方 API |
 | [docs/DSH_SETUP.md](docs/DSH_SETUP.md) | DSH 端安装细节与排错 |
 | [docs/DESIGN.md](docs/DESIGN.md) | 设计原则、架构、MCP server 划分 |
-| [docs/CHANGELOG.md](docs/CHANGELOG.md) | 更新日志 |
+| [docs/CHANGELOG.md](docs/CHANGELOG.md) | 更新日志（逐条改动） |
+| [docs/DEVLOG.md](docs/DEVLOG.md) | 开发日志（按时间讲演进与决策） |
 | [AGENTS.md](AGENTS.md) | 开发约定（改代码前先读） |
 | [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) | 第三方组件许可、SnowLuma 使用边界、数据出机清单 |
 
