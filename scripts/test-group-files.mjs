@@ -16,6 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -24,7 +25,7 @@ const root = path.dirname(fileURLToPath(import.meta.url)) + '/..';
 const m = await import(new URL('../src/group-files.js', import.meta.url));
 const { summarizeGroupFiles, formatSummary, searchGroupFiles, normalizeEntries, categoryOf, extOf, humanSize, dateOf, CATEGORY_ORDER } = m;
 
-const bridgeSrc = fs.readFileSync(path.join(root, 'src/console-server.js'), 'utf8');
+const bridgeSrc = readConsoleSource();
 const mcpSrc = fs.readFileSync(path.join(root, 'src/mcp-snowluma-safe.js'), 'utf8');
 const modSrc = fs.readFileSync(path.join(root, 'src/group-files.js'), 'utf8');
 
@@ -139,18 +140,18 @@ console.log('\n── 5. 重名检测（只报告不清理）──');
 console.log('\n── 6. 搜索 ──');
 {
   const raw = [
-    { file_name: '陆一飞老师面谈准备.docx', file_size: 47 * 1024, upload_time: 1791972161, uploader_name: '群粥黑' },
+    { file_name: '某老师面谈准备.docx', file_size: 47 * 1024, upload_time: 1791972161, uploader_name: '群友C' },
     { file_name: '第五章习题解答.docx', file_size: 39 * 1024, upload_time: 1758900000, uploader_name: 'zch' },
-    { file_name: '大图.jpg', file_size: 60 * 1024 * 1024, upload_time: 1791900000, uploader_name: '群粥黑' },
+    { file_name: '大图.jpg', file_size: 60 * 1024 * 1024, upload_time: 1791900000, uploader_name: '群友C' },
   ];
   check('关键词命中', searchGroupFiles(raw, { keyword: '面谈' }).matched === 1);
   check('关键词部分匹配', searchGroupFiles(raw, { keyword: '老师' }).matched === 1);
   check('按扩展名', searchGroupFiles(raw, { ext: 'docx' }).matched === 2);
   check('ext 带点也能匹配', searchGroupFiles(raw, { ext: '.jpg' }).matched === 1);
   check('按分类', searchGroupFiles(raw, { category: '图片' }).matched === 1);
-  check('按上传者（部分匹配）', searchGroupFiles(raw, { uploader: '群粥黑' }).matched === 2);
+  check('按上传者（部分匹配）', searchGroupFiles(raw, { uploader: '群友C' }).matched === 2);
   check('按大小过滤', searchGroupFiles(raw, { minBytes: 10 * 1024 * 1024 }).matched === 1);
-  check('按时间倒序（新的在前）', searchGroupFiles(raw, {}).entries[0].name === '陆一飞老师面谈准备.docx',
+  check('按时间倒序（新的在前）', searchGroupFiles(raw, {}).entries[0].name === '某老师面谈准备.docx',
     `1791972161 比 1791900000 新，应排最前；实际 ${searchGroupFiles(raw, {}).entries[0].name}`);
   check('无匹配返回 0', searchGroupFiles(raw, { keyword: '不存在xyz' }).matched === 0);
   check('limit 生效', searchGroupFiles(raw, { limit: 2 }).entries.length === 2);

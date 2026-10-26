@@ -23,6 +23,7 @@ import {
   readSessionText, pickUsage, dayKey, parseSessionFile,
   aggregateTokenUsage, humanTokens
 } from '../src/token-usage.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -196,7 +197,7 @@ console.log('\n── 6. 健壮性 ──');
 console.log('\n── 7. 桥接接线 ──');
 {
 
-  const consoleServer = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+  const consoleServer = readConsoleSource();
   const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
   check('有统计端点', /\/api\/socialV2\/token-usage/.test(consoleServer));
@@ -209,8 +210,9 @@ console.log('\n── 7. 桥接接线 ──');
   
   
 
-  check('落盘按 sessionId 的 sessions 桶', /sessions: agg\.sessions/.test(fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8')));
-  check('token-usage.json 保留摘要器桶', /summarizer: latest\?\.summarizer \|\| prev\?\.summarizer/.test(fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8')));
+  const tokenServiceSrc = fs.readFileSync(path.join(root, 'src', 'token-service.js'), 'utf8');
+  check('落盘按 sessionId 的 sessions 桶', /sessions: agg\.sessions/.test(tokenServiceSrc));
+  check('token-usage.json 保留摘要器桶', /summarizer: latest\?\.summarizer \|\| prev\?\.summarizer/.test(tokenServiceSrc));
   check('控制台有卡片', /id="tokenCard"/.test(html));
   check('16 卡有按会话表格容器', /id="tokenSessions"/.test(html));
   check('16 卡显示当前/累计两个口径', /当前会话总输入/.test(html) && /累计总输入/.test(html));

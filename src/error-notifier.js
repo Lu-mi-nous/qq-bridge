@@ -174,13 +174,14 @@ export function parseKey(key) {
  * @param {{key:string, code:string, rawError:string, at?:number, messages?:string[], sessionId?:string}} p
  * @returns {string} 私聊文本
  */
-export function buildOwnerReport({ key, code, rawError, at = Date.now(), messages = [], sessionId = '' }) {
+export function buildOwnerReport({ key, code, rawError, at = Date.now(), messages = [], sessionId = '', sessionName = '' }) {
   const { kind, id } = parseKey(key);
   const time = new Date(at).toLocaleString('sv-SE', { hour12: false });
   const lines = [
     '【上游报错通知】',
     `时间：${time}`,
     `会话：${key}`,
+    sessionName ? `会话名称：${sessionName}` : '',
     // 群号/QQ 号单列一行，方便直接复制
     kind === 'group' ? `群号：${id}` : `QQ号：${id}`,
     kind ? `类型：${kind === 'group' ? '群聊' : '私聊'}` : '',
@@ -245,14 +246,15 @@ export function pickMessage(messages, rng = Math.random) {
  * @param {{key:string, title:string, detail?:string, at?:number, extra?:Record<string,unknown>, suppressed?:number}} p
  * @returns {string}
  */
-export function buildOwnerNotice({ key = '', title, detail = '', at = Date.now(), extra = {}, suppressed = 0 }) {
+export function buildOwnerNotice({ key = '', title, detail = '', at = Date.now(), extra = {}, suppressed = 0, header = '【桥接报错】', sessionName = '' }) {
   const { kind, id } = parseKey(key);
   const time = new Date(at).toLocaleString('sv-SE', { hour12: false });
   const lines = [
-    '【桥接报错】',
+    header || '【桥接报错】',
     `时间：${time}`,
     title ? `类型：${title}` : '',
     key ? `会话：${key}` : '',
+    sessionName ? `会话名称：${sessionName}` : '',
     // 群号/QQ 号单列，方便直接复制排查
     kind === 'group' ? `群号：${id}` : kind === 'private' ? `QQ号：${id}` : '',
     // 节流窗口内被压掉的同类报错数量：不静默丢弃，让管理员知道「不止一次」

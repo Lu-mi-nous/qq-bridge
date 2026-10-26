@@ -7,9 +7,9 @@
 // 口径：默认按「总输入（含缓存）」累计，因为实测 96% 是缓存读，熔断要拦的正是
 // 巨大会话历史反复重喂；未缓存可配第二阈值。计数是内存 + 每 5 分钟落盘，
 // 重启保留当天状态；自然日（上海时区）切换自动归零。
-import fs from 'node:fs';
 import path from 'node:path';
 import { dayKey, humanTokens } from './token-usage.js';
+import { createJsonStore } from './state/store.js';
 
 export const DEFAULT_TOKEN_FUSE = Object.freeze({
   enabled: false,
@@ -90,15 +90,16 @@ function normalizeBucket(v) {
   };
 }
 
+function tokenFuseStore(stateDir) {
+  return createJsonStore({
+    file: tokenFuseFile(stateDir),
+    version: 1,
+    defaults: emptyState
+  });
+}
+
 export function loadTokenFuseState(stateDir) {
-  let data;
-  try {
-    let text = fs.readFileSync(tokenFuseFile(stateDir), 'utf8');
-    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-    data = JSON.parse(text);
-  } catch {
-    return emptyState();
-  }
+  const data = tokenFuseStore(stateDir).read();
   if (!data || typeof data !== 'object') return emptyState();
   const out = emptyState(String(data.day || ''));
   for (const [key, bucket] of Object.entries(data.keys || {})) {
@@ -109,11 +110,7 @@ export function loadTokenFuseState(stateDir) {
 }
 
 export function saveTokenFuseState(stateDir, state) {
-  const file = tokenFuseFile(stateDir);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-  fs.renameSync(tmp, file);
+  tokenFuseStore(stateDir).write(state);
 }
 
 /**
@@ -188,7 +185,7 @@ export function createTokenFuse({
     if (b.state === 'warn') {
       if (!b.warnedAt) {
         b.warnedAt = now();
-        notifyOwner(key, 'Token 用量提醒', `今日总输入 ${humanTokens(b.totalInput)}（未缓存 ${humanTokens(b.uncached)}）已达提醒阈值 ${humanTokens(c.warnTokens)}；自动唤醒仍继续，达到熔断阈值会停止。`, {
+        notifyOwner(key, 'Token 超限提醒', `今日总输入 ${humanTokens(b.totalInput)}（未缓存 ${humanTokens(b.uncached)}）已达提醒阈值 ${humanTokens(c.warnTokens)}；自动唤醒仍继续，达到熔断阈值会停止。`, {
           会话: key,
           说明: '这是会话级 Token 熔断的预警，不影响群友当前聊天'
         });
@@ -199,7 +196,7 @@ export function createTokenFuse({
       if (!b.fusedNotifiedAt) {
         b.fusedNotifiedAt = now();
         b.fusedAt = b.fusedAt || now();
-        notifyOwner(key, 'Token 已熔断', `今日总输入 ${humanTokens(b.totalInput)}（未缓存 ${humanTokens(b.uncached)}）已达熔断阈值；该会话的自动唤醒与 B 站自主刷已停止。管理员私聊、控制台手动唤醒/手动刷不受影响。解除：控制台 16 卡或 /tf off ${key}`, {
+        notifyOwner(key, 'Token 超限熔断', `今日总输入 ${humanTokens(b.totalInput)}（未缓存 ${humanTokens(b.uncached)}）已达熔断阈值；该会话的自动唤醒与 B 站自主刷已停止。管理员私聊、控制台手动唤醒/手动刷不受影响。解除：控制台 16 卡或 /tf off ${key}`, {
           会话: key,
           说明: '熔断只停自动行为，群里不会收到任何提示'
         });

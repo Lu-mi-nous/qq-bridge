@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { createJsonStore } from './state/store.js';
 
 export function nowIso() {
   return new Date().toISOString();
@@ -132,22 +133,22 @@ export function normalizeStickerEntry(raw) {
 }
 
 export function loadStickerStore(file) {
-  try {
-    let text = fs.readFileSync(file, 'utf8');
-    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-    const parsed = JSON.parse(text);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map(normalizeStickerEntry).filter(Boolean);
-  } catch {
-    return [];
-  }
+  const parsed = createJsonStore({
+    file,
+    version: 1,
+    array: true,
+    defaults: () => []
+  }).read();
+  return parsed.map(normalizeStickerEntry).filter(Boolean);
 }
 
 export function saveStickerStore(file, entries) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(entries, null, 2), { encoding: 'utf8', mode: 0o600 });
-  fs.renameSync(tmp, file);
+  createJsonStore({
+    file,
+    version: 1,
+    array: true,
+    defaults: () => []
+  }).write(entries);
 }
 
 // 把 SnowLuma 返回的 QQ 收藏表情详情合并进本地库。

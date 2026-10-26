@@ -9,7 +9,7 @@
 //   日志：`05:56:35 [sticker] 拒绝删除表情：请求者不是管理员（group:100002005）`
 //   时间线（同一会话）：
 //     13:55:48 管理员(100002000) 引用表情说「把这个表情包删了」
-//     13:56:06 群友群友D 发了条拍一拍 → lastRequesterId 被覆盖成群友
+//     13:56:06 群友群友F 发了条拍一拍 → lastRequesterId 被覆盖成群友
 //     13:56:35 模型这才调用 qq_delete_sticker → 判成"非管理员"，403
 //   即：**管理员的请求被后续闲聊消息冲掉了**。群越热闹越容易出现。
 //
@@ -26,13 +26,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isOwnerTurn } from '../src/pipeline/message-format.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const pipelineSrc = fs.readFileSync(path.join(root, 'src', 'pipeline', 'message-format.js'), 'utf8');
-const consoleServerSrc = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+const consoleServerSrc = readConsoleSource();
 
 console.log('── 1. 判定逻辑 ──');
 {
@@ -47,16 +48,16 @@ console.log('── 1. 判定逻辑 ──');
   check('最近一条是管理员 → 通过', fn() === true);
 
   // ② 管理员说完、被别人的消息覆盖（**本次 bug 的核心场景**）
-  Object.assign(state, { lastRequesterId: '100002019', ownerSpokeAt: now - 47 * 1000 });
+  Object.assign(state, { lastRequesterId: '2322789554', ownerSpokeAt: now - 47 * 1000 });
   check('管理员说完 47 秒后被别人覆盖 → 仍通过', fn() === true,
     '修复前这里是 false，即用户遇到的"删不掉"');
 
   // ③ 超出时间窗
-  Object.assign(state, { lastRequesterId: '100002019', ownerSpokeAt: now - 6 * 60 * 1000 });
+  Object.assign(state, { lastRequesterId: '2322789554', ownerSpokeAt: now - 6 * 60 * 1000 });
   check('管理员说完 6 分钟（超 5 分钟窗）→ 拒绝', fn() === false);
 
   // ④ 从没有管理员说过话
-  Object.assign(state, { lastRequesterId: '100002019', ownerSpokeAt: 0 });
+  Object.assign(state, { lastRequesterId: '2322789554', ownerSpokeAt: 0 });
   check('从未有管理员 → 拒绝', fn() === false);
 
   // ⑤ 没配 ownerQQ 时一律拒绝（fail-closed）

@@ -23,6 +23,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { TOOL_FLAGS, toolNamesOf, groupedToolFlags } from '../src/tool-flags.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -30,6 +31,8 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
 const consoleServer = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+// R4：路由已迁到分域模块，端点断言要在「主文件 + 全部路由模块」里找。
+const consoleRoutes = readConsoleSource();
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
 const actualTools = new Set([...mcp.matchAll(/server\.tool\(\s*\n?\s*'([^']+)'/g)].map((x) => x[1]));
@@ -94,12 +97,18 @@ console.log('\n── 3. 分组与默认值 ──');
 
 console.log('\n── 4. 桥接接线 ──');
 {
-  check('有 tool-flags 端点', /\/api\/socialV2\/tool-flags/.test(consoleServer));
-  check('端点用 groupedToolFlags 生成', /groupedToolFlags\(/.test(consoleServer));
+  check('有 tool-flags 端点', /\/api\/socialV2\/tool-flags/.test(consoleRoutes));
+  check('端点用 groupedToolFlags 生成', /groupedToolFlags\(/.test(consoleRoutes));
   check('保存时的白名单也从清单派生（不再手写）',
-    /TOOL_FLAGS\.filter\(\(x\) => x\.fixed !== true\)\.map\(\(x\) => x\.flag\)/.test(consoleServer));
+    /TOOL_FLAGS\.filter\(\(x\) => x\.fixed !== true\)\.map\(\(x\) => x\.flag\)/.test(consoleRoutes));
   check('不再有手写的 toolFlags 数组',
-    !/const toolFlags = \['getPrompt'/.test(consoleServer));
+    !/const toolFlags = \['getPrompt'/.test(consoleRoutes));
+  // P0 内容安全止血：开关必须真正控制 MCP 注册，且桥接路由在拉取前硬拦截。
+  check('fetchXPosts 开关真正控制 MCP 注册',
+    /if \(cfg\.socialV2\?\.tools\?\.fetchXPosts !== false\) \{\s*server\.tool\(\s*'qq_fetch_x_posts'/.test(mcp));
+  check('fetchXPosts 关闭时桥接路由拒绝拉取',
+    /!v2ToolEnabled\('fetchXPosts'\)/.test(consoleRoutes)
+      && /X 帖子转发已临时关闭/.test(consoleRoutes));
 }
 
 console.log('\n── 5. 控制台不再硬编码 ──');

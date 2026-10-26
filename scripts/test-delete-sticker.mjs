@@ -17,6 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -25,7 +26,7 @@ const root = path.dirname(fileURLToPath(import.meta.url)) + '/..';
 const src = fs.readFileSync(path.join(root, 'scripts/delete-sticker.mjs'), 'utf8');
 const mcpSrc = fs.readFileSync(path.join(root, 'src/mcp-snowluma-safe.js'), 'utf8');
 
-const consoleServerSrc = fs.readFileSync(path.join(root, 'src/console-server.js'), 'utf8');
+const consoleServerSrc = readConsoleSource();
 const roleSrc = fs.existsSync(path.join(root, 'roles/大肥鱼.md')) ? fs.readFileSync(path.join(root, 'roles/大肥鱼.md'), 'utf8') : '';
 
 console.log('── 1. 默认安全：dry-run + 显式 --apply ──');

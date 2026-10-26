@@ -17,6 +17,7 @@
 //   本测试锁住：语气分类、候选多样性、频率上限、提示措辞。
 import fs from 'node:fs';
 import path from 'node:path';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -25,7 +26,7 @@ const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:
 const pickSrc = fs.readFileSync(path.join(root, 'src', 'sticker-pick.js'), 'utf8');
 
 const wakeSrc = fs.readFileSync(path.join(root, 'src', 'pipeline', 'wake.js'), 'utf8');
-const consoleServerSrc = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+const consoleServerSrc = readConsoleSource();
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
 const { MOOD_RULES, moodOfSticker, moodOfText, pickStickerCandidates, buildStickerNudge } =

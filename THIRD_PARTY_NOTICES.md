@@ -9,6 +9,45 @@
 
 ---
 
+## 0. 上游项目归属（本仓库的来源）
+
+本仓库 **fork 自 [Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge)**
+（基于其 `0.1.2-alpha.1` 版本，2026-10-25 取得），此后进行了大规模重构
+（bridge 拆分、状态层统一、控制台路由分域等；规模与结构见 `docs/COMPLEXITY.md`）。
+
+上游以 MIT 许可发布。按 MIT 的要求，其**版权声明与许可正文原样保留**如下：
+
+```text
+MIT License
+
+Copyright (c) 2026 Derpyu520 and qq-bridge / QSH contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+> 上游的 `LICENSE` 文件在许可正文之外，还附有大段其自己的第三方合规说明
+> （SnowLuma 许可分析、数据出机清单、QSH 计划等）。那些内容**不是许可正文的组成部分**，
+> 属于上游项目的文档，本仓库不复制；本仓库对应的说明见本文件下文与 [README.md](README.md)。
+> 本项目自身的许可见 [LICENSE](LICENSE)（版权行为本 fork 的作者，MIT 正文与上游一致）。
+
+---
+
 ## 1. 依赖组件
 
 | 组件 | 许可 | 说明 |

@@ -1,7 +1,7 @@
 // 回归测试：角色卡正文必须进入**群聊唤醒提示**（不能只给一行"请调用 qq_get_prompt"）。
 //
 // 事故（2026-10-20 用户反馈「它极少回复表情包」）：
-//   角色卡写着「表情是你的主武器，能发就发…多数轮次都该带表情」，
+//   角色卡正文包含表情包使用方式，
 //   但 buildWakePromptV2() 只注入 `【当前角色】大肥鱼（完整角色卡请调用 qq_get_prompt 查看）`，
 //   指望模型自己去取全文。实测 30 天里：群聊唤醒 7605 次，qq_get_prompt 只被调用 26 次
 //   —— 99.7% 的回合模型根本没看过角色卡，人格只剩一个名字。
@@ -64,7 +64,7 @@ console.log('── 1. 唤醒提示注入角色卡正文（行为断言）──
 {
   const prompt = wake.buildWakePrompt('group:123', 'bootstrap');
   check('角色段包含角色名', prompt.includes('【当前角色】大肥鱼'));
-  check('角色卡正文进入唤醒提示（角色卡独有句子）', prompt.includes('表情是你的主武器'));
+  check('角色卡正文进入唤醒提示（角色卡独有句子）', prompt.includes('接得自然比接得多重要'));
   check('不再退回「完整角色卡请调用 qq_get_prompt 查看」',
     !prompt.includes('（完整角色卡请调用 qq_get_prompt 查看）'));
   check('bootstrap 引导仍要求先看 prompt / 设置唤醒',
@@ -76,7 +76,7 @@ console.log('── 1. 唤醒提示注入角色卡正文（行为断言）──
   check('记忆断层背景注入', prompt.includes('【运行状态·背景补充】') && prompt.includes('约 2 小时'));
   check('记录断层注入字数', deps.contextMetrics.get('group:123')?.lastGapChars > 0);
   const poke = wake.buildWakePrompt('group:123', 'pokeSelf');
-  check('pokeSelf 唤醒仍带角色卡', poke.includes('表情是你的主武器') && poke.includes('有人拍了你'));
+  check('pokeSelf 唤醒仍带角色卡', poke.includes('接得自然比接得多重要') && poke.includes('有人拍了你'));
 }
 
 console.log('\n── 2. bridge / pipeline 接线 ──');
@@ -87,13 +87,15 @@ console.log('\n── 2. bridge / pipeline 接线 ──');
   check('wake 模块仍保留通用 stickerLine 注入', /stickerLine/.test(wakeSrc));
 }
 
-console.log('\n── 3. 角色卡里的表情强命令确实存在（被注入才有意义）──');
+console.log('\n── 3. 角色卡的自然接梗与表情节奏 ──');
 {
-  check('角色卡有「表情是你的主武器」', roleText.includes('表情是你的主武器'));
-  check('角色卡要求「能发就发」', roleText.includes('能发就发'));
-  check('角色卡要求「多数轮次都该带表情」', roleText.includes('多数轮次都该带表情'));
-  check('该段落在注入上限（12000 字）以内',
-    roleText.indexOf('表情是你的主武器') < 12000 && roleText.indexOf('表情是你的主武器') > 0);
+  check('角色卡强调自然接梗优先于接话数量', roleText.includes('接得自然比接得多重要'));
+  check('角色卡优先回敬群友原词', roleText.includes('原词回敬最优先'));
+  check('角色卡包含隔几条消息回收的示例', roleText.includes('？你那个早睡呢'));
+  check('表情按语境使用且不设轮次指标', roleText.includes('表情按语境用，不设轮次指标'));
+  check('不再强制多数轮次带表情', !roleText.includes('多数轮次都该带表情'));
+  check('自然接梗段落在注入上限（12000 字）以内',
+    roleText.indexOf('接得自然比接得多重要') < 12000 && roleText.indexOf('接得自然比接得多重要') > 0);
 }
 
 console.log('\n── 4. 提示词体积仍在合理范围 ──');

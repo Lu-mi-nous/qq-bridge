@@ -189,7 +189,7 @@ async function authorizeRead(key, token) {
   await agentApi('/api/authorize/read', { method: 'POST', body: JSON.stringify({ key, token: token || undefined }) });
 }
 
-const server = new McpServer({ name: 'snowluma-safe', version: '0.4.0' });
+const server = new McpServer({ name: 'snowluma-safe', version: '0.4.1' });
 
 server.tool(
   'qq_status',
@@ -525,7 +525,7 @@ if (cfg.socialV2?.tools?.sendPoke !== false) {
     + '【targetUserId 怎么填】群聊必填，三种都行：\n'
     + '  - 数字 QQ 号（最准）；\n'
     + '  - `latest` —— **最近戳你的那个人**，桥接会自己解析（要回拍时优先用它，省得记号码）；\n'
-    + '  - 对方在本群的昵称（如 "群友A"）；桥接会在本会话消息里换算，同名多人时会拒绝并让你改用号码。\n'
+    + '  - 对方在本群的昵称（如 "群友C"）；桥接会在本会话消息里换算，同名多人时会拒绝并让你改用号码。\n'
     + '**绝对不要凭记忆填一个旧号**：填错就会拍到不相干的人身上（真实事故：反复拍同一个群友十几次）。\n'
     + '私聊可不传 targetUserId（默认拍当前私聊对象）。reserved2 下必须携带会话令牌 token，发送会受桥接白名单与发送频率限制。',
     {
@@ -2084,6 +2084,8 @@ if (cfg.socialV2?.tools?.getForwardMsg !== false) {
 
 // ── X（Twitter）帖子按需拉取 ──────────────────────────────────────────────
 // 群友点名要看某个 X 账号的帖子时调用：桥接现场抓取 → 渲染成卡片图 → 直接发到当前会话。
+// P0 安全止血：socialV2.tools.fetchXPosts=false 时**不注册**该工具，模型完全看不到。
+if (cfg.socialV2?.tools?.fetchXPosts !== false) {
 server.tool(
   'qq_fetch_x_posts',
   '拉取某个 X（Twitter）账号的帖子，渲染成卡片图发到当前会话；帖子里的**视频也会一并发出**（reserved2 专用）。\n\n'
@@ -2127,5 +2129,6 @@ server.tool(
     }
   }
 );
+}
 
 await server.connect(new StdioServerTransport());

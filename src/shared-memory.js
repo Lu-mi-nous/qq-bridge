@@ -13,9 +13,9 @@
 // 身份解析不能信模型给的 people[].id（实测有 "id": "𝐘𝐀𝐍𝐆" 这种名字），
 // 只接受 5~12 位纯数字 QQ 号；否则用本条 episode 的消息窗口按 sender→userId 反查，
 // 仍无法确定就跳过——宁可不共享，也不能把 A 的资料挂到 B 身上。
-import fs from 'node:fs';
 import path from 'node:path';
 import { SENSITIVE_RE } from './sensitive.js';
+import { createJsonStore } from './state/store.js';
 
 const FILE_NAME = 'shared-memory.json';
 const NUMERIC_ID_RE = /^\d{5,12}$/;
@@ -100,14 +100,12 @@ function cleanText(v, max) {
 
 export function loadSharedMemory(stateDir) {
   const out = emptySharedMemory();
-  let data;
-  try {
-    let text = fs.readFileSync(sharedMemoryFile(stateDir), 'utf8');
-    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-    data = JSON.parse(text);
-  } catch {
-    return out;
-  }
+  const store = createJsonStore({
+    file: sharedMemoryFile(stateDir),
+    version: 1,
+    defaults: emptySharedMemory
+  });
+  const data = store.read();
   if (!data || typeof data !== 'object') return out;
   out.updatedAt = Number(data.updatedAt) || 0;
   for (const [rawId, rawPerson] of Object.entries(data.people || {})) {
@@ -146,11 +144,11 @@ export function loadSharedMemory(stateDir) {
 }
 
 export function saveSharedMemory(stateDir, data) {
-  const file = sharedMemoryFile(stateDir);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-  fs.renameSync(tmp, file);
+  createJsonStore({
+    file: sharedMemoryFile(stateDir),
+    version: 1,
+    defaults: emptySharedMemory
+  }).write(data);
 }
 
 /** 从消息窗口反查昵称对应的唯一 QQ 号；多义或无匹配返回空串。 */

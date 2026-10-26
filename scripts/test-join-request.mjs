@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseJoinCommand, describeJoinRequest, createJoinQueue, DEFAULT_TTL_MS } from '../src/join-request.js';
 import { isAdminCommand } from '../src/admin-commands.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -67,8 +68,8 @@ console.log('── 1. 指令解析 ──');
 // ── 2. 描述文案 ──
 console.log('\n── 2. 描述文案 ──');
 {
-  const f = describeJoinRequest({ requestType: 'friend', userId: 123456, nickname: '群友V', comment: '我是老王' });
-  check('好友请求含昵称与号码', f.includes('群友V') && f.includes('123456'));
+  const f = describeJoinRequest({ requestType: 'friend', userId: 123456, nickname: '张三', comment: '我是老王' });
+  check('好友请求含昵称与号码', f.includes('张三') && f.includes('123456'));
   check('好友请求含验证消息', f.includes('我是老王'));
 
   const g = describeJoinRequest({ requestType: 'group', subType: 'invite', userId: 1, groupId: 999, groupName: '测试群' });
@@ -183,7 +184,7 @@ console.log('\n── 5. 桥接接线 ──');
 {
 
   const adminCommands = fs.readFileSync(path.join(root, 'src', 'admin-commands.js'), 'utf8');
-  const consoleServer = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+  const consoleServer = readConsoleSource();
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
   const consoleHtml = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 

@@ -6,8 +6,8 @@
 //
 // 注意：状态文件独立于 social-v2 / context 目录，reset/清空上下文不会把它一起删掉；
 // 它描述的是运行状态，不是群聊记忆。
-import fs from 'node:fs';
 import path from 'node:path';
+import { createJsonStore } from './state/store.js';
 
 export const DEFAULT_GAP_NOTICE = Object.freeze({
   enabled: false,
@@ -60,30 +60,29 @@ function humanGap(ms, longGapHours) {
 
 export function createSessionGap({ file, log = () => {}, maxKeys = 500, now = Date.now } = {}) {
   if (!file) throw new Error('createSessionGap 需要 file');
+  const store = createJsonStore({
+    file,
+    version: 1,
+    defaults: emptyState,
+    log: (msg) => log(`[断层提醒] ${msg}`)
+  });
   let state = emptyState();
   let loaded = false;
 
   function load() {
     if (loaded) return;
     loaded = true;
-    try {
-      let text = fs.readFileSync(file, 'utf8');
-      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-      const data = JSON.parse(text);
-      const sessions = data && typeof data.sessions === 'object' ? data.sessions : {};
-      for (const [key, value] of Object.entries(sessions)) {
-        if (!KEY_RE.test(key)) continue;
-        state.sessions[key] = normalizeEntry(value);
-      }
-    } catch { /* 首次启动/损坏按空处理 */ }
+    const data = store.read();
+    const sessions = data && typeof data.sessions === 'object' ? data.sessions : {};
+    for (const [key, value] of Object.entries(sessions)) {
+      if (!KEY_RE.test(key)) continue;
+      state.sessions[key] = normalizeEntry(value);
+    }
   }
 
   function save() {
     try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      const tmp = `${file}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-      fs.renameSync(tmp, file);
+      store.write(state);
     } catch (error) {
       log(`[断层提醒] 状态写入失败：${error?.message ?? error}`);
     }

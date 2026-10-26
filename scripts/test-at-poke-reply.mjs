@@ -25,6 +25,7 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const src = fs.readFileSync(path.join(root, 'src/bridge.js'), 'utf8');
+const socialSrc = fs.readFileSync(path.join(root, 'src/social-service.js'), 'utf8');
 const wakeSrc = fs.readFileSync(path.join(root, 'src/pipeline/wake.js'), 'utf8');
 
 console.log('── 1. 拍一拍区分「拍你」和「拍别人」──');
@@ -99,7 +100,7 @@ console.log('\n── 3b. 「谁拍了你」必须出现在此刻状态里 ─�
 console.log('\n── 4. @ 本身的唤醒链路仍然完整 ──');{
   check('atMention 判定仍在', /if \(tr\.atMention\) \{[\s\S]{0,220}?return 'atMention'/.test(src));
   check('@ 的优先级最高（仅次于私聊）', WAKE_PRIORITY.atMention === 90);
-  check('高优先级会缩短合并窗口等待', /高优先级，已缩短等待/.test(src));
+  check('高优先级会缩短合并窗口等待', /高优先级，已缩短等待/.test(socialSrc));
   const events = createEventHarness({ mode: 'reserved2' });
   const pendingState = events.deps.getSocialV2State('group:1');
   pendingState.pendingWakeReasons = [{ reason: 'poke', seq: 1 }, { reason: 'atMention', seq: 2 }];

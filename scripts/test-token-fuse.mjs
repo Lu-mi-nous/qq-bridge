@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createQQSender } from '../src/pipeline/qq-send.js';
 import {
   DEFAULT_TOKEN_FUSE,
   normalizeTokenFuseConfig,
@@ -13,6 +14,7 @@ import {
   loadTokenFuseState,
   tokenFuseFile
 } from '../src/token-fuse.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -168,16 +170,41 @@ console.log('\n── 5. key 解析与排序 ──');
   check('status 按总量降序', st.keys[0].totalInput === 30);
 }
 
+console.log('\n── 5b. 发送工厂的熔断短路 ──');
+{
+  const sender = createQQSender({ isFused: () => true, log: () => {} });
+  let msgErr = '';
+  try { sender.sendMessagesV2('group:1001', ['x'], [], null, null, {}); } catch (e) { msgErr = e?.message || ''; }
+  check('sendMessagesV2 在熔断时直接拒绝', /Token 熔断/.test(msgErr));
+  let stickerErr = '';
+  try { await sender.sendStickerV2('group:1001', 'x', {}); } catch (e) { stickerErr = e?.message || ''; }
+  check('sendStickerV2 在熔断时直接拒绝', /Token 熔断/.test(stickerErr));
+  let burstErr = '';
+  try { sender.sendBurstToQQ('group:1001', ['x'], {}); } catch (e) { burstErr = e?.message || ''; }
+  check('sendBurstToQQ 在熔断时直接拒绝', /Token 熔断/.test(burstErr));
+}
+
 console.log('\n── 6. 接线闸门 ──');
 {
   const bridge = fs.readFileSync(new URL('../src/bridge.js', import.meta.url), 'utf8');
+  const socialService = fs.readFileSync(new URL('../src/social-service.js', import.meta.url), 'utf8');
+  const errorService = fs.readFileSync(new URL('../src/error-service.js', import.meta.url), 'utf8');
   const events = fs.readFileSync(new URL('../src/pipeline/dsh-events.js', import.meta.url), 'utf8');
   const bili = fs.readFileSync(new URL('../src/pipeline/bili-runtime.js', import.meta.url), 'utf8');
+  const qqSend = fs.readFileSync(new URL('../src/pipeline/qq-send.js', import.meta.url), 'utf8');
+  const consoleServer = readConsoleSource();
   check('assistant/message 的 usage 进入计数器',
     /'assistant\/message', handleAssistantMessage/.test(events) && /recordTokenUsage/.test(events));
-  check('计划唤醒有熔断闸门', /function scheduleWakeV2[\s\S]{0,800}tokenFuse\.isFused\(key\)/.test(bridge));
+  check('计划唤醒有熔断闸门', /function scheduleWake\(key, reason\)[\s\S]{0,800}isFused\(key\)/.test(socialService));
   check('发送唤醒有熔断闸门且手动放行', /!opts\.manual && tokenFuse\.isFused\(key\)/.test(bridge));
   check('B 站自主刷有熔断闸门', /isTokenFused/.test(bili) && /token-fused/.test(bili));
+  check('发送主通道在熔断后拒绝自动发送并允许手动放行',
+    /isFused\?\.\(key\) && options\.manual !== true/.test(qqSend));
+  check('表情/拍一拍/语音/图片路由也拒绝熔断会话',
+    /isTokenFused\?\.\(key\)/.test(consoleServer)
+    && /isTokenFused\?\.\(key\)/.test(consoleServer));
+  check('通知标题区分 Token 超限，不用桥接报错', /Token 超限熔断/.test(errorService) && /Token 用量提醒/.test(errorService) && /Token\s*超限熔断/.test(errorService));
+  check('Token 通知带会话名称', /sessionName/.test(errorService) && /contextDisplayName\(key\)/.test(errorService));
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

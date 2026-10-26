@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseGitHubUrl, extractGitHubUrl } from '../src/github-shot.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -24,13 +25,13 @@ const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:
 console.log('── 1. 链接解析 ──');
 {
   const ok = [
-    ['https://github.com/example-org/qq-bridge', 'https://github.com/example-org/qq-bridge', '完整链接'],
+    ['https://github.com/Lu-mi-nous/qq-bridge', 'https://github.com/Lu-mi-nous/qq-bridge', '完整链接'],
     ['http://github.com/owner/repo', 'https://github.com/owner/repo', 'http 也认'],
     ['github.com/owner/repo', 'https://github.com/owner/repo', '无协议'],
     ['www.github.com/owner/repo', 'https://github.com/owner/repo', 'www 前缀'],
     ['owner/repo', 'https://github.com/owner/repo', 'owner/repo 简写'],
     ['owner/repo.git', 'https://github.com/owner/repo', 'git 后缀去掉'],
-    ['https://github.com/example-org/qq-bridge/', 'https://github.com/example-org/qq-bridge', '尾斜杠'],
+    ['https://github.com/Lu-mi-nous/qq-bridge/', 'https://github.com/Lu-mi-nous/qq-bridge', '尾斜杠'],
     ['https://github.com/owner/repo/issues/12', 'https://github.com/owner/repo', 'issues 归到首页'],
     ['https://github.com/owner/repo/tree/main/src', 'https://github.com/owner/repo', 'tree 归到首页'],
     ['https://github.com/owner/repo/blob/main/a.js', 'https://github.com/owner/repo', 'blob 归到首页'],
@@ -69,7 +70,7 @@ console.log('── 1. 链接解析 ──');
 // ── 2. 桥接接线 ──
 console.log('\n── 2. 桥接接线 ──');
 {
-  const bridge = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+  const bridge = readConsoleSource();
   const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
   const preset = fs.readFileSync(path.join(root, 'dsh', 'agent-presets', 'qq-chat-v2', 'agent.cordis.yml'), 'utf8');
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
@@ -124,7 +125,7 @@ console.log('\n── 3. 真实截图 ──');
     else if (!proxy) { skipped('真实截图', '未配置代理，GitHub 在本机直连不通'); }
     else {
       const { screenshotGitHubRepo } = await import('../src/github-shot.js');
-      const shot = await screenshotGitHubRepo('https://github.com/example-org/qq-bridge', {
+      const shot = await screenshotGitHubRepo('https://github.com/Lu-mi-nous/qq-bridge', {
         proxy, width: 1400, sliceHeight: 2400, maxHeight: 12000, waitMs: 2500, timeoutMs: 120000
       });
       check('截图成功', shot.buffer.length > 0, `${Math.round(shot.buffer.length / 1024)}KB`);

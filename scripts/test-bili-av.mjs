@@ -20,6 +20,7 @@
 //   ④ 控制台能显示能力状态与降级原因
 import fs from 'node:fs';
 import path from 'node:path';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -30,7 +31,7 @@ const asrSrc = fs.readFileSync(path.join(root, 'src', 'asr.js'), 'utf8');
 const biliSrc = fs.readFileSync(path.join(root, 'src', 'bili.js'), 'utf8');
 const browseSrc = fs.readFileSync(path.join(root, 'src', 'bili-browse.js'), 'utf8');
 const bridgeSrc = fs.readFileSync(path.join(root, 'src', 'pipeline/bili-runtime.js'), 'utf8');
-const consoleServerSrc = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+const consoleServerSrc = readConsoleSource();
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 const pySrc = fs.readFileSync(path.join(root, 'scripts', 'asr-server.py'), 'utf8');
 

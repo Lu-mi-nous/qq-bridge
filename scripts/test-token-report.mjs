@@ -16,6 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { buildTokenReport, prettyModelName, humanAge, summarizeTokenReport } from '../src/token-report.js';
 import { buildTokenReportHtml, escapeHtml } from '../src/token-report-html.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -209,7 +210,7 @@ console.log('\n── 5. 渲染 ──');
 // ── 6. 接线 ──
 console.log('\n── 6. 接线 ──');
 {
-  const bridge = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+  const bridge = readConsoleSource();
 
   const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
   const preset = fs.readFileSync(path.join(root, 'dsh', 'agent-presets', 'qq-chat-v2', 'agent.cordis.yml'), 'utf8');

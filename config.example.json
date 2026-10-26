@@ -7,16 +7,16 @@
   },
   "snowluma": {
     "wsUrl": "ws://127.0.0.1:3001",
-    "httpUrl": "http://127.0.0.1:3000",
     "accessToken": "",
-    "launcherPath": "C:\\path\\to\\SnowLuma\\launcher.bat",
-    "homeDir": "C:\\path\\to\\SnowLuma",
+    "httpUrl": "http://127.0.0.1:3000",
+    "launcherPath": "",
+    "homeDir": "",
     "allowProcessControl": false
   },
-  "ownerQQ": 123456789,
   "sessionCwd": "",
   "agentPreset": "qq-chat",
   "workspaceTitle": "QQ 聊天",
+  "ownerQQ": 123456789,
   "allow": {
     "private": [
       123456789
@@ -31,13 +31,18 @@
     "groups": []
   },
   "allowAllWhenEmpty": false,
-  "ackMessage": "",
+  "ackMessage": "🤔 收到，正在思考…",
   "sendDelayMs": 300,
   "questionTimeoutMs": 300000,
   "consolePort": 3100,
+  "consoleAuth": true,
   "consoleToken": "",
   "security": {
     "interceptNotify": true
+  },
+  "errorNotify": {
+    "notifyOwner": true,
+    "windowMs": 180000
   },
   "slang": {
     "enabled": true,
@@ -54,6 +59,26 @@
     "autoResearch": true
   },
   "social": {
+    "enabled": true,
+    "triggerProbability": 0.1,
+    "contextWindow": 20,
+    "activeCheckMinMs": 10000,
+    "activeCheckMaxMs": 30000,
+    "activeReplyDelayMinMs": 2000,
+    "activeReplyDelayMaxMs": 8000,
+    "activeDurationEnabled": true,
+    "activeDurationMinMs": 900000,
+    "activeDurationMaxMs": 1800000,
+    "idleWindowMs": 360000,
+    "idleRetryProbability": 0.25,
+    "idleRetryWaitMs": 120000,
+    "proactiveEnabled": true,
+    "proactiveIdleThresholdMs": 1800000,
+    "proactiveCheckMinMs": 2700000,
+    "proactiveCheckMaxMs": 5400000,
+    "proactiveProbability": 0.2,
+    "skipProbability": 0.15,
+    "surrenderProbability": 0,
     "maxReplyChars": 500,
     "mustReplyKeywords": [
       "deepseek",
@@ -63,31 +88,12 @@
       "d指导",
       "在吗"
     ],
-    "contextWindow": 20,
-    "triggerProbability": 0.1,
-    "activeCheckMinMs": 8000,
-    "activeCheckMaxMs": 30000,
-    "idleWindowMs": 360000,
-    "idleRetryProbability": 0.4,
-    "proactiveEnabled": true,
-    "proactiveIdleThresholdMs": 1800000,
-    "proactiveCheckMinMs": 2700000,
-    "proactiveCheckMaxMs": 5400000,
-    "proactiveProbability": 0.2,
-    "activeReplyDelayMinMs": 1000,
-    "activeReplyDelayMaxMs": 5000,
-    "activeDurationEnabled": true,
-    "activeDurationMinMs": 1200000,
-    "activeDurationMaxMs": 3000000,
-    "skipProbability": 0.05,
-    "surrenderProbability": 0,
-    "idleRetryWaitMs": 120000,
     "burstEnabled": true,
     "burstIntervalMinMs": 1000,
     "burstIntervalMaxMs": 3000,
-    "longGapProbability": 0.2,
-    "longGapMinMs": 5000,
-    "longGapMaxMs": 10000
+    "longGapProbability": 0.1,
+    "longGapMinMs": 2500,
+    "longGapMaxMs": 5000
   },
   "socialV2": {
     "enabled": true,
@@ -117,6 +123,9 @@
       "getImages": true,
       "getForwardMsg": true,
       "sendPoke": true,
+      "sendImage": true,
+      "checkImage": true,
+      "refreshImageLib": true,
       "listStickers": true,
       "getStickerImage": true,
       "sendSticker": true,
@@ -125,22 +134,19 @@
       "collectSticker": true,
       "getSelfImage": true,
       "getFeatureMenu": true,
-      "sendVoice": true,
+      "reverseSearch": true,
       "tokenReport": true,
-      "crawl": true,
-      "refreshImageLib": true,
-      "fetchXPosts": true,
-      "sendImage": true,
+      "sendVoice": true,
       "deleteSticker": false,
+      "groupFiles": true,
       "githubShot": true,
+      "crawl": true,
+      "fetchXPosts": true,
       "reactMessage": true,
-      "checkImage": true,
       "rejectImage": true,
       "archiveImage": true,
       "imageSource": true,
-      "reverseSearch": true,
       "upscaleImage": true,
-      "groupFiles": true,
       "sendFeatureMenu": true,
       "watchBili": true,
       "biliRecord": true,
@@ -152,24 +158,10 @@
       "qq_get_group_history": true,
       "recallMemory": true
     },
-    "githubShot": {
-      "enabled": true,
-      "sliceHeight": 2400,
-      "maxHeight": 12000,
-      "waitMs": 3500,
-      "timeoutMs": 90000,
-      "proxy": ""
-    },
-    "joinRequest": {
-      "enabled": true,
-      "autoApprove": false,
-      "ttlMs": 300000
-    },
     "wake": {
       "defaultMode": "diving",
       "preSleepWaitEnabled": true,
       "preSleepWaitMs": 300000,
-      "preSleepReplyGraceMs": 30000,
       "recommendedDefaultInfinite": true,
       "sleepMinMs": 60000,
       "sleepMaxMs": 0,
@@ -203,7 +195,8 @@
       "maxWakePerMinute": 1,
       "maxWakePerHour": 12,
       "noActionLimit": 3,
-      "maxWakeConfigReminders": 2
+      "maxWakeConfigReminders": 2,
+      "preSleepReplyGraceMs": 30000
     },
     "send": {
       "burstEnabled": true,
@@ -219,13 +212,17 @@
       "maxGapMs": 10000,
       "gapBaseMs": 800,
       "gapPerCharMs": 20,
-      "recommendedHint": "单条消息不要用空格断句，中文短句用逗号/顿号或直接连写；分条时每条都要读起来完整，不要把同一句话拆到两条里；普通闲聊建议一次 1~3 条，条间 1~3 秒；讲故事/回忆可以 5~10 秒间隔；不要连续刷屏。",
+      "recommendedHint": "普通闲聊建议一次 1~3 条，条间 1~3 秒；讲故事/回忆可以 5~10 秒间隔；不要连续刷屏。",
       "autoAt": {
         "enabled": true,
         "probability": 0.3,
         "windowMs": 600000,
         "cooldownMs": 300000,
-        "maxPerHour": 10
+        "maxPerHour": 10,
+        "staleAfterMs": 3600000,
+        "minOverlap": 0.12,
+        "backwardMinGrams": 8,
+        "addressedTtlMs": 120000
       }
     },
     "wait": {
@@ -244,6 +241,11 @@
       "maxListCount": 100,
       "includeInPrompt": true,
       "promptMaxStickers": 8,
+      "autoNudge": true,
+      "autoNudgeProbability": 0.33,
+      "autoNudgeMinGapMs": 180000,
+      "autoNudgeMaxPerHour": 6,
+      "autoNudgeCandidates": 3,
       "collect": {
         "enabled": true,
         "maxPerMinute": 2,
@@ -251,47 +253,61 @@
         "maxRemarkChars": 20,
         "maxUploadBytes": 4194304
       },
-      "autoNudge": true,
-      "autoNudgeProbability": 0.33,
-      "autoNudgeMinGapMs": 180000,
-      "autoNudgeMaxPerHour": 6,
-      "autoNudgeCandidates": 3,
       "readLocalCache": true
     },
-    "images": {
+    "crawl": {
       "enabled": true,
-      "maxFiles": 300,
-      "maxBytesPerFile": 8388608,
-      "fetchPerRun": 20,
-      "cooldownMs": 1800000,
-      "sendCooldownMs": 5000,
-      "maxSendPerHour": 60,
-      "recentSendBlockMs": 600000,
-      "annotateSource": true,
-      "sources": {
-        "safebooru": {
-          "enabled": true,
-          "tags": [],
-          "limit": 20
-        },
-        "pixiv": {
-          "enabled": true,
-          "limit": 20,
-          "proxy": ""
-        },
-        "yandere": {
-          "enabled": true,
-          "limit": 20,
-          "proxy": ""
-        }
-      },
-      "maxTotalBytes": 268435456,
-      "proxy": "",
-      "sentTtlMs": 600000,
-      "sentSweepMs": 60000
+      "maxPerHour": 10,
+      "maxImages": 10,
+      "maxStickersPerCall": 3,
+      "stickerMaxPerDay": 20,
+      "maxBytes": 5242880,
+      "timeoutMs": 30000
     },
-    "media": {
-      "maxMessageBytes": 8388608
+    "proactive": {
+      "enabled": true,
+      "checkIntervalMinMs": 1800000,
+      "checkIntervalMaxMs": 5400000,
+      "idleThresholdMs": 900000,
+      "probability": 0.3
+    },
+    "feedback": {
+      "maxLength": 500,
+      "notifyOwnerOnError": false
+    },
+    "context": {
+      "recentLimit": 100,
+      "unreadLimit": 30,
+      "contextWindow": 20
+    },
+    "contextMemory": {
+      "enabled": true,
+      "episodeEveryMessages": 40,
+      "episodeIdleMs": 1200000,
+      "episodeIdleMinMessages": 15,
+      "episodeInputLimit": 60,
+      "episodeKeep": 300,
+      "compactionKeep": 20,
+      "journalKeep": 3000,
+      "journalCompactBytes": 2097152,
+      "longTermKeepPeople": 30,
+      "longTermKeepFacts": 80,
+      "longTermKeepThreads": 40,
+      "sweepMaxPerRun": 6,
+      "sweepChunksPerKey": 2,
+      "sweepMaxEpisodesPerRun": 12,
+      "sweepActiveWithinMs": 604800000,
+      "memoryPackChars": 1500,
+      "promptBudgetChars": 20000,
+      "promptMaxChars": 6000,
+      "backlogWarnMessages": 200,
+      "backlogCriticalMessages": 800,
+      "backlogHistoryKeep": 288,
+      "recallAuditKeep": 200,
+      "gatewayUrl": "http://127.0.0.1:7863/v1",
+      "model": "cn:deepseek-v4.1-flash",
+      "apiKey": "",
+      "timeoutMs": 60000
     },
     "comply": {
       "enabled": true,
@@ -300,16 +316,173 @@
       "cooldownMs": 20000,
       "maxPerHour": 12
     },
-    "emojiReact": {
-      "enabled": true,
-      "cooldownMs": 60000,
-      "maxPerHour": 15
-    },
     "gifFrames": {
       "enabled": true,
       "maxFrames": 20,
       "tileWidth": 320,
       "timeoutMs": 15000
+    },
+    "media": {
+      "maxMessageBytes": 8388608
+    },
+    "images": {
+      "enabled": true,
+      "libDir": "",
+      "maxFiles": 300,
+      "maxTotalBytes": 268435456,
+      "maxBytesPerFile": 8388608,
+      "fetchPerRun": 20,
+      "ondemandFetchCount": 4,
+      "cooldownMs": 1800000,
+      "sendCooldownMs": 20000,
+      "maxSendPerHour": 10,
+      "annotateSource": true,
+      "sentTtlMs": 600000,
+      "sentSweepMs": 60000,
+      "feedbackSwap": true,
+      "feedbackWindowMs": 120000,
+      "feedbackCooldownMs": 90000,
+      "archiveDir": "",
+      "archiveOverwrite": false,
+      "sources": {
+        "safebooru": {
+          "enabled": true,
+          "tags": [],
+          "limit": 20
+        },
+        "pixiv": {
+          "enabled": false,
+          "limit": 20,
+          "authFile": "state/pixiv-auth.json",
+          "proxy": ""
+        },
+        "yandere": {
+          "enabled": false,
+          "limit": 20,
+          "proxy": ""
+        }
+      },
+      "recentSendBlockMs": 600000,
+      "proxy": ""
+    },
+    "githubShot": {
+      "enabled": true,
+      "sliceHeight": 2400,
+      "maxHeight": 12000,
+      "waitMs": 3500,
+      "timeoutMs": 90000,
+      "proxy": ""
+    },
+    "joinRequest": {
+      "enabled": true,
+      "autoApprove": false,
+      "ttlMs": 300000,
+      "notifyChannel": "private"
+    },
+    "whitelistNotice": {
+      "enabled": true,
+      "cooldownMs": 600000,
+      "messages": []
+    },
+    "emojiReact": {
+      "enabled": true,
+      "cooldownMs": 60000,
+      "maxPerHour": 15,
+      "emojis": [
+        {
+          "id": "76",
+          "name": "赞",
+          "use": "同意、支持"
+        },
+        {
+          "id": "124",
+          "name": "OK",
+          "use": "收到、没问题、认可"
+        },
+        {
+          "id": "201",
+          "name": "点赞",
+          "use": "比\"赞\"更活泼的赞同"
+        },
+        {
+          "id": "364",
+          "name": "超级赞",
+          "use": "非常赞同"
+        },
+        {
+          "id": "20",
+          "name": "偷笑",
+          "use": "好笑但不想打字"
+        },
+        {
+          "id": "13",
+          "name": "呲牙",
+          "use": "开心、乐"
+        },
+        {
+          "id": "5",
+          "name": "流泪",
+          "use": "笑到流泪 / 也被用来说\"感动\""
+        },
+        {
+          "id": "12",
+          "name": "调皮",
+          "use": "开玩笑、逗"
+        },
+        {
+          "id": "16",
+          "name": "酷",
+          "use": "帅气、厉害"
+        },
+        {
+          "id": "21",
+          "name": "可爱",
+          "use": "萌、可爱"
+        },
+        {
+          "id": "66",
+          "name": "爱心",
+          "use": "喜欢、比心"
+        },
+        {
+          "id": "63",
+          "name": "玫瑰",
+          "use": "送花、感谢"
+        },
+        {
+          "id": "99",
+          "name": "鼓掌",
+          "use": "叫好、祝贺"
+        },
+        {
+          "id": "79",
+          "name": "胜利",
+          "use": "成功、赢了"
+        },
+        {
+          "id": "0",
+          "name": "惊讶",
+          "use": "没想到"
+        },
+        {
+          "id": "3",
+          "name": "发呆",
+          "use": "懵、无语但不冒犯"
+        }
+      ]
+    },
+    "errorNotice": {
+      "enabled": true,
+      "windowMs": 180000,
+      "notifyOwner": true,
+      "inGroup": false,
+      "messages": [
+        "诶，我这边好像没额度了……让管理员看看？",
+        "呀，卡住了，好像是没额度了呢",
+        "呜，我这会儿转不动了，管理员救一下",
+        "诶诶，我掉线了…应该又没额度了吧",
+        "本鱼没电了，管理员你在吗"
+      ]
     },
     "upscale": {
       "enabled": true,
@@ -389,49 +562,6 @@
       },
       "authFile": "state/bili-auth.json"
     },
-    "proactive": {
-      "enabled": true,
-      "checkIntervalMinMs": 1800000,
-      "checkIntervalMaxMs": 5400000,
-      "idleThresholdMs": 900000,
-      "probability": 0.3
-    },
-    "feedback": {
-      "maxLength": 500,
-      "notifyOwnerOnError": false
-    },
-    "context": {
-      "recentLimit": 100,
-      "unreadLimit": 30,
-      "contextWindow": 20
-    },
-    "contextMemory": {
-      "enabled": true,
-      "episodeEveryMessages": 40,
-      "episodeIdleMs": 1200000,
-      "episodeIdleMinMessages": 15,
-      "episodeInputLimit": 60,
-      "episodeKeep": 300,
-      "compactionKeep": 20,
-      "journalKeep": 3000,
-      "journalCompactBytes": 2097152,
-      "longTermKeepPeople": 30,
-      "longTermKeepFacts": 80,
-      "longTermKeepThreads": 40,
-      "sweepMaxPerRun": 6,
-      "sweepActiveWithinMs": 604800000,
-      "memoryPackChars": 1500,
-      "gatewayUrl": "http://127.0.0.1:7863/v1",
-      "model": "cn:deepseek-v4.1-flash",
-      "apiKey": "",
-      "timeoutMs": 60000
-    },
-    "errorNotice": {
-      "enabled": true,
-      "notifyOwner": true,
-      "inGroup": false,
-      "windowMs": 180000
-    },
     "tts": {
       "enabled": false,
       "dir": "",
@@ -456,11 +586,6 @@
       "textSplitMethod": "cut5",
       "volumeGainDb": 0,
       "punctuate": true
-    },
-    "whitelistNotice": {
-      "enabled": true,
-      "cooldownMs": 600000,
-      "messages": []
     },
     "sharedMemory": {
       "enabled": true,
@@ -489,6 +614,14 @@
       "longGapHours": 6
     }
   },
+  "imageReverseSearch": {
+    "enabled": true,
+    "apiKey": "",
+    "db": 999,
+    "minsim": 50,
+    "numres": 5,
+    "proxy": ""
+  },
   "webSearch": {
     "enabled": true,
     "engines": [
@@ -511,7 +644,7 @@
     "maxCount": 5,
     "scanLimit": 12,
     "includeMedia": true,
-    "mediaDir": "state/x-monitor-media",
+    "mediaDir": "",
     "mediaTtlMs": 7200000,
     "mediaSweepMs": 300000,
     "mediaMaxBytes": 209715200,
@@ -519,18 +652,5 @@
     "ownOnly": true,
     "includeVideo": true,
     "maxVideoBytes": 104857600
-  },
-  "errorNotify": {
-    "notifyOwner": true,
-    "windowMs": 180000
-  },
-  "imageReverseSearch": {
-    "enabled": true,
-    "apiKey": "",
-    "db": 999,
-    "minsim": 50,
-    "numres": 5,
-    "proxy": ""
-  },
-  "consoleAuth": true
+  }
 }

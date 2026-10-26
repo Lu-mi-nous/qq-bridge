@@ -6,12 +6,16 @@ import {
   AGENT_ALLOWED_PATHS,
   buildSessionUsageRows,
   createConsoleServer,
+  parseChangelogMarkdown,
+  sanitizeDevLogText,
   isAgentRouteAllowed
 } from '../src/console-server.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
 const server = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+// R4：概览类路由迁到分域模块，路由总数要两处一起算。
+const overviewRoutes = fs.readFileSync(path.join(root, 'src', 'console', 'routes', '00-overview.js'), 'utf8');
 const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
 let pass = 0;
 let fail = 0;
@@ -24,21 +28,56 @@ const check = (name, condition, detail = '') => {
 check('导出 createConsoleServer', typeof createConsoleServer === 'function');
 check('bridge 已接回 createConsoleServer', /createConsoleServer\(\{/.test(bridge));
 check('bridge 不再保留内联 pathname 路由', !/url\.pathname ===/.test(bridge));
-check('权限集中后保留 153 个直接路由比较',
-  (server.match(/url\.pathname ===/g) || []).length === 153,
-  String((server.match(/url\.pathname ===/g) || []).length));
+// R4：路由按域拆到 src/console/routes/*.js。端点总数 = 内联（`/` 页面 + 401 提示）
+// + 概览模块 + 各分域模块声明的 routes 清单。
+const domainRouteFiles = fs.readdirSync(path.join(root, 'src', 'console', 'routes'))
+  .filter((f) => f.endsWith('.js') && f !== '00-overview.js');
+const domainRoutesSrc = domainRouteFiles
+  .map((f) => fs.readFileSync(path.join(root, 'src', 'console', 'routes', f), 'utf8'))
+  .join('\n');
+const domainRouteCount = domainRouteFiles.reduce((n, f) => {
+  const src = fs.readFileSync(path.join(root, 'src', 'console', 'routes', f), 'utf8');
+  return n + (src.match(/^  \['(?:GET|POST|PUT|DELETE|PATCH)', '[^']+', '(?:exact|prefix)'\]/gm) || []).length;
+}, 0);
+const inlineRouteCount = (server.match(/url\.pathname ===/g) || []).length;
+const overviewRouteCount = (overviewRoutes.match(/router\.(?:get|post|put|del)\(/g) || []).length;
+check('路由总数与拆分前一致（155 个端点，含动态前缀）',
+  inlineRouteCount + overviewRouteCount + domainRouteCount === 155,
+  `${inlineRouteCount}+${overviewRouteCount}+${domainRouteCount}`);
+check('有插件清单接口', /'\/api\/plugins'/.test(overviewRoutes) && /deps\.pluginHost\?\.list/.test(overviewRoutes));
+check('有任务清单/控制接口', /'\/api\/tasks'/.test(overviewRoutes)
+  && /deps\.taskService\?\.list/.test(overviewRoutes) && /pause\|resume\|trigger\|start\|stop/.test(overviewRoutes));
 check('动态模式经 live 读取', server.includes('deps.live.currentMode'));
 check('会话代际只经命令递增',
-  (server.match(/deps\.ops\.bumpSessionEpoch\(\)/g) || []).length === 4
-  && !/sessionEpoch\+\+/.test(server));
+  (`${server}\n${domainRoutesSrc}`.match(/deps\.ops\.bumpSessionEpoch\(\)/g) || []).length === 4
+  && !/sessionEpoch\+\+/.test(`${server}\n${domainRoutesSrc}`));
 check('默认 1MB 请求体上限保留', /: 1_000_000;/.test(server));
 check('超分路由保留 8MB 上限', /Math\.min\(8_000_000/.test(server));
-check('上下文追赶端点存在', /context-catchup/.test(server));
-check('上下文重建索引端点存在', /context-rebuild-index/.test(server));
-check('跨会话记忆端点存在', /shared-memory/.test(server) && /shared-memory-config/.test(server)
-  && /shared-memory-forget/.test(server) && /shared-memory-clear/.test(server));
-check('Token 熔断端点存在', /token-fuse/.test(server) && /token-fuse-config/.test(server)
-  && /token-fuse-reset/.test(server) && /token-fuse-override/.test(server));
+check('上下文追赶端点存在', /context-catchup/.test(domainRoutesSrc));
+check('上下文重建索引端点存在', /context-rebuild-index/.test(domainRoutesSrc));
+check('开发日志端点存在', /'\/api\/dev-log'/.test(domainRoutesSrc));
+check('开发日志解析：标题/正文/续行', (() => {
+  const parsed = parseChangelogMarkdown('## 更新日志\n\n### 未发布\n\n- **标题A**：正文A\n  续行A\n- **标题B**\n\n## 合规提醒\n');
+  return parsed.sections.length === 1 && parsed.sections[0].title === '未发布'
+    && parsed.sections[0].entries.length === 2
+    && parsed.sections[0].entries[0].title === '标题A'
+    && parsed.sections[0].entries[0].body.includes('续行A')
+    && parsed.sections[0].entries[1].title === '标题B';
+})());
+check('开发日志展示脱敏/开发者措辞', (() => {
+  const out = sanitizeDevLogText('（2026-10-25 用户要求）测试群 group:100002005 QQ 100002000 100002005 E:/Downloads/x 用户反馈 用户要求', {
+    names: [{ name: '测试群', replacement: '某群' }],
+    ids: ['100002005', '100002000']
+  });
+  return !out.includes('用户要求') && !out.includes('用户反馈')
+    && !out.includes('100002005') && !out.includes('100002000')
+    && !out.includes('E:/Downloads') && out.includes('某群') && out.includes('2026-10-25');
+})());
+
+check('跨会话记忆端点存在', /shared-memory/.test(domainRoutesSrc) && /shared-memory-config/.test(domainRoutesSrc)
+  && /shared-memory-forget/.test(domainRoutesSrc) && /shared-memory-clear/.test(domainRoutesSrc));
+check('Token 熔断端点存在', /token-fuse/.test(domainRoutesSrc) && /token-fuse-config/.test(domainRoutesSrc)
+  && /token-fuse-reset/.test(domainRoutesSrc) && /token-fuse-override/.test(domainRoutesSrc));
 
 const mcpPaths = [...mcp.matchAll(/agentApi\(\s*(['"`])([^'"`]+)\1/g)]
   .map((match) => match[2].split('?')[0]);
@@ -57,7 +96,8 @@ check('凭据、活动、配置默认拒绝 Agent', [
   '/api/socialV2/token-fuse',
   '/api/socialV2/token-fuse-config',
   '/api/socialV2/token-fuse-reset',
-  '/api/socialV2/token-fuse-override'
+  '/api/socialV2/token-fuse-override',
+  '/api/dev-log'
 ].every((pathname) => !isAgentRouteAllowed(pathname)));
 check('反馈仅 POST 对 Agent 开放',
   isAgentRouteAllowed('/api/socialV2/feedback', 'POST')
@@ -137,6 +177,33 @@ console.log('\n── 会话级 Token 报表合成 ──');
     && dayRow?.summarizer?.input === 10, JSON.stringify(dayRow?.summarizer));
   check('按日不影响 24 卡用的 today 口径', dayRow?.today?.totalInput === 1370,
     String(dayRow?.today?.totalInput));
+}
+
+// R4-5：插件控制台插槽（卡片 + 子路由）。
+{
+  const contextSrc = fs.readFileSync(path.join(root, 'src', 'plugins', 'context.js'), 'utf8');
+  const hostSrc = fs.readFileSync(path.join(root, 'src', 'plugins', 'host.js'), 'utf8');
+  const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+  check('插件可注册控制台卡片', /registerCard\(/.test(contextSrc) && /cards: \[\]/.test(contextSrc));
+  check('插件路由必须声明 console:route 且挂在自己命名空间下',
+    /console:route/.test(contextSrc) && /\/api\/plugins\/\$\{id\}\//.test(contextSrc));
+  check('插件路由由核心统一转发', /getContext\?\.\(plugin\.id\)/.test(server)
+    && /console\?\.routes/.test(server));
+  check('插件清单暴露 console 元数据', /console: \{/.test(hostSrc) && /cards:/.test(hostSrc));
+  check('控制台有插件卡片插槽', /id="pluginCardSlot"/.test(html) && /renderPluginCards/.test(html));
+}
+
+// R4：复合条件与动态路径路由必须显式登记，否则模块根本收不到请求。
+{
+  const agentRoutes = fs.readFileSync(path.join(root, 'src', 'console', 'routes', '17-agent.js'), 'utf8');
+  const slangRoutes = fs.readFileSync(path.join(root, 'src', 'console', 'routes', '02-slang.js'), 'utf8');
+  check('统一发送端点已登记',
+    ['/api/send/group', '/api/send/private', '/api/send/reply']
+      .every((p) => agentRoutes.includes(`'${p}'`)));
+  check('黑话动态路由用 prefix 注册',
+    /'PATCH', '\/api\/slang\/', 'prefix'/.test(slangRoutes)
+      && /'DELETE', '\/api\/slang\/', 'prefix'/.test(slangRoutes)
+      && /'POST', '\/api\/slang\/', 'prefix'/.test(slangRoutes));
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} 通过 / ${fail} 失败`);

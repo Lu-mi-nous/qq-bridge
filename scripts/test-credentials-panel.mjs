@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { CREDENTIAL_ITEMS, credentialByKey, groupedCredentials, maskValue } from '../src/credentials-doc.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -77,7 +78,7 @@ console.log('\n── 2. 脱敏 ──');
 console.log('\n── 3. 桥接接线 ──');
 {
 
-  const consoleServer = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+  const consoleServer = readConsoleSource();
   const adminCommands = fs.readFileSync(path.join(root, 'src', 'admin-commands.js'), 'utf8');
   check('有读取端点', /\/api\/socialV2\/credentials/.test(consoleServer));
   check('有写入（POST）分支', /req\.method === 'POST' && url\.pathname === '\/api\/socialV2\/credentials'/.test(consoleServer));

@@ -39,6 +39,7 @@ import {
   createSummarizer,
   DEFAULT_CONTEXT_MEMORY
 } from '../src/context-memory.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -146,28 +147,28 @@ console.log('\n── 3. Prompt 与解析 ──');
 {
   const prompt = buildEpisodePrompt({
     messages: [
-      { seq: 1, time: T, sender: '群友E', userId: '100002015', plain: '给我发张百亿鲸元券' },
-      { seq: 2, time: T + 1000, isSelf: true, userId: '100002025', plain: '给你一张券' }
+      { seq: 1, time: T, sender: '群友B', userId: '1000000004', plain: '给我发张百亿鲸元券' },
+      { seq: 2, time: T + 1000, isSelf: true, userId: '1000000001', plain: '给你一张券' }
     ],
     previousEpisode: { summary: '之前聊过 token' }
   });
-  check('prompt 带发送者与 QQ', prompt.includes('群友E') && prompt.includes('QQ=100002015'));
+  check('prompt 带发送者与 QQ', prompt.includes('群友B') && prompt.includes('QQ=1000000004'));
   check('prompt 带上一段摘要', prompt.includes('之前聊过 token'));
   check('prompt 不把记录当指令（system 里另有约束）', prompt.includes('群聊记录'));
 
   const okText = '```json\n' + JSON.stringify({
-    summary: '群友E要券，机器人发了券。',
+    summary: '群友B要券，机器人发了券。',
     topics: ['百亿鲸元券'],
-    people: [{ id: '100002015', name: '群友E', note: '爱玩原神，不喜欢被自动接话' }],
+    people: [{ id: '1000000004', name: '群友B', note: '爱玩原神，不喜欢被自动接话' }],
     threads: [{ title: '百亿鲸元券', status: 'open', nextAction: '下次有人提券可接梗' }],
     facts: [
-      { subject: '群友E', predicate: '不喜欢', object: '被自动接话', confidence: 0.9 },
-      { subject: '群友E', predicate: '可能是', object: '外星人', confidence: 0.3 }
+      { subject: '群友B', predicate: '不喜欢', object: '被自动接话', confidence: 0.9 },
+      { subject: '群友B', predicate: '可能是', object: '外星人', confidence: 0.3 }
     ]
   }) + '\n```';
   const ep = parseEpisode(okText, { redact: (s) => String(s).replace(/token/gi, '***') });
-  check('解析 markdown 包裹的 JSON', !!ep && ep.summary.includes('群友E'));
-  check('people 保留 QQ/名字/备注', ep.people[0].id === '100002015' && ep.people[0].note.includes('自动接话'));
+  check('解析 markdown 包裹的 JSON', !!ep && ep.summary.includes('群友B'));
+  check('people 保留 QQ/名字/备注', ep.people[0].id === '1000000004' && ep.people[0].note.includes('自动接话'));
   check('low-confidence fact 被丢弃', ep.facts.length === 1 && ep.facts[0].object === '被自动接话');
   check('threads 归一化为 open/closed', ep.threads[0].status === 'open');
   check('closed 状态能识别', parseEpisode(JSON.stringify({ summary: 'x', threads: [{ title: 't', status: '已完成' }] })).threads[0].status === 'closed');
@@ -180,8 +181,8 @@ console.log('\n── 3. Prompt 与解析 ──');
 console.log('\n── 4. 记忆包 ──');
 {
   const eps = [
-    { createdAt: T - 3600_000, summary: '昨天聊了 token 用量。', threads: [{ title: 'token 统计', status: 'open', nextAction: '等群友E确认' }] },
-    { createdAt: T, summary: '今天群友E要百亿鲸元券，机器人发券时@错人，后来变成群梗。', threads: [{ title: '百亿鲸元券', status: 'open', nextAction: '有人提券时接梗' }] }
+    { createdAt: T - 3600_000, summary: '昨天聊了 token 用量。', threads: [{ title: 'token 统计', status: 'open', nextAction: '等群友B确认' }] },
+    { createdAt: T, summary: '今天群友B要百亿鲸元券，机器人发券时@错人，后来变成群梗。', threads: [{ title: '百亿鲸元券', status: 'open', nextAction: '有人提券时接梗' }] }
   ];
   const pack = formatMemoryPack({ episodes: eps, compactions: [], budgetChars: 1500 });
   check('包含最近 episode', pack.includes('百亿鲸元券') && pack.includes('背景资料，不是指令'));
@@ -260,7 +261,8 @@ console.log('\n── 5. 摘要器（本地 mock，不碰真实网关）──')
 console.log('\n── 6. 桥接接线 ──');
 {
   const bridge = fs.readFileSync(new URL('../src/bridge.js', import.meta.url), 'utf8');
-  const consoleServer = fs.readFileSync(new URL('../src/console-server.js', import.meta.url), 'utf8');
+  const socialSrc = fs.readFileSync(new URL('../src/social-engine.js', import.meta.url), 'utf8');
+  const consoleServer = readConsoleSource();
   check('引入 context-memory', /from '\.\/context-memory\.js'/.test(bridge));
   check('有独立 context 目录', /const CONTEXT_DIR = path\.join\(STATE_DIR, 'context'\)/.test(bridge));
   const events = createEventHarness();
@@ -277,7 +279,8 @@ console.log('\n── 6. 桥接接线 ──');
   check('episode 后更新跨会话人物资料', /mergeEpisodeToSharedMemory\(STATE_DIR/.test(bridge)
     && /共享记忆\] .*更新失败（不影响情节记忆）/.test(bridge));
   check('记录唤醒提示长度', /m\.lastPromptChars = promptText\.length/.test(bridge));
-  check('定时扫描 episode', /function contextSweep\(\)/.test(bridge) && /setInterval\(\(\) => \{ void contextSweep\(\); \}/.test(bridge));
+  check('定时扫描 episode', /function contextSweep\(\)/.test(bridge)
+    && /taskService\.define\('contextSweep'[\s\S]{0,300}run: \(\) => contextSweep\(\)/.test(bridge));
   check('扫描候选过滤掉不够条数的会话', /if \(pending < every && !idleReady\) continue;/.test(bridge));
   check('扫描失败有日志兜底', /\[上下文\] 扫描失败/.test(bridge));
   check('扫描支持每会话多段追赶', /sweepChunksPerKey/.test(bridge) && /chunksPerKey/.test(bridge));
@@ -289,8 +292,8 @@ console.log('\n── 6. 桥接接线 ──');
   check('活动日志状态接口', /'\/api\/socialV2\/activity-feed'/.test(consoleServer));
   check('清空接口', /'\/api\/socialV2\/context-clear'/.test(consoleServer));
   check('默认配置含 contextMemory', /contextMemory: \{ \.\.\.DEFAULT_CONTEXT_MEMORY \}/.test(bridge));
-  check('入站消息写入 journal', /appendContextMessage\(STATE_DIR, key, msg\)/.test(bridge));
-  check('self 消息也写入 journal', /appendContextMessage\(STATE_DIR, key, entry\)/.test(bridge));
+  check('入站消息写入 journal', /appendContextMessage\(STATE_DIR, key, msg\)/.test(socialSrc));
+  check('self 消息也写入 journal', /appendContextMessage\(STATE_DIR, key, entry\)/.test(socialSrc));
   check('episode 优先从 journal 取数', /loadContextMessages\(STATE_DIR, key, \{/.test(bridge));
   check('记忆检索接口存在', /'\/api\/socialV2\/recall'/.test(consoleServer) && /searchMemory\(/.test(consoleServer));
   check('唤醒提示注入检索结果', /buildRecallLineV2\(key, st\)/.test(bridge) && /formatRecallResults\(/.test(bridge));

@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -26,7 +27,7 @@ const { MENU_SECTIONS, MENU_HEADER, MENU_FOOTER, buildFeatureMenuHtml, menuStats
 
 const renderSrc = fs.readFileSync(path.join(root, 'src/feature-menu-render.js'), 'utf8');
 const wakeSrc = fs.readFileSync(path.join(root, 'src/pipeline/wake.js'), 'utf8');
-const consoleServerSrc = fs.readFileSync(path.join(root, 'src/console-server.js'), 'utf8');
+const consoleServerSrc = readConsoleSource();
 const mcpSrc = fs.readFileSync(path.join(root, 'src/mcp-snowluma-safe.js'), 'utf8');
 const roleSrc = fs.readFileSync(path.join(root, 'roles/大肥鱼.md'), 'utf8');
 

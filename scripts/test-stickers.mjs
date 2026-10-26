@@ -20,6 +20,7 @@ import {
   syncStickerCache,
   writeStickerCacheImage
 } from '../src/sticker-lib.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -141,7 +142,7 @@ console.log('## MCP 工具描述存在性');
 console.log('## bridge 路由/函数存在性');
 {
   const qqSend = fs.readFileSync(path.join(ROOT, 'src/pipeline/qq-send.js'), 'utf8');
-  const consoleServer = fs.readFileSync(path.join(ROOT, 'src', 'console-server.js'), 'utf8');
+  const consoleServer = readConsoleSource();
   for (const s of ['/api/socialV2/sticker-list', '/api/socialV2/sticker-image', '/api/socialV2/sticker-note', '/api/socialV2/send-sticker', '/api/socialV2/sticker-remark', '/api/stickers', 'syncStickerLibrary', 'sendStickerV2']) {
     const source = s.startsWith('/api/') ? consoleServer : qqSend;
     ok(source.includes(s), `bridge 包含 ${s}`);

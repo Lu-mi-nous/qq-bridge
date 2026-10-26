@@ -171,3 +171,14 @@
 - 模型权重（CLIP、GPT-SoVITS）与 Upscayl 二进制不入库，需自行下载
 - Windows 优先：ffmpeg 渲染、路径处理与启停脚本按 Windows 编写
 - 上下文记忆仍在迭代：Phase 3 的灰度与 24 小时观测尚未完成
+
+
+## 2026-10-26 ~ 10-27：重构二期（R2 ~ R4）与工程基线
+
+这轮把 0.4.0 之后积累的结构债一次清掉：
+
+- **状态层**：22 个 JSON 状态文件统一到 `src/state/store.js`（原子写、版本迁移、mtime 热重载）。
+- **插件化**：新增插件宿主与运行时，TTS 作为第一个整体出核的可选功能；控制台拿到 `/api/plugins` 与插件卡片插槽（`ctx.console.registerCard / registerRoute`）。
+- **bridge 拆分**：会话、社交调度、任务、加入请求、Token、图库、表情库、媒体、入站派发、引用解析、报错通道等 16+ 个模块出核，`bridge.js` 8,621 → 6,475 行。
+- **控制台分域**：154 条路由按域拆进 `src/console/routes/*`，由 `src/console/router.js` 统一分派；`console-server.js` 7,191 → 601 行。迁移过程中顺手修掉两处老隐患（catch 引用 try 内变量、注册期快照 `sendJson`）。
+- **工程基线**：复杂度以 R4 后状态重估为新基线（`docs/COMPLEXITY.md`，综合「中」）；版本号标准落地（`docs/VERSIONING.md`，`npm run version:set` + 护栏测试），本仓库版本进入 0.4.1；上游（Derpyu520/qq-bridge，MIT）的版权与许可声明整理进 `THIRD_PARTY_NOTICES.md` §0。

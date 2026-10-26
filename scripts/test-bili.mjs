@@ -30,6 +30,7 @@ import {
   matchGameKeyword, GAME_KEYWORDS, tasteBoost, ownerBoost,
   DEFAULT_CATEGORY_WEIGHTS
 } from '../src/bili-browse.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -646,7 +647,8 @@ console.log('\n── 8. 接线 ──');
   const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
   const srcRoot = path.join(root, 'src');
   const bridge = fs.readFileSync(path.join(srcRoot, 'bridge.js'), 'utf8');
-  const consoleServer = fs.readFileSync(path.join(srcRoot, 'console-server.js'), 'utf8');
+  const biliBootstrap = fs.readFileSync(path.join(srcRoot, 'bili-bootstrap.js'), 'utf8');
+  const consoleServer = readConsoleSource();
   const biliRuntime=fs.readFileSync(path.join(srcRoot,'pipeline/bili-runtime.js'),'utf8');
   const biliSharing=fs.readFileSync(path.join(srcRoot,'pipeline/bili-sharing.js'),'utf8');
   const mcp = fs.readFileSync(path.join(srcRoot, 'mcp-snowluma-safe.js'), 'utf8');
@@ -662,7 +664,7 @@ console.log('\n── 8. 接线 ──');
   check('挑空闲会话落脚', /function pickBiliSessionKey/.test(biliSharing));
   check('记忆是全局变量（不在 conversations 里）', /let biliMem = null/.test(bridge));
   check('启动时初始化并调度', /scheduleBiliBrowse\(\)/.test(bridge));
-  check('初始化失败不影响桥接', /\[B站\] 初始化失败（不影响桥接）/.test(bridge));
+  check('初始化失败不影响桥接', /\[B站\] 初始化失败（不影响桥接）/.test(biliBootstrap));
 
   check('MCP 有记录工具', /'qq_bili_record'/.test(mcp));
   check('MCP 有记忆查询工具', /'qq_bili_memory'/.test(mcp));
@@ -820,7 +822,7 @@ console.log('\n── 8. 接线 ──');
   // 字幕（用户问「不能直接给模型视频和音频流吗」→ DSH 只收 text+image，
   // 视频/音频流进不去，但 B 站 AI 字幕能把"听到的话"变成文字）
   check('观看时会抓字幕', /fetchSubtitles/.test(fs.readFileSync(path.join(srcRoot, 'bili-browse.js'), 'utf8')));
-  check('启动时把登录态注入 bili.js（字幕接口必须登录）', /setBiliCookie\(biliAuth\.cookie/.test(bridge));
+  check('启动时把登录态注入 bili.js（字幕接口必须登录）', /setBiliCookie\(auth\.cookie/.test(biliBootstrap));
   check('字幕只取观看窗口内的（不白占 prompt）', /subtitleSnippet/.test(
     fs.readFileSync(path.join(srcRoot, 'bili-browse.js'), 'utf8')));
   check('字幕存进长期记忆', /subtitle: String\(video\.subtitle/.test(biliSrc));

@@ -1,0 +1,33 @@
+{
+  "id": "tts",
+  "name": "语音合成（GPT-SoVITS）",
+  "version": "1.0.0",
+  "engines": {
+    "qqBridge": ">=0.4.0"
+  },
+  "enabledByDefault": false,
+  "configPath": "socialV2.tts",
+  "configSchema": "config.schema.js",
+  "permissions": [
+    "network",
+    "state",
+    "send",
+    "process",
+    "console:route"
+  ],
+  "hooks": [
+    "onStart",
+    "onStop"
+  ],
+  "mcpTools": [
+    "qq_send_voice"
+  ],
+  "console": {
+    "cards": [
+      "tts"
+    ],
+    "routes": [
+      "/api/plugins/tts"
+    ]
+  }
+}

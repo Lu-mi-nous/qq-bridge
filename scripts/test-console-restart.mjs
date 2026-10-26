@@ -24,12 +24,13 @@
 // 本测试锁住这三条，防止以后有人"优化"回 exit-only。
 import fs from 'node:fs';
 import path from 'node:path';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
-const bridge = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+const bridge = readConsoleSource();
 const mainBridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 

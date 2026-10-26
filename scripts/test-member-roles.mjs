@@ -17,13 +17,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { identityTagOf, groupRoleOf, isOwnerSender, isOwnerTurn } from '../src/pipeline/message-format.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.dirname(fileURLToPath(import.meta.url)) + '/..';
 const pipelineSrc = fs.readFileSync(path.join(root, 'src/pipeline/message-format.js'), 'utf8');
-const consoleServer = fs.readFileSync(path.join(root, 'src/console-server.js'), 'utf8');
+const consoleServer = readConsoleSource();
 const roleSrc = fs.readFileSync(path.join(root, 'roles/大肥鱼.md'), 'utf8');
 
 check('群主角色归一化', groupRoleOf({ sender: { role: 'OWNER' } }, 'group') === 'owner');

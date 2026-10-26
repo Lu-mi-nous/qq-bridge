@@ -123,10 +123,10 @@ console.log('\n── ③ 节流：同类报错不刷屏，但计数不丢 ─�
 console.log('\n── ④ 私聊会话本身报错：也不往"群里"发 ──');
 {
   const b = makeBridge();
-  b.notifyOwnerOfError('private:100002001', 'agent 处理出错', '某私聊用户的回合炸了');
-  check('原会话收到 0 条', b.sent.filter((s) => s.key === 'private:100002001').length === 0);
+  b.notifyOwnerOfError('private:2677607641', 'agent 处理出错', '某私聊用户的回合炸了');
+  check('原会话收到 0 条', b.sent.filter((s) => s.key === 'private:2677607641').length === 0);
   check('管理员收到 1 条', b.sent.filter((s) => s.key === 'private:100002000').length === 1);
-  check('带 QQ号 字段', /QQ号：100002001/.test(b.sent[0]?.text ?? ''));
+  check('带 QQ号 字段', /QQ号：2677607641/.test(b.sent[0]?.text ?? ''));
 }
 
 console.log('\n── ⑤ 开关与边界 ──');
@@ -160,6 +160,27 @@ console.log('\n── ⑥ 长详情截断 ──');
   const txt2 = buildOwnerNotice({ key: 'group:1', title: 't', extra: { a: '', b: null, c: undefined, d: 'keep' } });
   check('extra 里空值被剔除', !/a：|b：|c：/.test(txt2) && /d：keep/.test(txt2), txt2);
 }
+
+console.log('\n── ⑦ Token 熔断通知口径 ──');
+{
+  const n = buildOwnerNotice({
+    key: 'group:100002005',
+    title: 'Token 超限熔断',
+    header: '【Token 超限熔断】',
+    sessionName: '奶龙生活群',
+    extra: { 说明: '熔断只停自动行为' }
+  });
+  check('Token 熔断不再使用「桥接报错」标题', n.startsWith('【Token 超限熔断】') && !n.includes('【桥接报错】'), n.split('\n')[0]);
+  check('Token 熔断通知带会话名称', /会话名称：奶龙生活群/.test(n));
+  const r = buildOwnerReport({
+    key: 'group:100002005',
+    code: 'quota',
+    rawError: 'x',
+    sessionName: '奶龙生活群'
+  });
+  check('上游报错通知也带会话名称', /会话名称：奶龙生活群/.test(r));
+}
+
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -15,6 +15,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { looksLikeImageBuffer } from './safe-fetch.js';
 import { isGroupLike } from './image-quality.js';
+import { createJsonStore } from './state/store.js';
 
 const INDEX_VERSION = 1;
 
@@ -66,62 +67,63 @@ export function createImageStore({
   const RECENT_CAP = 500; // 有界：远超任何 10 分钟内的发送量
   const DEFAULT_RECENT_BLOCK_MS = 10 * 60 * 1000;
 
+  // 图库三个状态文件统一经 R2 store 写入（版本号/原子替换/损坏备份）。
+  const indexStore = createJsonStore({
+    file: indexPath,
+    version: 1,
+    defaults: () => ({ version: INDEX_VERSION, items: [] })
+  });
+  const recentStore = createJsonStore({
+    file: recentPath,
+    version: 1,
+    defaults: () => ({ at: {} })
+  });
+  const rejectedStore = createJsonStore({
+    file: rejectedPath,
+    version: 1,
+    defaults: () => ({ version: 1, ids: [], at: {} })
+  });
+
   function loadRecent() {
-    try {
-      const raw = JSON.parse(fs.readFileSync(recentPath, 'utf8'));
-      if (raw && raw.at && typeof raw.at === 'object') return { at: raw.at };
-    } catch {}
+    const raw = recentStore.read();
+    if (raw && raw.at && typeof raw.at === 'object') return { at: raw.at };
     return { at: {} };
   }
 
   function saveRecent() {
-    ensureDir(libDir);
     const cutoff = nowMs() - 30 * 60 * 1000; // 只留 30 分钟内的（够 10 分钟窗口用）
     const entries = Object.entries(recent.at)
       .filter(([, t]) => Number(t) >= cutoff)
       .sort((a, b) => Number(b[1]) - Number(a[1]))
       .slice(0, RECENT_CAP);
     recent.at = Object.fromEntries(entries);
-    const tmp = recentPath + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify({ at: recent.at, savedAt: nowMs() }, null, 2) + '\n',
-      { encoding: 'utf8', mode: 0o600 });
-    fs.renameSync(tmp, recentPath);
+    recentStore.write({ at: recent.at, savedAt: nowMs() });
   }
 
   function loadRejected() {
-    try {
-      const raw = JSON.parse(fs.readFileSync(rejectedPath, 'utf8'));
-      if (raw && Array.isArray(raw.ids)) return { ids: raw.ids.map(String), at: raw.at ?? {} };
-    } catch {}
+    const raw = rejectedStore.read();
+    if (raw && Array.isArray(raw.ids)) return { ids: raw.ids.map(String), at: raw.at ?? {} };
     return { ids: [], at: {} };
   }
 
   function saveRejected() {
-    ensureDir(libDir);
-    const tmp = rejectedPath + '.tmp';
     // 只保留最近 REJECTED_CAP 个（按加入顺序裁剪）
     if (rejected.ids.length > REJECTED_CAP) {
       const drop = rejected.ids.slice(0, rejected.ids.length - REJECTED_CAP);
       for (const id of drop) delete rejected.at[id];
       rejected.ids = rejected.ids.slice(-REJECTED_CAP);
     }
-    fs.writeFileSync(tmp, JSON.stringify({ version: 1, ids: rejected.ids, at: rejected.at }, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-    fs.renameSync(tmp, rejectedPath);
+    rejectedStore.write({ version: 1, ids: rejected.ids, at: rejected.at });
   }
 
   function loadIndex() {
-    try {
-      const raw = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
-      if (raw && raw.version === INDEX_VERSION && Array.isArray(raw.items)) return raw;
-    } catch {}
+    const raw = indexStore.read();
+    if (raw && raw.version === INDEX_VERSION && Array.isArray(raw.items)) return raw;
     return { version: INDEX_VERSION, items: [] };
   }
 
   function saveIndex(index) {
-    ensureDir(libDir);
-    const tmp = indexPath + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(index, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-    fs.renameSync(tmp, indexPath);
+    indexStore.write(index);
   }
 
   let index = loadIndex();

@@ -238,7 +238,7 @@ More: [docs/DSH_SETUP.md](docs/DSH_SETUP.md) · [docs/CONFIGURATION.md](docs/CON
 
 ## Origin and license
 
-This project is a modified derivative of **[Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge)**, released under the MIT license.
+This project is a modified derivative of **[Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge)** (MIT), heavily refactored since the fork; the upstream copyright and permission notice is preserved in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) §0.
 
 The original copyright notice is in [LICENSE](LICENSE) (MIT — **kept verbatim, do not remove**).
 Third-party attribution, their respective licenses, SnowLuma usage boundaries and the data-egress list are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

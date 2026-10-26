@@ -13,7 +13,7 @@ export function canonicalV2Key(key) {
 
 export function createSocialStateStore(deps) {
   const { cfg, socialV2, state, v2TurnStartAt, KNOWN_AGENT_TOKENS, seenForwardIds,
-    SOCIAL_V2_FILE, readJsonSafe, atomicWriteJson, scheduleProactiveCheckV2,
+    SOCIAL_V2_FILE, readJsonSafe, atomicWriteJson, stateStore, scheduleProactiveCheckV2,
     setupSleepTimerV2, log } = deps;
   function normalizeSpeakerIdsV2(value) {
     if (value === undefined || value === null) return [];
@@ -239,7 +239,7 @@ export function createSocialStateStore(deps) {
 
   function loadSocialV2State() {
     try {
-      const raw = readJsonSafe(SOCIAL_V2_FILE, null);
+      const raw = stateStore ? stateStore.read() : readJsonSafe(SOCIAL_V2_FILE, null);
       socialV2.paused = raw?.paused === true;
       if (raw && typeof raw.conversations === 'object') {
         const seenTokens = new Set();
@@ -435,7 +435,8 @@ export function createSocialStateStore(deps) {
           seenForwardIds: Array.from(seenForwardIds.get(key) || []).slice(-1000)
         };
       }
-      atomicWriteJson(SOCIAL_V2_FILE, obj);
+      if (stateStore) stateStore.write(obj);
+      else atomicWriteJson(SOCIAL_V2_FILE, obj);
     } catch (error) {
       log('保存 socialV2 状态失败:', error?.message ?? error);
     }

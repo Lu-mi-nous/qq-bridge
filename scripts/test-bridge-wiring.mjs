@@ -7,6 +7,16 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ROOT=root;
 const incoming=fs.readFileSync(path.join(root,'src/pipeline/incoming.js'),'utf8');
 const bridge=fs.readFileSync(path.join(root,'src/bridge.js'),'utf8');
+const ttsPlugin=fs.readFileSync(path.join(root,'plugins/tts/index.js'),'utf8');
+const sessionService=fs.readFileSync(path.join(root,'src/session-service.js'),'utf8');
+const imageFacade=fs.readFileSync(path.join(root,'src/image-facade.js'),'utf8');
+const stickerService=fs.readFileSync(path.join(root,'src/sticker-service.js'),'utf8');
+const joinRequestService=fs.readFileSync(path.join(root,'src/join-request-service.js'),'utf8');
+const tokenService=fs.readFileSync(path.join(root,'src/token-service.js'),'utf8');
+const mediaService=fs.readFileSync(path.join(root,'src/media-service.js'),'utf8');
+const socialEngine=fs.readFileSync(path.join(root,'src/social-engine.js'),'utf8');
+const dispatchIncoming=fs.readFileSync(path.join(root,'src/pipeline/dispatch-incoming.js'),'utf8');
+const biliBootstrap=fs.readFileSync(path.join(root,'src/bili-bootstrap.js'),'utf8');
 let pass=0,fail=0;
 const check=(name,ok,detail='')=>{ok?pass++:fail++;console.log((ok?'PASS':'FAIL')+' '+name+(detail?' '+detail:''));};
 
@@ -34,17 +44,17 @@ check('日志里没有 console.log(value)', !/log\([^)]*\bvalue\b[^)]*\)/.test(b
 {
   const bridgeSrc = bridge;
 
-check('桥接调用上游接口', /delete_custom_face/.test(bridgeSrc));
+check('桥接调用上游接口', /delete_custom_face/.test(stickerService));
 check('工具默认关闭（写操作，需显式开启）', (bridgeSrc.match(/deleteSticker: false/g) || []).length >= 1);
-check('删除前用 findSticker 校验存在性', /async function deleteStickerV2[\s\S]{0,400}findSticker\(/.test(bridgeSrc));
-check('校验失败即拒绝（不让未校验值进上游）', /找不到表情 \$\{stickerId\}，请先用 qq_list_stickers/.test(bridgeSrc));
-check('删前写备份文件', /stickers-deleted-\$\{stamp\}\.json/.test(bridgeSrc));
+check('删除前用 findSticker 校验存在性', /async function remove\(stickerId\)[\s\S]{0,500}findSticker\(/.test(stickerService));
+check('校验失败即拒绝（不让未校验值进上游）', /找不到表情 \$\{stickerId\}，请先用 qq_list_stickers/.test(stickerService));
+check('删前写备份文件', /stickers-deleted-\$\{stamp\}\.json/.test(stickerService));
 check('备份在调用上游之前', (() => {
-    const i = bridgeSrc.indexOf('async function deleteStickerV2');
-    const seg = bridgeSrc.slice(i, i + 3000);
+    const i = stickerService.indexOf('async function remove(stickerId)');
+    const seg = stickerService.slice(i, i + 3000);
     return seg.indexOf('stickers-deleted-') < seg.indexOf("request('delete_custom_face'");
   })());
-check('删后回读校验', /verifiedGone/.test(bridgeSrc));
+check('删后回读校验', /verifiedGone/.test(stickerService));
 }
 
 
@@ -52,25 +62,25 @@ check('删后回读校验', /verifiedGone/.test(bridgeSrc));
 {
   const bridgeSrc = bridge;
 
-check('bridge.js 导入了 downscaleIfLarge', /import \{[^}]*downscaleIfLarge[^}]*\} from '\.\/image-downscale\.js'/.test(bridgeSrc));
-check('resolveMediaList 路径接入预处理', /const scaled = await prepareImageForModel/.test(bridgeSrc));
-check('fetchMediaData 路径接入预处理', /const scaled2 = await prepareImageForModel/.test(bridgeSrc));
-const prepCount = (bridgeSrc.match(/prepareImageForModel\(/g) || []).length;
+check('媒体服务导入了 prepareImageForModel', /import \{[^}]*prepareImageForModel[^}]*\} from '\.\/image-downscale\.js'/.test(mediaService));
+check('resolveMediaList 路径接入预处理', /const scaled = await prepareImageForModel/.test(mediaService));
+check('fetchMediaData 路径接入预处理', /const scaled2 = await prepareImageForModel/.test(mediaService));
+const prepCount = (mediaService.match(/prepareImageForModel\(/g) || []).length;
 check('至少 2 处接入预处理（路径只增不减）', prepCount >= 2, `实际 ${prepCount} 处`);
 check('预处理函数唯一（同一模块导入）',
-    /import \{[^}]*prepareImageForModel[^}]*\} from '\.\/image-downscale\.js'/.test(bridgeSrc));
+    /import \{[^}]*prepareImageForModel[^}]*\} from '\.\/image-downscale\.js'/.test(mediaService));
 check('缩图在大小检查之前（先缩再看大小）', (() => {
-    const i = bridgeSrc.indexOf('const scaled = await prepareImageForModel');
-    const j = bridgeSrc.indexOf('totalBytes + useBuf.length > MAX_MEDIA_BYTES', i);
+    const i = mediaService.indexOf('const scaled = await prepareImageForModel');
+    const j = mediaService.indexOf('totalBytes + useBuf.length > MAX_MEDIA_BYTES', i);
     return i > 0 && j > i;
   })());
-check('bridge 收藏表情接入压缩', /shrinkStickerForUpload\(buffer/.test(bridgeSrc));
+check('bridge 收藏表情接入压缩', /shrinkStickerForUpload\(buffer/.test(stickerService));
 check('压缩发生在 add_custom_face 之前', (() => {
-    const i = bridgeSrc.indexOf('shrinkStickerForUpload(buffer');
-    const j = bridgeSrc.indexOf("bot.request('add_custom_face'", i);
+    const i = stickerService.indexOf('shrinkStickerForUpload(buffer');
+    const j = stickerService.indexOf("request('add_custom_face'", i);
     return i > 0 && j > i;
   })());
-check('超限错误说明是 4MB 上限（不再只说 fetch failed）', /超过 QQ 收藏表情[\s\S]{0,80}MB 上限/.test(bridgeSrc));
+check('超限错误说明是 4MB 上限（不再只说 fetch failed）', /超过 QQ 收藏表情[\s\S]{0,80}MB 上限/.test(stickerService));
 }
 
 
@@ -78,14 +88,14 @@ check('超限错误说明是 4MB 上限（不再只说 fetch failed）', /超过
 {
 
 
-check('启用 partialOnOversize', /safeFetchBuffer\(String\(media\.url\), HARD_CAP, \{ partialOnOversize: true \}\)/.test(bridge));
-check('宽松上限是原上限的倍数（不是无上限）', /const HARD_CAP = Math\.max\(MAX_MEDIA_BYTES \* 4, MAX_MEDIA_BYTES \+ 1024 \* 1024\)/.test(bridge));
+check('启用 partialOnOversize', /safeFetchBuffer\(String\(media\.url\), HARD_CAP, \{ partialOnOversize: true \}\)/.test(mediaService));
+check('宽松上限是原上限的倍数（不是无上限）', /const HARD_CAP = Math\.max\(MAX_MEDIA_BYTES \* 4, MAX_MEDIA_BYTES \+ 1024 \* 1024\)/.test(mediaService));
 check('拿到后走 prepareImageForModel 压缩',
-    /const prepared = await prepareImageForModel\(fetched\.buffer, \{[\s\S]{0,220}\}/.test(bridge));
-check('返回压缩后的 buffer/mimeType', /return \{ buffer: prepared\.buffer, mimeType: prepared\.mimeType \}/.test(bridge));
-check('超限压缩后记日志（可排查）', /画面可能不完整/.test(bridge));
-check('日志区分"未取全"与完整', /未取全/.test(bridge));
-check('像素上限检查仍在前（防图片炸弹）', /dims\.width \* dims\.height > MAX_MEDIA_PIXELS[\s\S]{0,200}prepareImageForModel/.test(bridge));
+    /const prepared = await prepareImageForModel\(fetched\.buffer, \{[\s\S]{0,220}\}/.test(mediaService));
+check('返回压缩后的 buffer/mimeType', /return \{ buffer: prepared\.buffer, mimeType: prepared\.mimeType \}/.test(mediaService));
+check('超限压缩后记日志（可排查）', /画面可能不完整/.test(mediaService));
+check('日志区分"未取全"与完整', /未取全/.test(mediaService));
+check('像素上限检查仍在前（防图片炸弹）', /dims\.width \* dims\.height > MAX_MEDIA_PIXELS[\s\S]{0,200}prepareImageForModel/.test(mediaService));
 }
 
 
@@ -93,7 +103,7 @@ check('像素上限检查仍在前（防图片炸弹）', /dims\.width \* dims\.
 {
   const bridgeSrc = bridge;
 
-const prepCount = (bridgeSrc.match(/prepareImageForModel\(/g) || []).length;
+const prepCount = (mediaService.match(/prepareImageForModel\(/g) || []).length;
 check('桥接接入统一预处理（路径只增不减）', prepCount >= 2, `实际 ${prepCount} 处`);
 check('不再直接调 downscaleIfLarge（避免两处各写一遍）',
     !/await downscaleIfLarge\(img\.buffer/.test(bridgeSrc));
@@ -111,14 +121,14 @@ check('通知管理员私聊', /notifyJoinRequest/.test(bridge) && /private:\$\{
 check('超时会自动拒绝', /pruneExpired\(\)[\s\S]{0,400}submitJoinDecision\(it, false, '超时未处理'\)/.test(bridge));
 check('启动时补拒绝旧请求（否则静默消失、QQ 侧一直挂着）',
     /takeExpiredAtStartup\(\)[\s\S]{0,400}submitJoinDecision\(it, false, '超时未处理'\)/.test(bridge));
-check('定时清理（不是被动等下一个请求）', /setInterval\([\s\S]{0,300}pruneExpired/.test(bridge));
-check('通知失败时自动拒绝（不留悬挂）', /无法通知管理员/.test(bridge));
+check('定时清理（不是被动等下一个请求）', /taskService\.define\('joinRequestSweep'[\s\S]{0,500}pruneExpired/.test(bridge));
+check('通知失败时自动拒绝（不留悬挂）', /无法通知管理员/.test(joinRequestService));
 check('裁决指令在一切之前处理', /adminCommands\.handleJoinDecisionCommand\(key, plainContent\)/.test(incoming));
-check('入队前检查机器人是否已在群', /isBotInGroupV2\(item\.groupId\)/.test(bridge));
+check('入队前检查机器人是否已在群', /isBotInGroup\(item\.groupId\)/.test(joinRequestService));
 check('入群通知按群作废待决邀请', /onNotice\('group_increase'/.test(bridge) && /takeWhere\(/.test(bridge));
-check('同意邀请前也检查是否已在群', /isInvite && approve === true && await isBotInGroupV2/.test(bridge));
-check('提交失败时返回结构化结果', /return \{ ok: false, error: msg, expired \}/.test(bridge));
-check('已在群时不报失败', /alreadyJoined: true/.test(bridge) && /已经处理过了：机器人已在群里/.test(adminCommands));
+check('同意邀请前也检查是否已在群', /isInvite && approve === true && await isBotInGroup/.test(joinRequestService));
+check('提交失败时返回结构化结果', /return \{ ok: false, error: msg, expired \}/.test(joinRequestService));
+check('已在群时不报失败', /alreadyJoined: true/.test(joinRequestService) && /已经处理过了：机器人已在群里/.test(adminCommands));
 check('代码默认 autoApprove: false', /autoApprove: false/.test(bridge));
 }
 
@@ -161,9 +171,11 @@ check('bridge 保留 buildWakePromptV2 薄包装',
 
 
 check('bridge 引入 session-generation', /from '\.\/pipeline\/session-generation\.js'/.test(bridge));
-check('ensureSession 比较代际', /needsNewSession\(meta, \{ mode: desiredMode, preset: desiredPreset \}\)/.test(bridge));
-check('创建会话写入 sessionMeta', /state\.sessionMeta\[key\] = \{[\s\S]{0,120}?mode: currentMode/.test(bridge));
-check('模式变化停用旧会话', /retireSessionForModeChange\(key, existing, meta/.test(bridge));
+check('bridge 使用 session-service', /from '\.\/session-service\.js'/.test(bridge)
+  && /sessionService\.ensureSession\(key\)/.test(bridge));
+check('ensureSession 比较代际', /needsNewSession\(meta, \{ mode: desiredMode, preset: desiredPreset \}\)/.test(sessionService));
+check('创建会话写入 sessionMeta', /state\.sessionMeta\[key\] = \{[\s\S]{0,120}?mode: getMode\(\)/.test(sessionService));
+check('模式变化停用旧会话', /retireForModeChange\(key, existing, meta/.test(sessionService));
 }
 
 
@@ -186,7 +198,7 @@ check('默认概率 0.33', /autoNudgeProbability: 0\.33/.test(bridgeSrc));
 {
   const bridgeSrc = bridge;
 
-check('落盘包含 dayModels', /dayModels: agg\.dayModels \|\| \{\}/.test(bridgeSrc));
+check('落盘包含 dayModels', /dayModels: agg\.dayModels \|\| \{\}/.test(tokenService));
 }
 
 
@@ -202,13 +214,13 @@ check('默认配置开启了 tokenReport', /tokenReport: true/.test(mainBridge))
 {
 
 
-check('结果落盘', /TOKEN_USAGE_FILE/.test(bridge) && /atomicWriteJson\(TOKEN_USAGE_FILE/.test(bridge));
-check('写日志（用户要求"做成日志"）', /\[Token\] 今日/.test(bridge) && /\[Token\] 累计/.test(bridge));
+check('结果落盘', /TOKEN_USAGE_FILE/.test(bridge) && /atomicWriteJson\(file/.test(tokenService));
+check('写日志（用户要求"做成日志"）', /\[Token\] 今日/.test(tokenService) && /\[Token\] 累计/.test(tokenService));
 check('定时调度（跨天或超 6 小时才重算）',
-    /startTokenUsageScheduler/.test(bridge) && /ageMs > 6 \* 3600 \* 1000/.test(bridge));
+    /startTokenUsageScheduler/.test(bridge) && /ageMs > 6 \* 3600 \* 1000/.test(tokenService));
 check('只扫本项目会话，不扫别的项目/测试工作区',
-    /-state-agents--\$/i.test(bridge) && /includes\(marker\)/.test(bridge));
-check('启动失败不影响桥接', /\[Token\] 统计失败（不影响桥接）/.test(bridge));
+    /-state-agents--\$/i.test(tokenService) && /includes\('qq-bridge'\)/.test(tokenService));
+check('启动失败不影响桥接', /\[Token\] 统计失败（不影响桥接）/.test(tokenService));
 }
 
 
@@ -216,8 +228,8 @@ check('启动失败不影响桥接', /\[Token\] 统计失败（不影响桥接�
 {
 
   const qqSend = fs.readFileSync(new URL('../src/pipeline/qq-send.js', import.meta.url), 'utf8');
-check('bridge 传回复语气', /mood: moodOfText\(msg\)/.test(bridge) && /mood: plan\?\.mood/.test(qqSend));
-check('bridge 传音色预设给 probe', /voiceId: ttsCfg\.voiceId/.test(bridge) && /weightsId: ttsCfg\.weightsId/.test(bridge));
+check('TTS 插件传回复语气', /mood: moodOfText\(msg\)/.test(ttsPlugin) && /mood: planData\?\.mood/.test(ttsPlugin));
+check('TTS 插件传音色预设给 probe', /voiceId: t\.voiceId/.test(ttsPlugin) && /weightsId: t\.weightsId/.test(ttsPlugin));
 }
 
 
@@ -226,7 +238,7 @@ check('bridge 传音色预设给 probe', /voiceId: ttsCfg\.voiceId/.test(bridge)
 
 
 check('取图拉取时间持久化（重启后控制台不归零）',
-    /IMAGE_FETCH_STATE_FILE/.test(bridge) && /lastFetchedAt/.test(bridge));
+    /IMAGE_FETCH_STATE_FILE/.test(bridge) && /lastFetchedAt/.test(imageFacade));
 check('分享卡片提取', /extractShareCards\(event\.message/.test(incoming));
 check('卡片消息放宽到 1200 字', /textLimit = shareUrl \? 1200 : 200/.test(bridge));
 check('shareUrl 单独存字段', /shareUrl,/.test(bridge) && /shareTitle:/.test(bridge));
@@ -243,12 +255,12 @@ check('bridge 引入 text-normalize',
 
 
 // 入站身份必须传递到三种模式；权限判定始终以后台管理员为准。
-check('三条派发路径取群身份', (bridge.match(/groupRoleOf\(event, kind\)/g)||[]).length>=3);
-check('时间线接收群角色', /function appendSocialV2Message\([^)]*groupRole = ''/.test(bridge));
-check('发起人角色与群身份同源', /st\.lastRequesterRole = groupRole/.test(bridge));
-check('owner 时间窗只记录后台管理员', /if \(ownerQq && String\(userId\)\.trim\(\) === ownerQq\)/.test(bridge) && /st\.ownerSpokeAt = Date\.now\(\)/.test(bridge));
+check('三条派发路径取群身份', (dispatchIncoming.match(/groupRoleOf\(event, kind\)/g)||[]).length>=3);
+check('时间线接收群角色', /function appendSocialV2Message\([^)]*groupRole = ''/.test(socialEngine));
+check('发起人角色与群身份同源', /st\.lastRequesterRole = groupRole/.test(socialEngine));
+check('owner 时间窗只记录后台管理员', /if \(ownerQq && String\(userId\)\.trim\(\) === ownerQq\)/.test(socialEngine) && /st\.ownerSpokeAt = Date\.now\(\)/.test(socialEngine));
 check('管理员权限使用唯一纯函数', /isOwnerTurnPure\(\{/.test(bridge) && /cfg\.socialV2\?\.adminCommandWindowMs/.test(bridge));
-check('B 站凭据只报状态不打印内容', /账号凭据已加载/.test(bridge) && !/log\(.*biliAuth\.cookie/.test(bridge));
+check('B 站凭据只报状态不打印内容', /账号凭据已加载/.test(biliBootstrap) && !/log\(.*auth\.cookie/.test(biliBootstrap));
 
 console.log(`✅ ${pass} 通过 / ${fail} 失败`);
 process.exitCode=fail?1:0;

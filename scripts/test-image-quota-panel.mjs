@@ -13,12 +13,13 @@
 //   - 控制台卡片存在、挂进轮询、三类分开显示
 import fs from 'node:fs';
 import path from 'node:path';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
-const bridge = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8').replace(/\r\n/g, '\n');
+const bridge = readConsoleSource().replace(/\r\n/g, '\n');
 const revSrc = fs.readFileSync(path.join(root, 'src', 'image-reverse-search.mjs'), 'utf8');
 const consoleHtml = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 

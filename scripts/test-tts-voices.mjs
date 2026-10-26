@@ -20,6 +20,7 @@ import {
   MOOD_TO_REF,
   VOICES_MANIFEST_REL
 } from '../src/tts-voices.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -137,7 +138,7 @@ console.log('\n── 4. API 视图不泄露绝对路径 ──');
 
 console.log('\n── 5. 真实归档（存在才测）──');
 {
-  const realDir = process.env.GPT_SOVITS_DIR || path.join(os.homedir(), 'GPT-SoVITS');
+  const realDir = 'C:/GPT-SoVITS';
   if (!fs.existsSync(path.join(realDir, VOICES_MANIFEST_REL))) {
     skipped('真实 voices.json', '未找到归档清单');
   } else {
@@ -156,7 +157,7 @@ console.log('\n── 6. 接线 ──');
   const tts = fs.readFileSync(new URL('../src/tts.js', import.meta.url), 'utf8');
 
   const qqSend = fs.readFileSync(new URL('../src/pipeline/qq-send.js', import.meta.url), 'utf8');
-  const consoleServer = fs.readFileSync(new URL('../src/console-server.js', import.meta.url), 'utf8');
+  const consoleServer = readConsoleSource();
   const html = fs.readFileSync(new URL('../public/console.html', import.meta.url), 'utf8');
   check('tts.js 引入音色模块', /from '\.\/tts-voices\.js'/.test(tts) && /pickVoiceRef/.test(tts));
   check('speak 接受 mood/refId', /async speak\(text, callOpts = \{\}\)/.test(tts) && /mood: callOpts\.mood/.test(tts));

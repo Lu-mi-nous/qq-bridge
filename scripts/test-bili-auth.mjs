@@ -19,6 +19,7 @@ import path from 'node:path';
 import {
   loadBiliAuth, searchVideos, buildSearchKeywords, pickSearchQuery
 } from '../src/bili-auth.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -148,7 +149,7 @@ console.log('\n── 3b. cid 缺失与补全 ──');
 console.log('\n── 4. 接线 ──');
 {
   const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
-  const consoleServer = fs.readFileSync(path.join(root, 'src/console-server.js'), 'utf8');
+  const consoleServer = readConsoleSource();
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
 
   // 列表/搜索降级与最终推荐行为见 test-bili-runtime / test-bili-sharing。

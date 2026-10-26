@@ -13,12 +13,13 @@
 // 只做静态接线检查（不连 QQ/DSH），所以任何时候都能跑。
 import fs from 'node:fs';
 import path from 'node:path';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
-const consoleServer = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+const consoleServer = readConsoleSource();
 const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
 const preset = fs.readFileSync(
   path.join(root, 'dsh', 'agent-presets', 'qq-chat-v2', 'agent.cordis.yml'), 'utf8');

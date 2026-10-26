@@ -38,6 +38,23 @@
 | 内核 | `src/console-server.js` | 控制台与 MCP 回调 HTTP 路由；显式依赖注入、Agent 路由允许清单 |
 | 内核 | `src/admin-commands.js` | 管理命令：识别、准入例外、执行；命令表唯一事实源 |
 | 内核 | `src/context-recovery.js` | DSH 上下文超限识别、会话轮换与单次重试 |
+| 内核 | `src/session-service.js` | 会话映射、代际、并发创建与模式变化接管（R3-1） |
+| 内核 | `src/social-service.js` | 唤醒合并、优先级、回复检查、有限睡眠、主动机会（R3-2） |
+| 内核 | `src/task-service.js` | 命名定时任务、暂停/恢复、手动触发（R3-3） |
+| 内核 | `src/image-facade.js` | 图库补货、画风分、已发图清理（R3-5） |
+| 内核 | `src/sticker-service.js` | 表情库同步、备注、删除、收藏（R3-6） |
+| 内核 | `src/join-request-service.js` | 加好友/入群请求裁决（R3-7） |
+| 内核 | `src/token-service.js` | Token 聚合、摘要器记账、定时刷新（R3-8） |
+| 内核 | `src/image-request.js` | 发图冷却、来源过滤、预检、原图收藏（R3-9） |
+| 内核 | `src/media-service.js` | 入站媒体取图、MIME/尺寸、GIF 抽帧（R3-10） |
+| 内核 | `src/social-engine.js` | 入站消息/拍一拍/机器人发言写入（R3-11） |
+| 内核 | `src/pipeline/dispatch-incoming.js` | 入站派发：reserved2/社交仿真/DSH（R3-12） |
+| 内核 | `src/social-loop.js` | 仿真社交状态机（R3-13） |
+| 内核 | `src/pipeline/reply-target.js` | 引用目标解析（R3-13） |
+| 内核 | `src/error-service.js` | 报错只私聊管理员（R3-14） |
+| 内核 | `src/bili-bootstrap.js` / `src/upscale-bootstrap.js` | B站/ASR/超分启动装配（R3-14） |
+| 内核 | `src/plugins/` | 插件宿主与上下文：manifest 校验、生命周期、权限、状态隔离 |
+| 内核 | `src/plugin-runtime.js` | 插件运行时装配：启动/停止、TTS 能力查询（R3-4） |
 | 内核 | `src/pipeline/` | 消息管线纯计算层：身份/提示拼装/消息段/出站归一化 |
 | 内核 | `src/dsh-client.js` | DSH 协议客户端：RPC + WebSocket 事件流 + turn 收集 |
 | 内核 | `src/mcp-snowluma-safe.js` | 给 DSH agent 用的安全 QQ 工具（只读 + 白名单发送） |
@@ -62,6 +79,24 @@ qq-bridge/
 │   ├── console-server.js       # 控制台与 MCP 回调 HTTP 路由
 │   ├── admin-commands.js       # 管理命令：识别、准入例外、执行
 │   ├── context-recovery.js     # DSH 上下文超限：识别、轮换、单次重试
+│   ├── session-service.js      # 会话映射/代际/并发创建（R3-1）
+│   ├── social-service.js       # 唤醒合并/回复检查/睡眠/主动机会（R3-2）
+│   ├── task-service.js         # 命名定时任务/暂停恢复/手动触发（R3-3）
+│   ├── image-facade.js         # 图库补货/画风分/已发图清理（R3-5）
+│   ├── sticker-service.js      # 表情库同步/备注/删除/收藏（R3-6）
+│   ├── join-request-service.js # 加好友/入群裁决（R3-7）
+│   ├── token-service.js        # Token 聚合/摘要器记账（R3-8）
+│   ├── image-request.js        # 发图冷却/来源过滤/预检（R3-9）
+│   ├── media-service.js        # 入站媒体取图/预处理/表情（R3-10）
+│   ├── social-engine.js        # 入站消息/拍一拍/机器人发言写入（R3-11）
+│   ├── pipeline/dispatch-incoming.js # 入站派发（R3-12）
+│   ├── social-loop.js          # 仿真社交状态机（R3-13）
+│   ├── pipeline/reply-target.js # 引用目标解析（R3-13）
+│   ├── error-service.js        # 报错只私聊管理员（R3-14）
+│   ├── bili-bootstrap.js       # B站/ASR 启动装配（R3-14）
+│   ├── upscale-bootstrap.js    # 超分启动装配（R3-14）
+│   ├── plugins/                # 插件宿主与上下文（manifest / 生命周期 / 权限）
+│   ├── plugin-runtime.js       # 插件运行时装配（宿主/启动停止/TTS 能力）
 │   ├── pipeline/               # 消息管线纯计算层（身份/提示/消息段/归一化）
 │   ├── dsh-client.js           # DSH API 客户端
 │   ├── mcp-snowluma-safe.js    # 安全 MCP（QQ 读/发工具）
@@ -83,7 +118,8 @@ qq-bridge/
 ├── dsh/
 │   └── agent-presets/          # qq-chat / qq-chat-v2 的 DSH preset 模板
 ├── plugins/
-│   └── qq-mode-console/        # DSH 设置页 qq-mode 卡片插件
+│   ├── qq-mode-console/        # DSH 设置页 qq-mode 卡片插件
+│   └── tts/                    # TTS 可选插件（manifest + 引擎生命周期 + 概率语音）
 ├── assets/
 │   ├── deepseek娘.png          # AI 自我形象图（qq_get_self_image）
 │   └── project-intro.mp4       # 项目介绍视频（README 可查看）

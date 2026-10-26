@@ -8,9 +8,7 @@
 //
 // 按 qq-bridge 轻量化为 JSON 存储 + 控制台人工确认，不引入数据库。
 
-import fs from 'node:fs';
-import path from 'node:path';
-import crypto from 'node:crypto';
+import { createJsonStore } from './state/store.js';
 
 export const SLANG_STATUS = Object.freeze({
   CANDIDATE: 'candidate',
@@ -57,22 +55,22 @@ export function normalizeSlangEntry(raw) {
 }
 
 export function loadSlang(file) {
-  try {
-    let text = fs.readFileSync(file, 'utf8');
-    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-    const parsed = JSON.parse(text);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map(normalizeSlangEntry).filter((e) => e.content);
-  } catch {
-    return [];
-  }
+  const parsed = createJsonStore({
+    file,
+    version: 1,
+    array: true,
+    defaults: () => []
+  }).read();
+  return parsed.map(normalizeSlangEntry).filter((e) => e.content);
 }
 
 export function saveSlang(file, entries) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(entries, null, 2), { encoding: 'utf8', mode: 0o600 });
-  fs.renameSync(tmp, file);
+  createJsonStore({
+    file,
+    version: 1,
+    array: true,
+    defaults: () => []
+  }).write(entries);
 }
 
 export function createSlangEntry({ content, meaning = '', usage = '', example = '', risk = '', sources = [], status = SLANG_STATUS.CANDIDATE, source = 'ai', evidence = [] } = {}) {

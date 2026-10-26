@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A522.13-339933?logo=node.js&logoColor=white&style=flat-square">
   <img alt="Platform" src="https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows&logoColor=white&style=flat-square">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-106%20scripts-2ea44f?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-145%20scripts-2ea44f?style=flat-square">
   <img alt="DSH" src="https://img.shields.io/badge/DSH-0.1.1--rc.2-6f42c1?style=flat-square">
   <img alt="License" src="https://img.shields.io/badge/License-MIT-blue?style=flat-square">
 </p>
@@ -276,7 +276,7 @@ node scripts/setup-dsh.mjs      # 目录没变也建议跑一次，确保 MCP �
 
 ## 来源与许可
 
-本项目基于 **[Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge)** 修改而来，原项目以 MIT 许可发布。
+本项目基于 **[Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge)**（MIT）修改而来，并已大规模重构；上游版权与许可声明保留于 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) §0。
 
 原始版权声明见 [LICENSE](LICENSE)（MIT，**原样保留，请勿删除**）。
 第三方组件归属、其各自许可、SnowLuma 的使用边界与数据出机清单见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

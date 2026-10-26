@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -27,9 +28,11 @@ const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:
 const ttsSrc = fs.readFileSync(path.join(root, 'src', 'tts.js'), 'utf8');
 const incomingSrc=fs.readFileSync(path.join(root,'src/pipeline/incoming.js'),'utf8');
 const bridgeSrc = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
+const socialSrc = fs.readFileSync(path.join(root, 'src', 'social-engine.js'), 'utf8');
+const ttsPluginSrc = fs.readFileSync(path.join(root, 'plugins', 'tts', 'index.js'), 'utf8');
 const qqSendSrc = fs.readFileSync(path.join(root, 'src', 'pipeline', 'qq-send.js'), 'utf8');
 const wakeSrc = fs.readFileSync(path.join(root, 'src', 'pipeline', 'wake.js'), 'utf8');
-const consoleServerSrc = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+const consoleServerSrc = readConsoleSource();
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 const pySrc = fs.readFileSync(path.join(root, 'scripts', 'sovits-server.py'), 'utf8');
 
@@ -52,11 +55,13 @@ console.log('── 1. 可插拔：默认关闭与失败降级 ──');
   const r2 = probeSovits({ dir: '' });
   check('空目录回退到默认目录', r2.dir === DEFAULT_SOVITS_DIR, r2.dir);
 
-  // 桥接侧：enabled 不是 true 就完全不初始化
-  check('桥接默认不启用（要 === true 才加载）', /if \(ttsCfg\.enabled === true\)/.test(bridgeSrc));
-  check('未启用只记一行日志', /\[TTS\] 未启用.*只发文字/.test(bridgeSrc));
-  check('探测失败只记日志不抛', /\[TTS\] 已启用但不可用：\$\{probe\.reason\}/.test(bridgeSrc));
-  check('初始化异常被吞掉', /\[TTS\] 初始化失败（不影响文字聊天）/.test(bridgeSrc));
+  // 插件侧：enabled 不是 true 就完全不初始化；桥接只负责加载宿主
+  check('TTS 插件默认不启用（要 === true 才加载）', /if \(t\.enabled !== true\)/.test(ttsPluginSrc));
+  check('未启用只记一行日志', /未启用.*只发文字/.test(ttsPluginSrc));
+  check('探测失败只记日志不抛', /已启用但不可用：\$\{probe\.reason\}/.test(ttsPluginSrc));
+  check('初始化异常被吞掉', /初始化失败（不影响文字聊天）/.test(ttsPluginSrc));
+  check('桥接通过插件运行时加载 TTS', /createPluginRuntime/.test(bridgeSrc)
+    && /pluginRuntime\.ttsEngine\(\)/.test(bridgeSrc));
 }
 
 // ── 2. 真机探测（可选）──
@@ -100,17 +105,16 @@ console.log('\n── 3. 常驻进程协议 ──');
 // ── 4. 概率发语音的判定 ──
 console.log('\n── 4. 掷骰与回退 ──');
 {
-  check('由桥接掷骰而非模型决定', /Math\.random\(\) >= prob/.test(bridgeSrc));
-  check('只对单条消息发语音', /messages\.length !== 1/.test(bridgeSrc));
+  check('由 TTS 插件掷骰而非模型决定', /Math\.random\(\) >= prob/.test(ttsPluginSrc));
+  check('只对单条消息发语音', /messages\.length !== 1/.test(ttsPluginSrc));
 
   // 默认触发率（2026-10-22 用户要求 8% → 5%）。
-  // 关键是**只有一个来源**：这个值原本散落 4 处，改一处漏一处就会出现
-  // "日志说 8%、实际按 5% 掷"的自相矛盾。现在统一走常量。
-  check('默认概率是 5%', /const TTS_DEFAULT_PROBABILITY = 0\.05;/.test(bridgeSrc),
-    (bridgeSrc.match(/const TTS_DEFAULT_PROBABILITY = ([\d.]+)/) || [])[1]);
-  const literal08 = (bridgeSrc.match(/probability \?\? 0\.08/g) || []).length;
+  // 关键是**只有一个来源**：常量在 tts.js，桥接/插件/控制台都引用它。
+  check('默认概率是 5%', /export const TTS_DEFAULT_PROBABILITY = 0\.05;/.test(ttsSrc));
+  const literal08 = (ttsSrc.match(/probability \?\? 0\.08/g) || []).length
+    + (ttsPluginSrc.match(/probability \?\? 0\.08/g) || []).length;
   check('没有残留写死的 8% 默认值', literal08 === 0, `${literal08} 处`);
-  const constRefs = (bridgeSrc.match(/probability \?\? TTS_DEFAULT_PROBABILITY/g) || []).length
+  const constRefs = (ttsPluginSrc.match(/probability \?\? TTS_DEFAULT_PROBABILITY/g) || []).length
     + (consoleServerSrc.match(/probability \?\? TTS_DEFAULT_PROBABILITY/g) || []).length;
   check('默认值统一走常量（≥3 处引用）', constRefs >= 3, `${constRefs} 处`);
   // 模型主动发语音**不受概率限制**：群友明确要听，就该发。
@@ -122,11 +126,11 @@ console.log('\n── 4. 掷骰与回退 ──');
   // 用字面量 includes 而不是正则：源码那行本身含大量转义，
   // 再用正则去匹配它极易写错（这条断言就因此假失败过一次）。
   check('含链接/代码不发',
-    bridgeSrc.includes('https?:\\/\\/|www\\.|```'),
-    '查找 planTtsV2 里的链接/代码过滤');
-  check('纯数字不发', /\^\[\\d\\s\.,%\+-\]\+\$/.test(bridgeSrc));
-  check('每小时上限（防连发）', /ttsTimes/.test(bridgeSrc) && /maxPerHour/.test(bridgeSrc));
-  check('不与 @ 同时生效（引用可以带进语音）', /\(autoAt \|\| atUserId\) \? null : planTtsV2/.test(qqSendSrc));
+    ttsPluginSrc.includes('https?:\\/\\/|www\\.|```'),
+    '查找 TTS 插件里的链接/代码过滤');
+  check('纯数字不发', /\^\[\\d\\s\.,%\+-\]\+\$/.test(ttsPluginSrc));
+  check('每小时上限（防连发）', /ttsTimes/.test(ttsPluginSrc) && /maxPerHour/.test(ttsPluginSrc));
+  check('不与 @ 同时生效（引用可以带进语音）', /\(autoAt \|\| atUserId\) \? null : \(getTtsPlugin\(\)\?\.plan/.test(qqSendSrc));
   check('语音不拼 reply 段（QQ 不支持同气泡）', !/type: 'reply', data: \{ id: String\(info\.replyToMessageId\) \}/.test(qqSendSrc));
   check('语音失败回退文字时保留引用', /onebotSend\(kind, id, ttsPlan\.text, replyToMessageId, null\)/.test(qqSendSrc));
   // 最关键的一条：语音失败必须回退文字
@@ -141,11 +145,11 @@ console.log('\n── 5. 发送链路 ──');
   check('用 OneBot record 段', /type: 'record', data: \{ file: `file:\/\/\$\{abs\}` \}/.test(bridgeSrc));
   check('调用后记录已发消息', /recordSentMessage\(key, body\.data, `［语音］/.test(bridgeSrc));
   check('概率语音在发送列表标 isVoice', /sent\.push\(\{ text: ttsPlan\.text, isVoice: true \}\)/.test(qqSendSrc));
-  check('发送记录保留 [语音] 标记', /isVoice \? '\[语音\] ' : ''/.test(bridgeSrc) && /isVoice,/.test(bridgeSrc));
+  check('发送记录保留 [语音] 标记', /isVoice \? '\[语音\] ' : ''/.test(socialSrc) && /isVoice,/.test(socialSrc));
   check('主动语音写回 recentMessages', /recordSentMessagesV2\(key, \[\{ text, isVoice: true \}\]\)/.test(consoleServerSrc));
   {
     const i = consoleServerSrc.indexOf("url.pathname === '/api/socialV2/send-voice'");
-    const block = consoleServerSrc.slice(i, i + 3200);
+    const block = consoleServerSrc.slice(i, i + 5000);
     check('主动语音更新 lastAiReplyAt', i > 0 && /lastAiReplyAt/.test(block));
   }
   check('失败时报出 retcode', /发语音失败: \$\{body\.wording \|\| body\.retcode/.test(bridgeSrc));
@@ -378,8 +382,10 @@ console.log('\n── 6b. 韵律参数与标点规范化 ──');
   check('Python 侧响度归一 + 限峰',
     /target_rms = 10 \*\* \(-20\.0 \/ 20\.0\)/.test(py)
     && /peak_limit = 10 \*\* \(-1\.5 \/ 20\.0\)/.test(py));
-  check('bridge 每次现读韵律参数',
-    /function ttsSpeechParams\(\)/.test(bridge) && /params: ttsSpeechParams\(\)/.test(qqSendSrc));
+  check('TTS 插件每次现读韵律参数',
+    /function speechParams\(\)/.test(ttsPluginSrc)
+    && /function ttsSpeechParams\(\)/.test(bridge)
+    && /pluginRuntime\?\.ttsSpeechParams\?\.\(\)/.test(bridge));
   check('配置 clamp 用小数（不会取整）', /clampDec\('speed', 0\.8, 1\.2, 1\.0\)/.test(consoleServerSrc));
   check('控制台有语速/停顿/温度/音量和标点开关',
     /id="ttsPSpeed"/.test(html) && /id="ttsPFragment"/.test(html)

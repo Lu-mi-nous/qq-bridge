@@ -9,13 +9,15 @@ import { createEventHarness, sessionEvent, assistantMessage, turnEnd } from './h
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const src = fs.readFileSync(path.join(ROOT, 'src', 'bridge.js'), 'utf8');
 const socialStateSrc=fs.readFileSync(path.join(ROOT,'src/pipeline/social-state.js'),'utf8');
+const replyTargetSrc=fs.readFileSync(path.join(ROOT,'src/pipeline/reply-target.js'),'utf8');
 const wakeSrc = fs.readFileSync(path.join(ROOT, 'src', 'pipeline', 'wake.js'), 'utf8');
-const consoleServer = fs.readFileSync(path.join(ROOT, 'src', 'console-server.js'), 'utf8');
+const consoleServer = readConsoleSource();
 
 let pass = 0;
 let fail = 0;
@@ -53,7 +55,7 @@ console.log('── 活跃群沉睡前死锁 ──');
 check('已发言超过宽限后不再要求连续静默', /now - lastReply >= graceMs/.test(socialStateSrc));
 check('preSleepWaitBlockedV2 接收会话 key', /function preSleepWaitBlockedV2\(st, key = ''\)/.test(socialStateSrc) && /preSleepWaitBlockedV2\(st, key\)/.test(consoleServer));
 check('唤醒提示明确发言后结束回合', /【回合收尾】/.test(wakeSrc) && /不要再调用 qq_wait_for_messages 守候/.test(wakeSrc));
-check('引用目标被 recent 挤出时从 journal 兜底', /从完整日志找回 seq=/.test(src) && /loadContextMessages\(STATE_DIR, journalKey/.test(src));
+check('引用目标被 recent 挤出时从 journal 兜底', /从完整日志找回 seq=/.test(replyTargetSrc) && /loadContextMessages\(STATE_DIR, journalKey/.test(replyTargetSrc));
 check('单回合上限可配置', /waitCfg\.turnMaxCount/.test(consoleServer) && /waitCfg\.turnMaxMs/.test(consoleServer));
 check('发言后收尾宽限可配置', /preSleepReplyGraceMs/.test(socialStateSrc));
 

@@ -3,7 +3,7 @@
 // 背景（2026-10-12 用户第三次反馈，截图原文「这两下 @ 我都应过了，管理员的「在的」、
 // 喊口号那个也拒了」）：
 // 这条是**被桥接逼出来的**，不是模型自己想总结自己。转录里的完整因果链
-// （群 100002033，事件 17398~17410）：
+// （群 100002015，事件 17398~17410）：
 //   1. 模型 qq_wait_for_messages 完成观察窗口
 //   2. 模型 qq_set_wake_config 想潜水 → 被拒，报错原文：
 //      「未读里有人在叫你，不能先潜水走人：…。请先正面回应…；
@@ -12,7 +12,7 @@
 //
 // 根因：findCallersV2 把未读里的 @ 分成 answered（已答过）/ pending（还没答），
 // 但拦截判的是 **callerMsgs.length（总数）**，没看 pending。拿当时的真实状态复现：
-//   unread 中被判定为「在叫我」: 2 条（seq=1220 群友U、seq=1226 群友S）
+//   unread 中被判定为「在叫我」: 2 条（seq=1220 Lu-mi-nous、seq=1226 小莫姬）
 //   answered: 2    pending: 0
 //   => 旧判据 callerMsgs.length = 2 → 拦截（明明都答过了）
 // 那两条 @ 之所以还在未读里，是因为模型用 qq_send_message 回复时没带
@@ -22,11 +22,12 @@
 // 这个测试直接 import pipeline/wake.js 的真实实现，避免复制品与产品代码漂移。
 import fs from 'node:fs';
 import { findPendingCallers } from '../src/pipeline/wake.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
-const consoleServer = fs.readFileSync(new URL('../src/console-server.js', import.meta.url), 'utf8');
+const consoleServer = readConsoleSource();
 
 // ── 1. import 真实判定；只替换别名来源 ──
 const findCallersV2 = (_key, st) => findPendingCallers(st, {
@@ -67,7 +68,7 @@ const msg = (seq, text, time, extra = {}) => ({
   seq, text, plain: text, time, sender: '群友', isSelf: false, ...extra
 });
 
-console.log('\n── 真实故障现场（群 100002033，unread 快照）──');
+console.log('\n── 真实故障现场（群 100002015，unread 快照）──');
 {
   // 复刻当时的两条 @：都在 lastAiReplyAt 之前 → 都算 answered
   const st = {
@@ -172,7 +173,7 @@ console.log('\n── 拍一拍不算「在叫你」（历史坑，防回归）�
   const st = {
     lastAiReplyAt: RE,
     wakeConfig: { triggers: { keywords: [] } },
-    unread: [msg(1300, '[拍一拍] 群友E 戳了戳 你', RE - 10000)]
+    unread: [msg(1300, '[拍一拍] 群友B 戳了戳 你', RE - 10000)]
   };
   const c = findCallersV2('group:1', st);
   check('拍一拍不进 callers', c.length === 0, String(c.length));

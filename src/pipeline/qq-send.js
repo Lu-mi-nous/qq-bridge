@@ -20,11 +20,8 @@ export function createQQSender(deps) {
     bot,
     recordSentMessage,
     planAutoAtV2,
-    planTtsV2,
+    getTtsPlugin,
     onebotSend,
-    getSocialV2State,
-    saveSocialV2State,
-    appendActivity,
     syncStickerLibrary,
     findSticker,
     getStickerEntries,
@@ -32,9 +29,7 @@ export function createQQSender(deps) {
     validateFetchUrl,
     markStickerUsed,
     saveStickerStoreSafe,
-    getTtsEngine,
-    ttsSpeechParams,
-    onebotSendVoiceFile
+    isFused
   } = deps;
 
   function sendToQQ(key, msg) {
@@ -62,6 +57,10 @@ export function createQQSender(deps) {
   }
 
   function sendBurstToQQ(key, messages, socialCfgOrMin, maybeMax) {
+    if (isFused?.(key)) {
+      log(`[Token熔断] 拦截分条发送 ${key}：会话已熔断`);
+      throw new Error('会话已触发 Token 熔断，自动发送已停止；请先在控制台解除熔断');
+    }
     const [kind, id] = key.split(':');
     let min, max, longProb = 0, longMin = 0, longMax = 0;
     if (typeof socialCfgOrMin === 'object' && socialCfgOrMin !== null) {
@@ -99,6 +98,10 @@ export function createQQSender(deps) {
   }
 
   function sendMessagesV2(key, messages, delays, replyToMessageId, atUserId = null, options = {}) {
+    if (isFused?.(key) && options.manual !== true) {
+      log(`[Token熔断] 拦截消息发送 ${key}：会话已熔断`);
+      throw new Error('会话已触发 Token 熔断，自动发送已停止；请先在控制台解除熔断');
+    }
     const [kind, id] = key.split(':');
     const sent = [];
     const failed = [];
@@ -108,7 +111,7 @@ export function createQQSender(deps) {
     // 注意它**不能与 @ 同时生效**：record 段不承载 at。
     // 也不能和 reply 同气泡（QQ 客户端实测语音不渲染）。所以带 replyToMessageId
     // 的回复仍然可以掷中语音，但语音单发；引用语义由端点内部保留。
-    const ttsPlan = (autoAt || atUserId) ? null : planTtsV2(key, messages, options);
+    const ttsPlan = (autoAt || atUserId) ? null : (getTtsPlugin()?.plan?.(key, messages, options) ?? null);
     return sendQueue.enqueue(key, async () => {
       if (ttsPlan) {
         const r = await sendAsVoice(key, ttsPlan.text, ttsPlan);
@@ -150,36 +153,16 @@ export function createQQSender(deps) {
   }
 
   async function sendAsVoice(key, text, plan) {
-    const [kind, id] = key.split(':');
-    try {
-      // refMode 每次现读配置：换成"固定某条参考"即时生效，不必重启；
-      // 音色/权重才是启动参数（需重启）。
-      const fixedRef = String(cfg.socialV2?.tts?.refMode || '').trim();
-      const r = await deps.getTtsEngine().speak(text, {
-        mood: plan?.mood,
-        refId: fixedRef && fixedRef !== 'auto' ? fixedRef : '',
-        params: ttsSpeechParams()
-      });
-      if (!r.ok) {
-        log(`[TTS] 合成失败，改发文字：${r.error}`);
-        return { ok: false, reason: r.error };
-      }
-      await onebotSendVoiceFile(key, r.file, { text });
-      const st = getSocialV2State(key);
-      st.ttsTimes = [...(plan?.history ?? []), Date.now()].slice(-200);
-      st.lastTtsAt = Date.now();
-      saveSocialV2State();
-      const refTag = r.refMood ? `，情绪=${r.refMood}/${r.refId}` : '';
-      log(`[TTS] 已发语音（${r.cached ? '缓存' : `${r.synthSec ?? '?'}s 合成`}，${r.durSec}s，${text.length} 字${refTag}）→ ${key}`);
-      appendActivity(`${key} [TTS] 发了一条语音（${r.durSec}s）`);
-      return { ok: true, durSec: r.durSec, cached: !!r.cached, file: r.file };
-    } catch (error) {
-      log(`[TTS] 发送语音失败，改发文字：${error?.message ?? error}`);
-      return { ok: false, reason: String(error?.message ?? error) };
-    }
+    const plugin = getTtsPlugin();
+    if (!plugin?.sendAsVoice) return { ok: false, reason: 'TTS 插件未启用' };
+    return plugin.sendAsVoice(key, text, plan);
   }
 
   async function sendStickerV2(key, stickerRef, options = {}) {
+    if (isFused?.(key) && options.manual !== true) {
+      log(`[Token熔断] 拦截表情发送 ${key}：会话已熔断`);
+      throw new Error('会话已触发 Token 熔断，自动发送已停止；请先在控制台解除熔断');
+    }
     // 发送前强制同步一次，确保“刚新增的表情能立即用、刚删除的表情不会继续发”。
     const synced = await syncStickerLibrary(true);
     const entry = findSticker(synced?.entries ?? deps.getStickerEntries(), stickerRef);

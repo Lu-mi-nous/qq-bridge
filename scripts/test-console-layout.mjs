@@ -9,13 +9,14 @@
 // 顶部加了目录方便跳转。本测试锁住这些不变量。
 import fs from 'node:fs';
 import path from 'node:path';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
-const consoleServerSrc = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+const consoleServerSrc = readConsoleSource();
 
 // 按文档顺序取出所有卡片编号
 // 注意：06（一代仿真模式）是可折叠卡片，sec-no 写在折叠头部而不是 <h2> 里。
@@ -506,7 +507,7 @@ console.log('\n── 12. 侧栏分类导航 + 关于页 ──');
   check('有左侧分类导航', /id="consoleSidebar"/.test(html) && /class="console-sidebar"/.test(html));
   check('侧栏使用项目 SVG 图标', /<use href="#qq-bridge-mark"/.test(html) && /class="side-ico"[^>]*><use href="#ico-/.test(html));
   check('关于按钮在侧栏底部（nav 之外）', /<div class="sidebar-bottom">[\s\S]{0,220}?data-group="about"/.test(html));
-  check('侧栏按钮默认有可见样式', /\.side-item \{[\s\S]{0,260}?background: oklch\(100% 0 0 \/ \.34\)/.test(html));
+  check('侧栏按钮默认有可见样式', /\.side-item \{[\s\S]{0,260}?background: oklch\(100% 0 0 \/ \.52\)/.test(html));
   check('有总览/运行/内容/社群/能力/系统/关于', ['all','run','content','community','media','system','about'].every(g => new RegExp('data-group="' + g + '"').test(html)));
   check('摘要卡带分类字段', /btn\.dataset\.group = CARD_GROUPS\[no\]/.test(html));
   check('分类映射覆盖 24 张卡', (html.match(/'\d\d': '(run|content|community|media|system)'/g) || []).length >= 24);
@@ -520,6 +521,9 @@ console.log('\n── 12. 侧栏分类导航 + 关于页 ──');
     && /function loadAboutPage\(\)/.test(html));
   check('关于页卡片复用入场动画（错峰）', /about-anim/.test(html) && /animation: cardEnter/.test(html) && /animation-delay: calc\(var\(--i/.test(html));
   check('关于页内容更丰富（能力/技术栈）', /能力概览/.test(html) && /about-feature-grid/.test(html) && /技术栈与链接/.test(html));
+  check('关于页说明卡有开发日志按钮/弹窗',
+    /id="devLogOpen"/.test(html) && /id="devLogOverlay"/.test(html)
+    && /function openDevLog\(/.test(html) && /function refreshDevLog\(/.test(html));
   check('技术栈与链接合并为一张卡片', /class="card about-stack about-anim"/.test(html) && /class="about-link-grid"/.test(html) && /id="aboutRepo"/.test(html));
   check('包含本项目与各技术官网/仓库', /nodejs\.org/.test(html) && /github\.com\/SnowLuma\/SnowLuma/.test(html) && /deepseek-harness/.test(html) && /onebot-11/.test(html) && /ffmpeg\.org/.test(html) && /GPT-SoVITS/.test(html));
   check('窄屏侧栏横向导航', /@media \(max-width: 900px\)[\s\S]{0,500}?\.console-sidebar/.test(html));

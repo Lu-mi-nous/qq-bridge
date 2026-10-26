@@ -22,6 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { findFfmpeg, findFfprobe } from './gif-frames.js';
+import { createJsonStore } from './state/store.js';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 const REFERER = 'https://www.bilibili.com/';
@@ -903,40 +904,34 @@ export function createVideoMemory(file, opts = {}) {
   const maxItems = Math.max(50, Math.min(5000, Number(opts.maxItems) || 800));
   const keepDailyDays = Math.max(1, Math.min(60, Number(opts.keepDailyDays) || 14));
 
+  // 桥接与 MCP 是两个进程、各有一个实例。store 用 reloadOnMtime 保留原来的
+  // "文件变了就重读"语义，避免后写的一方用旧内存副本覆盖先写的数据。
+  const store = createJsonStore({
+    file,
+    version: 1,
+    reloadOnMtime: true,
+    defaults: () => ({ updatedAt: 0, videos: {}, dailyUsage: {} })
+  });
   let data = null;
-  let dataMtime = 0;
+  let source = null;
+
+  function normalize(parsed) {
+    return {
+      updatedAt: Number(parsed?.updatedAt) || 0,
+      videos: parsed?.videos && typeof parsed.videos === 'object' ? parsed.videos : {},
+      dailyUsage: parsed?.dailyUsage && typeof parsed.dailyUsage === 'object' ? parsed.dailyUsage : {}
+    };
+  }
 
   /**
-   * 读记忆。**会检查文件 mtime**：桥接和 MCP 是两个进程、各有一个实例，
-   * 如果只在首次读盘然后一直用内存副本，后写的那方会覆盖先写的（实测数据丢失）。
-   * 所以每次 load 都比对 mtime，文件变了就重读。
-   *
-   * 为什么不做到"每次读写都加锁"：单人使用的机器人，写入频率很低（每条视频一次），
-   * mtime 检查足以避免"读到旧数据后整份覆盖"这种最坏情况；真正的并发写几乎不会发生。
+   * 读记忆。store 会按 mtime 热重载；这里只在底层对象变化时重新归一化，
+   * 保证同一次读改写拿到的是同一个 `data` 引用。
    */
   function load() {
-    let stat;
-    try {
-      stat = fs.statSync(file);
-    } catch {
-      // 文件不存在：保持空数据（首次运行）
-      if (!data) data = { updatedAt: 0, videos: {}, dailyUsage: {} };
-      dataMtime = 0;
-      return data;
-    }
-    if (data && stat.mtimeMs === dataMtime) return data;
-    try {
-      const raw = fs.readFileSync(file, 'utf8');
-      const parsed = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
-      data = {
-        updatedAt: Number(parsed.updatedAt) || 0,
-        videos: parsed.videos && typeof parsed.videos === 'object' ? parsed.videos : {},
-        dailyUsage: parsed.dailyUsage && typeof parsed.dailyUsage === 'object' ? parsed.dailyUsage : {}
-      };
-      dataMtime = stat.mtimeMs;
-    } catch {
-      // 文件损坏：不要覆盖已有文件，先用空数据跑（下次写入会覆盖）
-      data = data || { updatedAt: 0, videos: {}, dailyUsage: {} };
+    const raw = store.read();
+    if (raw !== source || !data) {
+      source = raw;
+      data = normalize(raw);
     }
     return data;
   }
@@ -945,12 +940,7 @@ export function createVideoMemory(file, opts = {}) {
     const d = load();
     d.updatedAt = Date.now();
     try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      const tmp = `${file}.${process.pid}.${Math.random().toString(16).slice(2, 8)}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(d, null, 2) + '\n', 'utf8');
-      fs.renameSync(tmp, file);
-      // 记下自己的 mtime，避免下次 load 白读一次（也避免把自己刚写的当成"别人改的"）
-      try { dataMtime = fs.statSync(file).mtimeMs; } catch {}
+      store.write(d);
       return true;
     } catch {
       return false;

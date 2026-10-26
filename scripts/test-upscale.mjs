@@ -25,6 +25,7 @@ import {
   configureUpscaleCache, upscaleCacheDir, pruneUpscaleCache, clearUpscaleCache,
   DEFAULT_BIN_DIR, DEFAULT_MODEL_DIR, MODEL_GUIDE
 } from '../src/upscale.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -305,7 +306,7 @@ console.log('\n── 4. 接线检查 ──');
   check('MCP 工具受配置开关控制', /socialV2\?\.upscale\?\.enabled !== false/.test(mcp));
 
   // ── 超分结果要发回会话（2026-10-19 用户反馈「超分完没有把超分后的结果发回」）──
-  const bridge = fs.readFileSync(path.join(srcRoot, 'console-server.js'), 'utf8');
+  const bridge = readConsoleSource();
   const mainBridge = fs.readFileSync(path.join(srcRoot, 'bridge.js'), 'utf8');
   check('桥接有超分回传端点', /url\.pathname === '\/api\/socialV2\/send-upscaled'/.test(bridge));
   check('回传只接受 base64（拒绝 URL/本地路径）', /data 必须是 base64 编码的图片/.test(bridge));
@@ -533,6 +534,7 @@ console.log('\n── 6. 缓存接线 ──');
   const srcRoot = path.join(root, 'src');
   const up = fs.readFileSync(path.join(srcRoot, 'upscale.js'), 'utf8');
   const bridge = fs.readFileSync(path.join(srcRoot, 'bridge.js'), 'utf8');
+  const upscaleBootstrap = fs.readFileSync(path.join(srcRoot, 'upscale-bootstrap.js'), 'utf8');
   const mcp = fs.readFileSync(path.join(srcRoot, 'mcp-snowluma-safe.js'), 'utf8');
 
   check('缓存键含原图哈希 + 模型 + 目标宽度', /cacheKey[\s\S]{0,300}sha256[\s\S]{0,200}model[\s\S]{0,80}targetWidth/.test(up));
@@ -540,10 +542,10 @@ console.log('\n── 6. 缓存接线 ──');
   check('缓存读取校验 PNG 头（损坏文件按未命中处理）', /buf\[0\] === 0x89[\s\S]{0,120}unlinkSync\(file\)/.test(up));
   check('命中时刷新 mtime（常用图不被优先淘汰）', /utimesSync\(file/.test(up));
   check('写入时按次数触发清理', /cacheWrites % CACHE_DEFAULTS\.sweepEveryWrites/.test(up));
-  check('桥接启动时配置缓存目录', /configureUpscaleCache/.test(bridge));
-  check('桥接启动时清理一次', /pruneUpscaleCache\(\{/.test(bridge));
-  check('桥接有定时清理定时器', /setInterval\([\s\S]{0,400}pruneUpscaleCache/.test(bridge));
-  check('定时器 unref（不阻止进程退出）', /everyH \* 3600 \* 1000\)\.unref\?\.\(\)/.test(bridge));
+  check('桥接启动时配置缓存目录', /configureUpscaleCache/.test(upscaleBootstrap));
+  check('桥接启动时清理一次', /pruneUpscaleCache\(\{/.test(upscaleBootstrap));
+  check('桥接有定时清理定时器', /setInterval\([\s\S]{0,400}pruneUpscaleCache/.test(upscaleBootstrap));
+  check('定时器 unref（不阻止进程退出）', /everyH \* 3600 \* 1000\)\.unref\?\.\(\)/.test(upscaleBootstrap));
   check('MCP 也配置缓存目录（独立进程）', /configureUpscaleCache/.test(mcp));
   check('MCP 与桥接用同一缓存目录', /path\.join\(ROOT, 'state', 'upscale-cache'\)/.test(mcp));
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));

@@ -81,14 +81,15 @@
   }
   .sidebar-brand-text b { display: block; font-size: 14.5px; color: var(--heading); letter-spacing: .01em; }
   .sidebar-brand-text span { display: block; margin-top: 1px; font-size: 11.5px; color: var(--muted); }
-  .sidebar-nav { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  /* 顶部留出 hover 位移与阴影的空间：否则第一个按钮（总览）的上沿会被滚动容器裁掉。 */
+  .sidebar-nav { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px 0 6px; }
   .side-label { padding: 13px 9px 5px; font-size: 10.5px; letter-spacing: .14em; color: var(--text-dim); text-transform: uppercase; }
   .side-item {
     position: relative; z-index: 0;
     display: flex; align-items: center; gap: 10px; width: 100%;
     padding: 9px 10px; border: 1px solid oklch(100% 0 0 / .44); border-radius: 10px;
-    background: oklch(100% 0 0 / .34);
-    box-shadow: inset 0 1px 0 oklch(100% 0 0 / .50);
+    background: oklch(100% 0 0 / .52);
+    box-shadow: inset 0 1px 0 oklch(100% 0 0 / .72), 0 1px 2px oklch(20% .03 250 / .06);
     color: var(--text); font: inherit; font-size: 13.5px; text-align: left;
     cursor: pointer;
     transition: background var(--anim-dur) var(--anim-ease),
@@ -99,9 +100,9 @@
   }
   .side-item:hover {
     z-index: 3;
-    background: oklch(100% 0 0 / .64);
-    border-color: var(--card-border);
-    box-shadow: 0 8px 18px -12px oklch(20% .03 250 / .45), inset 0 1px 0 oklch(100% 0 0 / .7);
+    background: oklch(100% 0 0 / .82);
+    border-color: oklch(80% .045 235 / .9);
+    box-shadow: 0 8px 18px -10px oklch(20% .03 250 / .5), inset 0 1px 0 oklch(100% 0 0 / .85);
     transform: translateY(-1px);
   }
   .side-item:focus-visible { z-index: 3; outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -112,7 +113,15 @@
     border-color: oklch(80% .055 230 / .48);
     box-shadow: inset 0 0 0 1px oklch(96% .02 230 / .9), 0 4px 14px -10px oklch(40% .08 230 / .45);
   }
-  .side-ico { width: 18px; height: 18px; flex: none; display: block; color: var(--text-dim); }
+  /* 点击反馈：按下时立刻压下去并出现内阴影，松开恢复。 */
+  .side-item:active {
+    transform: translateY(1px) scale(.985);
+    background: oklch(90.5% .035 230);
+    border-color: oklch(75% .055 230 / .7);
+    box-shadow: inset 0 2px 5px oklch(30% .04 240 / .18);
+    transition-duration: .08s;
+  }
+  .side-ico { width: 18px; height: 18px; flex: none; display: block; color: oklch(48% .045 235); }
   .side-item.active .side-ico { color: var(--accent); }
   .side-count { margin-left: auto; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .sidebar-bottom { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--card-border); }
@@ -141,6 +150,12 @@
   .about-chips span { padding: 5px 11px; border: 1px solid var(--card-border); border-radius: 999px; background: var(--surface); font-size: 11.5px; color: var(--muted); }
   .about-chips b { color: var(--heading); font-weight: 600; }
   .about-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  /* 插件卡片插槽（R4-5）：插件只给文本元数据，外观统一由控制台决定。 */
+  .plugin-card-list { display: grid; gap: 10px; }
+  .plugin-card-item { padding: 12px 14px; border: 1px solid var(--card-border); border-radius: 10px; background: var(--surface); }
+  .plugin-card-item b { display: block; margin-bottom: 4px; font-size: 13px; color: var(--heading); }
+  .plugin-card-item small { float: right; font-size: 11px; font-weight: 400; color: var(--muted); }
+  .plugin-card-item span { font-size: 12px; line-height: 1.65; color: var(--muted); }
   .about-view .about-card { padding: 20px; }
   .about-card h3, .about-features h3 { margin: 0 0 10px; font-size: 14px; color: var(--heading); }
   .about-card p { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--muted); }
@@ -148,8 +163,31 @@
   .about-kv:last-child { border-bottom: 0; }
   .about-kv span { color: var(--muted); }
   .about-kv b { color: var(--heading); font-weight: 600; text-align: right; overflow-wrap: anywhere; }
-  .about-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 8px 13px; border-radius: 9px; font-size: 12px; text-decoration: none; color: #fff; background: var(--accent); }
-  .about-link:hover { filter: brightness(1.06); }
+  .about-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-top: 10px; padding: 8px 13px; border-radius: 9px;
+    font-size: 12px; text-decoration: none; color: var(--accent);
+    background: color-mix(in oklch, var(--primary) 14%, white);
+    border: 1px solid color-mix(in oklch, var(--primary) 30%, var(--card-border));
+    box-shadow: inset 0 1px 0 oklch(100% 0 0 / .75);
+    transition: transform var(--anim-dur) var(--anim-ease),
+                background var(--anim-dur) var(--anim-ease),
+                border-color var(--anim-dur) var(--anim-ease),
+                box-shadow var(--anim-dur) var(--anim-ease),
+                color var(--anim-dur) var(--anim-ease);
+  }
+  .about-link:hover {
+    transform: translateY(-2px);
+    background: color-mix(in oklch, var(--primary) 23%, white);
+    border-color: color-mix(in oklch, var(--primary) 50%, var(--card-border));
+    box-shadow: 0 8px 18px -12px oklch(30% .06 240 / .55), inset 0 1px 0 oklch(100% 0 0 / .85);
+  }
+  .about-link:active {
+    transform: translateY(0) scale(.98);
+    background: color-mix(in oklch, var(--primary) 30%, white);
+    box-shadow: inset 0 2px 5px oklch(30% .06 240 / .16);
+  }
+  .about-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   /* 关于页与摘要卡一致的入场/悬停动画（错峰由 --i 控制） */
   .about-view .about-anim {
     opacity: 0; transform: translateY(10px);
@@ -176,6 +214,7 @@
   .about-actions { display: flex; justify-content: center; margin-top: 14px; }
   .about-stack { padding: 20px; }
   .about-stack h3 { margin: 0 0 10px; font-size: 14px; color: var(--heading); }
+  .about-stack p { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--muted); }
   .about-link-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 16px; }
   .about-link-grid .about-link { width: 100%; margin-top: 0; padding: 10px 12px; justify-content: flex-start; border-radius: 10px; box-sizing: border-box; }
   .about-link-ico { width: 14px; height: 14px; flex: none; opacity: .9; }
@@ -184,6 +223,9 @@
   @media (prefers-reduced-motion: reduce) {
     .about-view .about-anim { animation: none !important; opacity: 1 !important; transform: none !important; }
     .about-view .about-anim:hover { transform: none; }
+    .about-link { transition: none !important; }
+    .about-link:hover,
+    .about-link:active { transform: none; }
   }
   .topbar {
     display: flex;
@@ -531,9 +573,22 @@
     padding: 8px 14px;
     cursor: pointer;
     font-size: 13px;
-    transition: background 0.15s ease, border-color 0.15s ease;
+    transition: background 0.15s ease, border-color 0.15s ease,
+                transform 0.12s ease, filter 0.12s ease;
   }
   button:hover { background: var(--surface-3); }
+  /* 普通按钮的通用点按反馈：比侧栏更轻（不加深阴影，只轻微下沉+压暗）。 */
+  button:not(.side-item):not(.summary-card):not(.cred-eye):not(.planned):not(:disabled):active {
+    transform: translateY(1px) scale(.992);
+    filter: brightness(.97);
+    transition-duration: .08s;
+  }
+  /* 眼睛按钮自带 translateY(-50%) 居中，不能套用通用 scale 规则。 */
+  .cred-input-wrap .cred-eye:active {
+    transform: translateY(-50%) scale(.9);
+    filter: brightness(.9);
+    opacity: .8;
+  }
   button.active { background: var(--accent); border-color: var(--accent-border); color: #fff; }
   button.danger { background: var(--danger); border-color: var(--danger-border); }
   /* nowrap：卡片变窄后（本排统一高度+卡内滚动），按钮文字曾被挤成竖排单字，很难点 */
@@ -1067,6 +1122,97 @@
   #ctxSharedList .tk-table { min-width: 720px; }
   #tokenFusePanel .fuse-global input { width: 72px; height: 24px; box-sizing: border-box; }
   #tokenFusePanel .fuse-global select { width: 42px; min-width: 42px; height: 24px; box-sizing: border-box; padding: 1px; }
+  .dev-log-list {
+    margin-top: 10px;
+    max-height: clamp(300px, 62vh, 720px);
+    overflow: auto;
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    background: var(--card);
+    padding: 4px 12px;
+  }
+  .dev-log-section { border-bottom: 1px dashed var(--card-border); padding: 4px 0; }
+  .dev-log-section:last-child { border-bottom: 0; }
+  .dev-log-section > summary { cursor: pointer; padding: 7px 2px; color: var(--heading); font-weight: 600; }
+  .dev-log-section > summary .meta { font-weight: 400; margin-left: 6px; }
+  /* 每个需求一张卡：网格排布，默认收起，悬停与关于页卡片一致。 */
+  .dev-log-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    align-items: start;
+    gap: 10px;
+    padding: 6px 2px 12px;
+  }
+  .dev-log-card {
+    position: relative;
+    align-self: start;
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    background: var(--surface);
+    overflow: hidden;
+    transition: transform var(--anim-dur) var(--anim-ease),
+                box-shadow var(--anim-dur) var(--anim-ease),
+                border-color var(--anim-dur) var(--anim-ease);
+  }
+  .dev-log-card:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklch, var(--primary) 32%, var(--card-border));
+    box-shadow: var(--shadow-card);
+  }
+  .dev-log-card-head {
+    position: relative;
+    display: block;
+    width: 100%;
+    padding: 10px 28px 10px 12px;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .dev-log-card-head::after {
+    content: '＋';
+    position: absolute;
+    right: 10px;
+    top: 10px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .dev-log-card.open .dev-log-card-head::after { content: '－'; }
+  .dev-log-card-title { display: block; font-size: 13px; font-weight: 600; line-height: 1.45; color: var(--text); }
+  .dev-log-card-meta { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); }
+  /* 展开/收起用 max-height 过渡；高度由渲染后测量的 scrollHeight 写入 --dev-h。 */
+  .dev-log-card-body {
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height var(--anim-dur) var(--anim-ease),
+                opacity calc(var(--anim-dur) * .8) ease;
+  }
+  .dev-log-card.open .dev-log-card-body {
+    max-height: var(--dev-h, 1200px);
+    opacity: 1;
+  }
+  .dev-log-card-inner {
+    padding: 8px 12px 12px;
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: var(--text-dim);
+  }
+  .dev-log-card-inner p { margin: 0 0 4px; }
+  .dev-log-card-inner p:last-child { margin-bottom: 0; }
+  .dev-log-card-inner ul,
+  .dev-log-card-inner ol { margin: 4px 0 4px 18px; padding: 0; }
+  .dev-log-card-inner code { padding: 1px 4px; border-radius: 4px; background: var(--surface); font-size: 11.5px; }
+  .dev-log-modal {
+    width: min(960px, 94vw);
+    max-height: 86vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .dev-log-modal .dev-log-list { flex: 1 1 auto; min-height: 0; max-height: none; }
   #tokenFuseList { max-height: 360px; overflow: auto; }
   #tokenFuseList .tk-table { min-width: 1100px; }
   #tokenFuseList .tk-table th,
@@ -1512,6 +1658,12 @@
   @media (prefers-reduced-motion: reduce) {
     .summary-card { animation: none !important; opacity: 1 !important; transform: none !important; }
     .summary-card:hover, .summary-card:active { transform: none; }
+    button:not(.side-item):not(.summary-card):not(.cred-eye):not(:disabled):active {
+      transform: none; filter: none;
+    }
+    .cred-input-wrap .cred-eye:active {
+      transform: translateY(-50%); filter: none;
+    }
     .summary-card::before, .summary-card::after { display: none; }
     .summary-card .sc-dot { animation: none; }
     /* 名称上移与简介浮现保留"状态切换"，但不做过渡（无动画） */
@@ -1620,7 +1772,7 @@
       <div class="sidebar-bottom">
         <button type="button" class="side-item" data-group="about"><svg class="side-ico" aria-hidden="true"><use href="#ico-info"></use></svg><span class="side-text">关于</span></button>
       </div>
-      <div class="sidebar-foot"><span>QQ Bridge</span><span id="sidebarVersion">v0.4.0</span></div>
+      <div class="sidebar-foot"><span>QQ Bridge</span><span id="sidebarVersion">v0.4.1</span></div>
     </aside>
     <div class="app-main">
   <header class="topbar">
@@ -1647,7 +1799,7 @@
   <div id="aboutView" class="about-view" hidden>
     <section class="card about-hero about-anim" style="--i:0">
       <svg class="about-logo" aria-hidden="true"><use href="#qq-bridge-mark"></use></svg>
-      <h2>QQ Bridge <span class="about-badge" id="aboutVersion">v0.4.0</span></h2>
+      <h2>QQ Bridge <span class="about-badge" id="aboutVersion">v0.4.1</span></h2>
       <div class="about-tagline">DeepSeek Harness ↔ QQ 桥接控制台</div>
       <p class="about-desc">把 QQ 群聊接进 DeepSeek Harness agent：群友的消息变成提示词，AI 的回复、提问、审批回到 QQ。控制台负责运行模式、人格、上下文、媒体与工具配置。</p>
       <div class="about-chips">
@@ -1675,19 +1827,28 @@
         <div class="about-kv"><span>Node.js</span><b id="aboutNode2">—</b></div>
         <div class="about-kv"><span>平台 / 架构</span><b id="aboutPlatform">—</b></div>
         <div class="about-kv"><span>SnowLuma</span><b id="aboutSnowluma2">—</b></div>
+        <div class="about-kv"><span>插件</span><b id="aboutPlugins">—</b></div>
       </section>
       <section class="card about-card about-anim" style="--i:3">
         <h3>说明</h3>
         <p>控制台所有配置写入本机 <code>config.json</code> / <code>state/</code>，不会上传到外部。上下文统计只读取本项目的 DSH 会话转录，不包含机器上其它项目。</p>
+        <button id="devLogOpen" class="small" style="margin-top:12px">查看开发日志</button>
       </section>
     </div>
 
+    <!-- 插件卡片插槽（R4-5）：内容来自 /api/plugins 的 console.cards，
+         由插件通过 ctx.console.registerCard() 声明；这里只渲染文本，不执行插件脚本。 -->
+    <section class="card about-card about-anim" id="pluginCardSlot" style="--i:3" hidden>
+      <h3>插件卡片</h3>
+      <div id="pluginCardList" class="plugin-card-list"></div>
+    </section>
+
     <section class="card about-stack about-anim" style="--i:4">
       <h3>技术栈与链接</h3>
-      <p>消息从 QQ 进入 SnowLuma 的 OneBot v11 接口，由 qq-bridge 转换成 DSH 会话提示词，再把 agent 的回复与工具调用送回 QQ。</p>
+      <p>消息从 QQ 进入 SnowLuma 的 OneBot v11 接口，由 qq-bridge 完成会话映射、人格与上下文拼装、准入控制和每会话发送队列，再交给 DSH 调度模型与 MCP 工具。<br>DSH 的回复和工具调用回到桥接后，经静默、限频与发送队列送回 QQ；控制台、状态文件与本地缓存均只在本机运行，模型网关只负责推理，不保存 QQ 消息。</p>
       <div class="about-flow"><b>QQ</b><i>→</i><b>SnowLuma</b><i>→</i><b>qq-bridge</b><i>→</i><b>DSH</b><i>→</i><b>模型网关</b></div>
       <div class="about-link-grid">
-        <a class="about-link" id="aboutRepo" href="https://github.com/群友U/qq-bridge" target="_blank" rel="noopener noreferrer" aria-label="打开本项目 GitHub 仓库">
+        <a class="about-link" id="aboutRepo" href="https://github.com/Lu-mi-nous/qq-bridge" target="_blank" rel="noopener noreferrer" aria-label="打开本项目 GitHub 仓库">
           <svg class="about-link-ico" aria-hidden="true"><use href="#ico-external"></use></svg><span class="about-link-name">本项目 · qq-bridge</span><small>GitHub</small>
         </a>
         <a class="about-link" href="https://nodejs.org/" target="_blank" rel="noopener noreferrer" aria-label="打开 Node.js 官网">
@@ -1796,7 +1957,7 @@
               <div id="roleGroupList" class="role-group-list">加载中…</div>
             </div>
             <div class="role-side-col">
-              <div class="meta">人格库（点击预览，标题栏「群友Y1」可直接改；用上方下拉设置默认，用群列表下拉设置单群）</div>
+              <div class="meta">人格库（点击预览，标题栏「编辑」可直接改；用上方下拉设置默认，用群列表下拉设置单群）</div>
               <div id="roleList" class="role-tags">加载中…</div>
               <div class="md-panel" id="rolePreviewPanel">
                 <div class="md-panel-hd">
@@ -2380,7 +2541,7 @@
 
     <!-- 黑话确认/编辑弹窗已移到 body 级（见正文末尾）：
          它是全局浮层，不能留在 #detailPool 里——池子初始是 display:none，
-         08 卡搬进整页后这个浮层仍被留在池子里，点「群友Y1」会毫无反应。 -->
+         08 卡搬进整页后这个浮层仍被留在池子里，点「编辑」会毫无反应。 -->
 
     <!-- ============ 09 DSH 侧 MCP 工具 ============ -->
     <section id="sec-09" class="card span-all">
@@ -2674,7 +2835,7 @@
           <div class="meta" style="margin:4px 0 2px">“自动”会按这句回复的语气（开心/生气/难过/中性）挑参考音频；换音色或权重版本需重启，换参考策略即时生效。</div>
           <div class="row">
             <label style="flex:none;width:110px">引擎目录</label>
-            <input type="text" id="ttsPDir" style="flex:1;min-width:0" placeholder="D:\GPT-SoVITS">
+            <input type="text" id="ttsPDir" style="flex:1;min-width:0" placeholder="C:\GPT-SoVITS">
             <button type="button" class="small" data-tts-pick="dir" data-tts-target="ttsPDir">选择…</button>
           </div>
           <div class="row" style="margin-top:6px">
@@ -2913,6 +3074,23 @@
     </div>
   </div>
 
+  <!-- ============ 开发日志弹窗（关于页「说明」卡按钮） ============ -->
+  <div class="modal-overlay" id="devLogOverlay">
+    <div class="modal dev-log-modal" role="dialog" aria-modal="true" aria-labelledby="devLogTitle">
+      <div class="row" style="justify-content:space-between;align-items:center;margin:0">
+        <h3 id="devLogTitle" style="margin:0">开发日志</h3>
+        <button class="small" id="devLogClose" type="button" title="关闭（Esc）" aria-label="关闭">✕</button>
+      </div>
+      <div class="meta" id="devLogStatus" style="margin-top:6px">加载中…</div>
+      <div id="devLogList" class="dev-log-list"></div>
+      <div class="row" style="margin-top:10px">
+        <button id="devLogRefresh" class="small">刷新</button>
+        <button id="devLogMore" class="small" hidden>显示全部</button>
+        <span class="meta" id="devLogMsg"></span>
+      </div>
+    </div>
+  </div>
+
   <!-- ============ 黑话确认/编辑弹窗（body 级浮层） ============
        必须在 #detailPool 之外：池子会 display:none，留在里面就永远打不开。
        z-index 1000 > 整页详情的 900，所以叠在整页之上。 -->
@@ -2981,6 +3159,14 @@ async function api(path, method, body, _retried = 0) {
   return res.json();
 }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// 行内 Markdown：只用于开发日志条目标题；正文走 renderMd() 的完整渲染。
+function renderMdInline(text) {
+  let s = esc(text);
+  s = s.replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`);
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  return s;
+}
 
 // ── 极简 Markdown 渲染（人格卡展示用）──────────────────────────────────────
 // 为什么不引第三方库：只服务"把角色卡渲染得能读"这一个用途，需求很窄——
@@ -3208,7 +3394,7 @@ function renderRoleTags(roles, defaultRole) {
     const tag = document.createElement('span');
     tag.className = 'tag' + (name === rolePreviewName ? ' active' : '');
     tag.textContent = name;
-    tag.title = '点击预览，标题栏「群友Y1」可直接改；用上方默认人格下拉设置默认，用群列表下拉设置单群';
+    tag.title = '点击预览，标题栏「编辑」可直接改；用上方默认人格下拉设置默认，用群列表下拉设置单群';
     tag.addEventListener('click', () => {
       if (name === rolePreviewName) return;
       if (!confirmDiscardRoleEdit()) return;
@@ -4109,7 +4295,7 @@ async function loadAboutPage() {
     const r = await api('/api/about');
     if (!r?.ok) return;
     aboutLoaded = true;
-    const version = r.version ? ('v' + r.version) : 'v0.4.0';
+    const version = r.version ? ('v' + r.version) : 'v0.4.1';
     set('aboutVersion', version);
     set('aboutVersion2', version);
     set('aboutNode', r.node || '—');
@@ -4121,7 +4307,43 @@ async function loadAboutPage() {
     if (sv) sv.textContent = version;
     const repo = document.getElementById('aboutRepo');
     if (repo && r.repo) repo.href = r.repo;
+    try {
+      const p = await api('/api/plugins');
+      if (p?.ok) {
+        set('aboutPlugins', (p.plugins || []).map((x) => `${x.id}${x.status === 'started' ? '' : '（' + x.status + '）'}`).join(' / ') || '无');
+        renderPluginCards(p.plugins || []);
+      }
+    } catch { /* 插件清单失败不影响关于页 */ }
   } catch { /* 关于页失败不影响控制台 */ }
+}
+
+// 插件卡片插槽（R4-5）：只渲染插件声明的文本元数据。
+// 插件 HTML/脚本一律不插入页面——卡片只是「这个插件存在、当前状态如何」的展示位。
+function renderPluginCards(plugins) {
+  const slot = document.getElementById('pluginCardSlot');
+  const list = document.getElementById('pluginCardList');
+  if (!slot || !list) return;
+  const cards = [];
+  for (const plugin of plugins || []) {
+    for (const card of plugin.console?.cards || []) {
+      cards.push({ ...card, pluginId: plugin.id, status: plugin.status });
+    }
+  }
+  slot.hidden = cards.length === 0;
+  list.textContent = '';
+  for (const card of cards) {
+    const item = document.createElement('div');
+    item.className = 'plugin-card-item';
+    const title = document.createElement('b');
+    title.textContent = card.title || card.id;
+    const status = document.createElement('small');
+    status.textContent = `${card.pluginId} · ${card.status}`;
+    title.appendChild(status);
+    const desc = document.createElement('span');
+    desc.textContent = card.description || '';
+    item.append(title, desc);
+    list.appendChild(item);
+  }
 }
 
 function openCardPage(no, trigger) {
@@ -4324,7 +4546,8 @@ document.addEventListener('keydown', (e) => {
   // 上层浮层（黑话确认 / 凭据说明）打开时，Esc 先关它们，不退出整页。
   if (document.querySelector('.doc-overlay.open')
       || document.getElementById('slangModalOverlay')?.classList.contains('open')
-      || document.getElementById('ctxMemOverlay')?.classList.contains('open')) return;
+      || document.getElementById('ctxMemOverlay')?.classList.contains('open')
+      || document.getElementById('devLogOverlay')?.classList.contains('open')) return;
   e.preventDefault();
   closeCardPage();
 });
@@ -4464,6 +4687,138 @@ function refreshSummaries() {
   // 24 上下文与记忆：状态行由 refreshContextStatus 写入
   setSummary('24', summaryTextOf('ctxStatusLine', 40) || '—');
 }
+
+// ── 开发日志：解析后的 README 更新日志 ───────────────────────────────
+let DEV_LOG_LOADED = false;
+let DEV_LOG_SHOW_ALL = false;
+const DEV_LOG_PER_SECTION = 12;
+async function refreshDevLog(force = false) {
+  if (DEV_LOG_LOADED && !force) return;
+  const status = document.getElementById('devLogStatus');
+  const list = document.getElementById('devLogList');
+  const msg = document.getElementById('devLogMsg');
+  if (!status || !list) return;
+  if (msg) msg.textContent = '加载中…';
+  try {
+    const r = await api('/api/dev-log');
+    if (!r?.ok) throw new Error(r?.error || '读取失败');
+    const sections = Array.isArray(r.sections) ? r.sections : [];
+    const total = Number(r.entries) || 0;
+    let displayed = 0;
+    status.textContent = sections.length
+      ? `共 ${total} 条记录 · 最近 ${sections[0]?.title || '—'}`
+      : '暂无开发日志';
+    list.innerHTML = sections.length ? sections.map((sec, i) => {
+      const allEntries = Array.isArray(sec.entries) ? sec.entries : [];
+      const entries = DEV_LOG_SHOW_ALL ? allEntries : allEntries.slice(0, DEV_LOG_PER_SECTION);
+      displayed += entries.length;
+      const cards = entries.map((e) => `
+        <div class="dev-log-card">
+          <button type="button" class="dev-log-card-head" aria-expanded="false">
+            <span class="dev-log-card-title">${renderMdInline(e.title)}</span>
+            <span class="dev-log-card-meta">${e.date ? `${esc(e.date)} · ` : ''}${esc(sec.title)}</span>
+          </button>
+          ${e.body ? `<div class="dev-log-card-body"><div class="dev-log-card-inner">${renderMd(e.body)}</div></div>` : ''}
+        </div>`).join('');
+      return `<details class="dev-log-section"${i === 0 ? ' open' : ''}>
+        <summary>${esc(sec.title)} <span class="meta">${allEntries.length} 条</span></summary>
+        <div class="dev-log-grid">${cards}</div>
+      </details>`;
+    }).join('') : '<div class="meta">还没有更新日志。</div>';
+    // 展开动画需要具体高度：先量内容 scrollHeight，打开时 max-height 从 0 过渡到该值。
+    for (const card of list.querySelectorAll('.dev-log-card')) {
+      const inner = card.querySelector('.dev-log-card-inner');
+      if (inner) card.style.setProperty('--dev-h', `${Math.ceil(inner.scrollHeight)}px`);
+    }
+    const more = document.getElementById('devLogMore');
+    if (more) {
+      more.hidden = displayed >= total;
+      more.textContent = `显示全部（${total} 条）`;
+    }
+    DEV_LOG_LOADED = true;
+    if (msg) msg.textContent = '';
+  } catch (error) {
+    status.textContent = `读取失败：${error?.message ?? error}`;
+    if (msg) msg.textContent = '';
+  }
+}
+let devLogTrigger = null;
+function openDevLog(trigger) {
+  const overlay = document.getElementById('devLogOverlay');
+  if (!overlay) return;
+  devLogTrigger = trigger || document.activeElement;
+  overlay.classList.add('open');
+  document.getElementById('devLogClose')?.focus({ preventScroll: true });
+  void refreshDevLog();
+}
+function closeDevLog() {
+  const overlay = document.getElementById('devLogOverlay');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  const restore = devLogTrigger;
+  devLogTrigger = null;
+  if (restore && typeof restore.focus === 'function') {
+    setTimeout(() => restore.focus({ preventScroll: true }), 60);
+  }
+}
+document.getElementById('devLogOpen')?.addEventListener('click', (e) => openDevLog(e.currentTarget));
+document.getElementById('devLogClose')?.addEventListener('click', closeDevLog);
+document.getElementById('devLogOverlay')?.addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeDevLog();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('devLogOverlay')?.classList.contains('open')) {
+    e.preventDefault();
+    closeDevLog();
+  }
+});
+function toggleDevLogCard(head) {
+  const card = head.closest('.dev-log-card');
+  if (!card) return;
+  const body = card.querySelector('.dev-log-card-body');
+  const open = !card.classList.contains('open');
+  head.setAttribute('aria-expanded', String(open));
+  if (!body) { card.classList.toggle('open', open); return; }
+  const target = card.style.getPropertyValue('--dev-h')
+    || `${body.querySelector('.dev-log-card-inner')?.scrollHeight || 400}px`;
+  if (reducedMotion()) {
+    card.classList.toggle('open', open);
+    body.style.maxHeight = open ? target : '0px';
+    body.style.opacity = open ? '1' : '0';
+    return;
+  }
+  if (open) {
+    body.style.maxHeight = '0px';
+    body.style.opacity = '0';
+    card.classList.add('open');
+    // 先让浏览器记录起始值，再改目标值，max-height 过渡才会真的跑起来。
+    void body.offsetHeight;
+    setTimeout(() => {
+      body.style.maxHeight = target;
+      body.style.opacity = '1';
+    }, 0);
+  } else {
+    body.style.maxHeight = `${body.getBoundingClientRect().height}px`;
+    body.style.opacity = '1';
+    void body.offsetHeight;
+    card.classList.remove('open');
+    setTimeout(() => {
+      body.style.maxHeight = '0px';
+      body.style.opacity = '0';
+    }, 0);
+  }
+}
+document.getElementById('devLogList')?.addEventListener('click', (e) => {
+  const head = e.target.closest?.('.dev-log-card-head');
+  if (!head) return;
+  toggleDevLogCard(head);
+});
+document.getElementById('devLogRefresh')?.addEventListener('click', () => void refreshDevLog(true));
+document.getElementById('devLogMore')?.addEventListener('click', () => {
+  DEV_LOG_SHOW_ALL = true;
+  DEV_LOG_LOADED = false;
+  void refreshDevLog(true);
+});
 
 // ── 上下文与记忆（Phase 0/1）────────────────────────────────────────
 // 数据只来自桥接的 /api/socialV2/context-status；前端不自己算。

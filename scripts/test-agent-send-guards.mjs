@@ -6,9 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { AGENT_ALLOWED_PATHS, isAgentRouteAllowed } from '../src/console-server.js';
 import { createSendQueue } from '../src/pipeline/send-queue.js';
 import { createQQSender } from '../src/pipeline/qq-send.js';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const consoleServer = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+const consoleServer = readConsoleSource();
 const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
 let pass = 0;
 let fail = 0;
@@ -76,21 +77,15 @@ console.log('\n── 3. sendToQQ 真实失败传播与队列恢复（pipeline/q
     bot,
     recordSentMessage: (key) => recorded.push(key),
     planAutoAtV2: () => null,
-    planTtsV2: () => null,
+    getTtsPlugin: () => null,
     onebotSend: async () => {},
-    getSocialV2State: () => ({}),
-    saveSocialV2State: () => {},
-    appendActivity: () => {},
     syncStickerLibrary: async () => null,
     findSticker: () => null,
     getStickerEntries: () => [],
     setStickerEntries: () => {},
     validateFetchUrl: async () => {},
     markStickerUsed: () => ({}),
-    saveStickerStoreSafe: () => {},
-    getTtsEngine: () => null,
-    ttsSpeechParams: () => ({}),
-    onebotSendVoiceFile: async () => {}
+    saveStickerStoreSafe: () => {}
   });
   await sender.sendToQQ('group:1', 'before');
   let rejected = false;

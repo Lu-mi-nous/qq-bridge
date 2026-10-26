@@ -18,6 +18,7 @@
 //      切换会重新请求、口径提示不写错天数
 import fs from 'node:fs';
 import path from 'node:path';
+import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -25,7 +26,7 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const usageSrc = fs.readFileSync(path.join(root, 'src', 'token-usage.js'), 'utf8');
 
-const consoleServerSrc = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
+const consoleServerSrc = readConsoleSource();
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
 // ── 1. 解析层：dayModels 确实存在且自洽 ──
