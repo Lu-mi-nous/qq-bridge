@@ -9,7 +9,7 @@
 // 这个测试用**逐像素扫描**验证边界：只看代码没法确认「有没有画出卡片」。
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
-import { renderPostImage } from '../src/x-monitor/render.mjs';
+import { renderPostImage } from '../plugins/x-posts/lib/render.mjs';
 import { findFfmpeg } from '../src/gif-frames.js';
 
 let pass = 0, fail = 0;

@@ -7,7 +7,7 @@
 // 判据取自真实主页 HTML（X 内嵌时间线数据）：
 //   social_context:{...,context_type:"Pin",text:"已置顶"},tweet_results:$R[n]={id:"...",rest_id:"<id>"
 // syndication 详情接口不返回置顶标记，所以只能从主页 HTML 判。
-import { findPinnedIds } from '../src/x-monitor/fetch.mjs';
+import { findPinnedIds } from '../plugins/x-posts/lib/fetch.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };

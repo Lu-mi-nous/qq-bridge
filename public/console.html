@@ -1772,7 +1772,7 @@
       <div class="sidebar-bottom">
         <button type="button" class="side-item" data-group="about"><svg class="side-ico" aria-hidden="true"><use href="#ico-info"></use></svg><span class="side-text">关于</span></button>
       </div>
-      <div class="sidebar-foot"><span>QQ Bridge</span><span id="sidebarVersion">v0.4.1</span></div>
+      <div class="sidebar-foot"><span>QQ Bridge</span><span id="sidebarVersion">v0.5.0</span></div>
     </aside>
     <div class="app-main">
   <header class="topbar">
@@ -1799,7 +1799,7 @@
   <div id="aboutView" class="about-view" hidden>
     <section class="card about-hero about-anim" style="--i:0">
       <svg class="about-logo" aria-hidden="true"><use href="#qq-bridge-mark"></use></svg>
-      <h2>QQ Bridge <span class="about-badge" id="aboutVersion">v0.4.1</span></h2>
+      <h2>QQ Bridge <span class="about-badge" id="aboutVersion">v0.5.0</span></h2>
       <div class="about-tagline">DeepSeek Harness ↔ QQ 桥接控制台</div>
       <p class="about-desc">把 QQ 群聊接进 DeepSeek Harness agent：群友的消息变成提示词，AI 的回复、提问、审批回到 QQ。控制台负责运行模式、人格、上下文、媒体与工具配置。</p>
       <div class="about-chips">
@@ -4295,7 +4295,7 @@ async function loadAboutPage() {
     const r = await api('/api/about');
     if (!r?.ok) return;
     aboutLoaded = true;
-    const version = r.version ? ('v' + r.version) : 'v0.4.1';
+    const version = r.version ? ('v' + r.version) : 'v0.5.0';
     set('aboutVersion', version);
     set('aboutVersion2', version);
     set('aboutNode', r.node || '—');

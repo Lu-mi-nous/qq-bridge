@@ -19,7 +19,7 @@ import {
   readStickerCacheRecord,
   syncStickerCache,
   writeStickerCacheImage
-} from '../src/sticker-lib.js';
+} from '../plugins/stickers/lib/sticker-lib.js';
 import { readConsoleSource } from './lib/console-src.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

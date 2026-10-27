@@ -308,7 +308,7 @@ export async function prepareImageForModel(buffer, opts = {}) {
   //   c) 无论哪种失败都只是"跳过"，紧接着走 lanczos —— 缩图/出图链路不受影响。
   if (opts.upscale !== false && opts.upscale?.enabled !== false) {
     try {
-      const { upscaleImage, probeUpscale } = await import('./upscale.js');
+      const { upscaleImage, probeUpscale } = await import('../plugins/upscale/lib/upscale.js');
       const uc = (opts.upscale && typeof opts.upscale === 'object') ? opts.upscale : {};
       const probe = probeUpscale({ binDir: uc.binDir, modelDir: uc.modelDir, model: uc.model });
       if (!probe.ok) {

@@ -113,7 +113,7 @@ console.log('\n── 3. 桥接接线 ──');
 
   // 反查 key 支持热更新
   check('反查器支持运行时改 key', /setApiKey/.test(consoleServer));
-  const revSrc = fs.readFileSync(path.join(root, 'src', 'image-reverse-search.mjs'), 'utf8');
+  const revSrc = fs.readFileSync(path.join(root, 'plugins', 'images', 'lib', 'image-reverse-search.mjs'), 'utf8');
   check('反查器 apiKey 可变更（let 而非 const）', /let currentApiKey/.test(revSrc));
   check('反查器导出 setApiKey', /return \{ available, search, stats, setApiKey, DB_INDEX \}/.test(revSrc));
 

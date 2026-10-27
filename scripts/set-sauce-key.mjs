@@ -37,7 +37,7 @@ if (arg === '--check' || !arg) {
   }
   console.log(`当前 key：${current.slice(0, 6)}…${current.slice(-4)}（长度 ${current.length}）`);
   console.log('正在用一张本地图做真实自检…');
-  const { createReverseSearcher } = await import('../src/image-reverse-search.mjs');
+  const { createReverseSearcher } = await import('../plugins/images/lib/image-reverse-search.mjs');
   const searcher = createReverseSearcher({
     root: ROOT,
     proxy: String(cfg.imageReverseSearch?.proxy || cfg.socialV2?.images?.proxy || ''),

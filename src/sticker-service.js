@@ -12,7 +12,7 @@ import {
   applyStickerNote,
   syncStickerCache,
   writeStickerCacheRecord
-} from './sticker-lib.js';
+} from './stickers-api.js';
 
 export function createStickerService({
   cfg,

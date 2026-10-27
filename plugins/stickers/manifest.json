@@ -1,0 +1,20 @@
+{
+  "id": "stickers",
+  "name": "表情包（图库 / 挑选 / 收藏）",
+  "version": "1.0.0",
+  "engines": { "qqBridge": ">=0.4.0" },
+  "enabledByDefault": false,
+  "configPath": "socialV2.sticker",
+  "configSchema": "config.schema.js",
+  "permissions": ["network", "state", "console:route"],
+  "hooks": ["onStart", "onStop"],
+  "mcpTools": [
+    "qq_list_stickers",
+    "qq_send_sticker",
+    "qq_collect_sticker",
+    "qq_delete_sticker",
+    "qq_sticker_note",
+    "qq_set_sticker_remark"
+  ],
+  "console": { "cards": ["stickers"], "routes": ["/api/plugins/stickers/card"] }
+}

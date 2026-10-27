@@ -8,7 +8,7 @@ import {
   DEFAULT_SPEECH_PARAMS,
   TTS_DEFAULT_PROBABILITY
 } from '../../src/tts.js';
-import { moodOfText } from '../../src/sticker-pick.js';
+import { moodOfText } from '../../src/stickers-api.js';
 
 function num(raw, dflt, min, max) {
   const n = Number(raw);

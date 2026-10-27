@@ -1,0 +1,21 @@
+{
+  "id": "images",
+  "name": "图片（图源 / 图库 / 反查 / 归档 / 画风）",
+  "version": "1.0.0",
+  "engines": { "qqBridge": ">=0.4.0" },
+  "enabledByDefault": false,
+  "configPath": "socialV2.images",
+  "configSchema": "config.schema.js",
+  "permissions": ["network", "process", "state", "console:route"],
+  "hooks": ["onStart", "onStop"],
+  "mcpTools": [
+    "qq_send_image",
+    "qq_image_preflight",
+    "qq_reverse_search",
+    "qq_archive_image",
+    "qq_image_source",
+    "qq_reject_image",
+    "qq_refresh_image_lib"
+  ],
+  "console": { "cards": ["images"], "routes": ["/api/plugins/images/card"] }
+}

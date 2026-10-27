@@ -1,0 +1,13 @@
+{
+  "id": "media-tools",
+  "name": "媒体工具（GitHub 截图 / 功能菜单图 / Token 报表图）",
+  "version": "1.0.0",
+  "engines": { "qqBridge": ">=0.4.0" },
+  "enabledByDefault": false,
+  "configPath": "socialV2",
+  "configSchema": "config.schema.js",
+  "permissions": ["network", "process", "state", "console:route"],
+  "hooks": ["onStart", "onStop"],
+  "mcpTools": ["qq_github_shot", "qq_send_feature_menu", "qq_token_report", "qq_token_report_image"],
+  "console": { "cards": ["media-tools"], "routes": ["/api/plugins/media-tools/card"] }
+}

@@ -1,6 +1,6 @@
 // 回归测试：yande.re 源（需代理 + 分级过滤）。
 // 依赖：本机代理 127.0.0.1:7897 可用，否则相关用例会跳过并说明。
-import { fetchFromSources, yandere, SOURCES } from '../src/image-sources.js';
+import { fetchFromSources, yandere, SOURCES } from '../plugins/images/lib/image-sources.js';
 import { proxyGet, isBlockedHost } from '../src/proxy-tunnel.js';
 
 const PROXY = process.env.QQB_PROXY || 'http://127.0.0.1:7897';

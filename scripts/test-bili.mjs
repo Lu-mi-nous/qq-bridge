@@ -22,14 +22,14 @@ import {
   fetchVideoInfo, fetchPopularVideos, fetchPlayUrl,
   grabVideoFrames, videoFramesHint, createVideoMemory,
   subtitleSnippet, fetchSubtitles
-} from '../src/bili.js';
+} from '../plugins/bili/lib/bili.js';
 import {
   pickCandidate, watchDepth, canSelfBrowse, nextBrowseDelay,
   watchVideo, buildBrowsePrompt, categoryGroup, categoryWeight,
   parseScanVerdict, buildScanPrompt, buildExtendedPrompt,
   matchGameKeyword, GAME_KEYWORDS, tasteBoost, ownerBoost,
   DEFAULT_CATEGORY_WEIGHTS
-} from '../src/bili-browse.js';
+} from '../plugins/bili/lib/bili-browse.js';
 import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
@@ -738,14 +738,14 @@ console.log('\n── 8. 接线 ──');
   // 采样密度（用户要求「帧间隔缩短一些，最好一秒取样一次」）：
   // 帧数不再由 framesLiked 写死，而是 秒数 × framesPerSecond。
   check('帧数按密度算（秒数 × framesPerSecond）',
-    /framesPerSecond/.test(biliRuntime) && /sec \* density/.test(fs.readFileSync(path.join(srcRoot, 'bili-browse.js'), 'utf8')));
+    /framesPerSecond/.test(biliRuntime) && /sec \* density/.test(fs.readFileSync(path.join(root, 'plugins', 'bili', 'lib', 'bili-browse.js'), 'utf8')));
   check('帧数有硬上限（maxFramesTotal）', /maxFramesTotal/.test(biliRuntime));
   check('分页格数可配（tilesPerSheet）', /tilesPerSheet/.test(biliRuntime));
   // 口味信号必须真的接到选片上（2026-10-20：原先只在 title+category 里找标签，
   // 实测 50 条只有 10 条命中，其中 4 条还是"只靠分区名"命中=重复计分）
   check('选片传入口味标签', /likedTags: taste\.totalTags/.test(biliRuntime));
   check('选片传入喜欢的 UP 主', /likedOwners: taste\.owners/.test(biliRuntime));
-  check('taste() 统计 UP 主', /ownerCount/.test(fs.readFileSync(path.join(srcRoot, 'bili.js'), 'utf8')));
+  check('taste() 统计 UP 主', /ownerCount/.test(fs.readFileSync(path.join(root, 'plugins', 'bili', 'lib', 'bili.js'), 'utf8')));
   check('投递时把每一张都发给模型',
     /Array\.isArray\(imageBuffer\?\.sheets\)/.test(bridge)
     && /for \(let i = 0; i < parts\.length; i \+= 1\)/.test(bridge));
@@ -755,7 +755,7 @@ console.log('\n── 8. 接线 ──');
   check('MCP 把全部分页交给模型', /Array\.isArray\(data\.images\)/.test(mcp));
   check('追加只在 liked===true 时发生', /if \(verdict\.liked === true && likeSeconds > scanSeconds\)/.test(biliRuntime));
   check('初判是一次独立的 prompt（只回 JSON）', /buildScanPrompt/.test(bridge) && /buildScanPrompt/.test(
-    fs.readFileSync(path.join(srcRoot, 'bili-browse.js'), 'utf8')));
+    fs.readFileSync(path.join(root, 'plugins', 'bili', 'lib', 'bili-browse.js'), 'utf8')));
   check('初判解析容错（代码块/自然语言）', /parseScanVerdict/.test(bridge));
   check('初判超时可配、默认 150s', /judgeTimeoutMs\) \|\| 150000/.test(bridge));
   const h = createEventHarness({ mode: 'reserved2' });
@@ -781,14 +781,14 @@ console.log('\n── 8. 接线 ──');
   check('真正初判文本恰好回填一次', results.length === 1 && results[0] === '{"liked":true}');
   check('初判结束清理专用 collector', !h.deps.biliJudgeCollectors.has(sid));
 
-  const biliSrc = fs.readFileSync(path.join(srcRoot, 'bili.js'), 'utf8');
+  const biliSrc = fs.readFileSync(path.join(root, 'plugins', 'bili', 'lib', 'bili.js'), 'utf8');
   check('抽帧支持 skipSeconds（跳过片头黑场）', /skipSeconds/.test(biliSrc));
   check('抽帧会测亮度', /YAVG/.test(biliSrc) && /measureBrightness/.test(biliSrc));
   check('太暗会自动往后挪（autoSkipDark）', /autoSkipDark/.test(biliSrc) && /attempt \* step/.test(biliSrc));
   check('watchVideo 把 skip/autoSkipDark 传下去', /skipSeconds: opts\.skipSeconds/.test(
-    fs.readFileSync(path.join(srcRoot, 'bili-browse.js'), 'utf8')));
+    fs.readFileSync(path.join(root, 'plugins', 'bili', 'lib', 'bili-browse.js'), 'utf8')));
   check('初判提示词提醒"暗不等于黑屏"', /不要一句"黑屏/.test(
-    fs.readFileSync(path.join(srcRoot, 'bili-browse.js'), 'utf8')));
+    fs.readFileSync(path.join(root, 'plugins', 'bili', 'lib', 'bili-browse.js'), 'utf8')));
   check('返回里带 extended 标记', /extended,/.test(biliRuntime) && /liked: verdict\.liked,/.test(biliRuntime));
   check('配置：gameBoost = 20（用户指定）', cfgGameBoost === 20, String(cfgGameBoost));
   check('配置：候选池 3 页', Number(cfgBili.selfBrowsing?.poolPages) === 3, String(cfgBili.selfBrowsing?.poolPages));
@@ -821,10 +821,10 @@ console.log('\n── 8. 接线 ──');
     String(cfgBili.selfBrowsing?.framesDisliked));
   // 字幕（用户问「不能直接给模型视频和音频流吗」→ DSH 只收 text+image，
   // 视频/音频流进不去，但 B 站 AI 字幕能把"听到的话"变成文字）
-  check('观看时会抓字幕', /fetchSubtitles/.test(fs.readFileSync(path.join(srcRoot, 'bili-browse.js'), 'utf8')));
+  check('观看时会抓字幕', /fetchSubtitles/.test(fs.readFileSync(path.join(root, 'plugins', 'bili', 'lib', 'bili-browse.js'), 'utf8')));
   check('启动时把登录态注入 bili.js（字幕接口必须登录）', /setBiliCookie\(auth\.cookie/.test(biliBootstrap));
   check('字幕只取观看窗口内的（不白占 prompt）', /subtitleSnippet/.test(
-    fs.readFileSync(path.join(srcRoot, 'bili-browse.js'), 'utf8')));
+    fs.readFileSync(path.join(root, 'plugins', 'bili', 'lib', 'bili-browse.js'), 'utf8')));
   check('字幕存进长期记忆', /subtitle: String\(video\.subtitle/.test(biliSrc));
   // 用"至少/不超过"而不是等号：这些是用户会反复调的参数，
   // 写死数值会让每次调参都误报（本次就把 30 分钟 → 2 小时、4s → 6s 全报错了）。

@@ -189,7 +189,7 @@ async function authorizeRead(key, token) {
   await agentApi('/api/authorize/read', { method: 'POST', body: JSON.stringify({ key, token: token || undefined }) });
 }
 
-const server = new McpServer({ name: 'snowluma-safe', version: '0.4.1' });
+const server = new McpServer({ name: 'snowluma-safe', version: '0.5.0' });
 
 server.tool(
   'qq_status',
@@ -1285,7 +1285,7 @@ if (cfg.socialV2?.tools?.getImages !== false) {
   {
     let upscaleReady = false;
     try {
-      const { probeUpscale, configureUpscaleCache } = await import('./upscale.js');
+      const { probeUpscale, configureUpscaleCache } = await import('../plugins/upscale/lib/upscale.js');
       const uc = cfg.socialV2?.upscale ?? {};
       // MCP 是独立进程，缓存目录要在这里单独配置一次（否则工具路径永远不命中缓存）。
       // 与桥接用同一个目录：桥接自动处理小图时写进去的，模型主动超分时能直接复用。
@@ -1340,7 +1340,7 @@ if (cfg.socialV2?.tools?.getImages !== false) {
             return { content: [{ type: 'text', text: '这是动图，桥接已把它抽帧拼成一张图送给模型；超分不处理动图（会丢帧语义）。请直接按取图结果作答。' }] };
           }
           const buf = Buffer.from(img.data, 'base64');
-          const { upscaleImage } = await import('./upscale.js');
+          const { upscaleImage } = await import('../plugins/upscale/lib/upscale.js');
           const uc = getConfig().socialV2?.upscale ?? {};
           const r = await upscaleImage(buf, {
             mimeType: img.mimeType || 'image/png',
@@ -1384,7 +1384,7 @@ if (cfg.socialV2?.tools?.getImages !== false) {
               const HARD_LIMIT = 6 * 1024 * 1024;
               let payload = r.buffer;
               if (payload.length > HARD_LIMIT) {
-                const { shrinkForPublish } = await import('./upscale.js');
+                const { shrinkForPublish } = await import('../plugins/upscale/lib/upscale.js');
                 const shrunk = await shrinkForPublish(payload, HARD_LIMIT);
                 if (shrunk) payload = shrunk;
               }

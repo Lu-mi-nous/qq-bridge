@@ -118,6 +118,28 @@
 
 静态指标（R4 后，`npm run measure`，含 2026-10-27 口径修正：`src/state/` 不再被当运行态目录跳过）：源码 139 文件 / 47,145 行；`bridge.js` 6,475 行、`console-server.js` **601 行**、测试脚本 145 个 / 24,969 行、控制台端点 155 个、配置键 479、循环依赖 0。
 
+接入范围（R4.5-10）：`plugins/content-review/`（新建）。统一审核入口 `reviewText`、本地规则（分类关键词/危险域名）、模型审核注入、fail-closed 与 JSONL 审计（只存 hash/分类/动作/时间，不存原文）；configPath `xMonitor.review`，默认关闭，词表不进仓库。新增 `src/content-review-api.js` 网关（插件缺席返回 `decision:unavailable`，P1 按 fail-closed 处理）。`test-content-review` 25 项全过；插件宿主默认关闭态加载正常。
+
+接入范围（R4.5-9）：`plugins/media-tools/`。GitHub 截图、功能菜单图、Token 报表图（7 个文件 1,514 行）从 `src/github-shot.js` / `feature-menu*.js` / `token-report*.js` 迁入插件 lib；核心新增 `src/media-tools-api.js` 网关（顶层 `await`），bridge 导入零改动、按需调用缺席时抛明确错误。`test-feature-menu` 124、`test-token-report` 84、`test-token-day-review` 34、`test-token-ask-detect` 30、`test-console-server` 40 全过；插件宿主实测浏览器可用、卡片/路由各 1；缺席实测降级正常。
+
+接入范围（R4.5-8）：`plugins/shared-memory/`。人物记忆的存储/身份解析/合并脱敏/格式化（513 行）从 `src/shared-memory.js` 迁入插件 lib；核心新增 `src/shared-memory-api.js` 网关（顶层 `await` + 降级默认值），bridge 与 console-server 导入零改动。**唤醒注入点仍留核心**（`pipeline/wake.js` 调用格式化函数），隐私策略不散落。`test-shared-memory` 34、`test-console-server` 40、`test-context-memory` 92、`test-bridge-wiring` 88、`test-role-injected-in-wake` 19 全过；缺席实测降级正常。
+
+接入范围（R4.5-7）：`plugins/slang/`。黑话库读写、候选条目、抽取/研究提示词、JSON 解析、注入片段（247 行）从 `src/slang-learner.js` 迁入插件 lib；核心新增 `src/slang-api.js` 网关（顶层 `await` + 降级默认值），bridge 导入零改动。`test-slang-learn` 5、`test-state-store` 49、`test-bridge-wiring` 88、`test-admin-commands` 123 全过；缺席实测降级正常。
+
+接入范围（R4.5-6）：`plugins/stickers/`。表情库索引/同步/备注/删除/收藏/缓存、挑选与语气、提示词（534 行）从 `src/sticker-lib.js` / `sticker-pick.js` 迁入插件 lib；核心新增 `src/stickers-api.js` 网关（顶层 `await` + 降级默认值），`sticker-service` 与 bridge 的导入零改动。服务层 `sticker-service.js` 仍留核心。`test-stickers` 57、`test-sticker-nudge` 43、`test-sticker-service` 12、`test-state-store` 49、`test-bridge-wiring` 88 全过；缺席实测降级正常。
+
+接入范围（R4.5-5b）：`image-store.js`（634 行）迁入 `plugins/images/lib/`，内部依赖改指核心（safe-fetch/state store）；`src/images-api.js` 新增 `createImageStore`（插件缺席时返回空 store，count/stats/libDir 等安全值），`image-facade` 改经网关取 store。9 个 scripts/tests 的 store 导入改指插件 lib。`test-image-lib` 78、`test-group-images` 49、`test-image-facade` 10、`test-image-request` 12、`test-image-send` 24、`test-image-quota-panel` 30、`test-image-feedback-flow` 15、`test-image-source-filter` 22 全过；缺席实测：空 store + 门面可构造。
+
+接入范围（R4.5-5a）：`plugins/images/`。图源、画风、反查、归档、差评、来源提示、Pixiv 凭据、画质门槛（2,401 行）从 `src/image-sources.js` / `image-style.js` / `image-reverse-search.mjs` / `image-archive.js` / `image-feedback.js` / `image-source-hint.js` / `pixiv-auth.js` / `image-quality.js` 迁入插件 lib；核心新增 `src/images-api.js` 网关（顶层 `await` + 降级默认值），store / facade / request 的导入零改动。图库存储与门面仍留核心，作为 5b。`test-image-lib` 78、`test-image-source` 19、`test-image-source-filter` 22、`test-image-source-hint` 28、`test-image-archive` 47、`test-image-feedback` 42、`test-image-feedback-flow` 15、`test-image-request` 12、`test-image-send` 24、`test-image-facade` 10、`test-group-images` 49、`test-reverse-search` 48 全过；缺席实测降级正常。
+
+接入范围（R4.5-4）：`plugins/bili/`。B 站 API、搜索、观看（抽帧/字幕/ASR）、自刷候选与提示词、观看记忆（2,123 行）从 `src/bili.js` / `bili-auth.js` / `bili-browse.js` 迁入插件 lib；核心新增 `src/bili-api.js` 网关（顶层 `await` 动态装载 + 降级默认值），bridge / bili-bootstrap / pipeline 的 107 处调用零改动。启动装配与自主刷编排仍在核心。`test-bili` 294、`test-bili-auth` 48、`test-bili-av` 51、`test-bili-runtime` 12、`test-bili-sharing` 12、`test-bili-share-activity` 9、`test-state-store` 49 全过；插件缺席实测降级正常。
+
+接入范围（R4.5-3）：`plugins/x-posts/`。抓取/翻页/置顶识别/翻译/卡片渲染/媒体缓存（2,640 行）从 `src/x-monitor/` 迁入插件 lib；桥接不再直接构造 `XMonitor`，改取 `pluginRuntime.xMonitor()`，插件缺席时控制台两个 X 端点回 503。**内容安全 P0 不受影响**：`fetchXPosts=false` 时 MCP 不注册工具、桥接仍在拉取前 403。`test-x-*` 5 个脚本（24/10/8/13/28）全过。
+
+接入范围（R4.5-2）：`plugins/web-search/`。引擎链、查询改写与 5 个引擎（949 行）从 `src/web-search/` 迁入插件 lib，配置仍走 `webSearch` 并按 mtime 热加载；MCP 动态 import，插件缺失时不注册 `web_search`，`web_fetch` / `web_view_image` 保持可用。`test-search-degrade` 53、`test-mcp-web-search`、`test-weixin-article` 90、`test-web-image-fetch` 58 全过。
+
+接入范围（R4.5-1）：`plugins/upscale/`。超分实现（697 行）从 `src/upscale.js` 迁到插件，`src/upscale-bootstrap.js` 的启动自检与缓存定时器并入插件生命周期；核心保留 `src/upscale-bin.js`（功能菜单要同步 stat），出图管线与 MCP 改为动态 import 插件 lib，插件缺席时退回 lanczos / 不注册工具。`test-upscale` 124 项全过（路径与接线断言同步）。
+
 测试（R4）：新增 `test-console-router.mjs` 11 项——用桩依赖真正启动 HTTP 服务，覆盖分域 GET/POST 前缀、动态前缀路由、每请求 `sendJson/readBody`、插件路由转发、404 与 CSRF 415。全量 **134/145、4,885 断言、11 个环境类失败、0 个真实失败**；环境类失败为 SnowLuma/DSH/图站未启动，`test-console.mjs` 需要正在运行的桥接，已归入环境类。复杂度重估见 [COMPLEXITY.md](COMPLEXITY.md)（2026-10-27 新基线）。
 
 测试（R2.5）：`test-plugin-host` 13、`test-tts` 162、`test-state-store` 49、`test-image-lib` 78、`test-bili` 294、`test-stickers` 57、`test-feature-menu` 124、`test-admin-commands` 123、`test-bridge-wiring` 87、`test-console-server` 29、`test-console-layout` 213 全部通过。全量首轮 **124/131、4,805 断言、7 个环境类失败、0 个真实失败**（基线 120/128、4,631 断言、1 个真实失败）。补插件清单断言后 `test-console-server` 单独 29/29；第二次全量中 `test-github-shot` 因 GitHub 页面高度波动偶发 1 失败，复跑 54/54 通过。

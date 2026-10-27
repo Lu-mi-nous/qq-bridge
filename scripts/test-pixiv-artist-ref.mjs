@@ -1,6 +1,6 @@
 // 端到端验证：各种「画师 ID」写法在 pixiv 适配器里都能取到该画师的作品。
 // 对照 lack（userId 83739）；136201011 是 lack 的一个作品（用于测作品链接）。
-import { pixiv } from '../src/image-sources.js';
+import { pixiv } from '../plugins/images/lib/image-sources.js';
 import { proxyGet } from '../src/proxy-tunnel.js';
 
 const PROXY = process.env.QQB_PROXY || 'http://127.0.0.1:7897';

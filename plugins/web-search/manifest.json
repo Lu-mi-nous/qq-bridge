@@ -1,0 +1,13 @@
+{
+  "id": "web-search",
+  "name": "联网搜索（多引擎回退）",
+  "version": "1.0.0",
+  "engines": { "qqBridge": ">=0.4.0" },
+  "enabledByDefault": false,
+  "configPath": "webSearch",
+  "configSchema": "config.schema.js",
+  "permissions": ["network", "console:route"],
+  "hooks": ["onStart", "onStop"],
+  "mcpTools": ["web_search"],
+  "console": { "cards": ["web-search"], "routes": ["/api/plugins/web-search/card"] }
+}

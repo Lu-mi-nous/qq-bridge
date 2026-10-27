@@ -20,7 +20,7 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const bridge = readConsoleSource().replace(/\r\n/g, '\n');
-const revSrc = fs.readFileSync(path.join(root, 'src', 'image-reverse-search.mjs'), 'utf8');
+const revSrc = fs.readFileSync(path.join(root, 'plugins', 'images', 'lib', 'image-reverse-search.mjs'), 'utf8');
 const consoleHtml = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
 console.log('── 1. 反查额度统计 ──');

@@ -7,7 +7,7 @@
 //   ② **两处 variants 字段名不同且只有一处带 bitrate**：顶层 `video.variants[]` 是 {type,src} 无码率；
 //      `mediaDetails[].video_info.variants[]` 是 {content_type,url,bitrate} 有码率。必须优先用后者。
 //   ③ durationMs 是**毫秒**，按秒算会让体积放大 1000 倍 → 所有档位都被判超限 → 视频永远发不出来。
-import { extractVideo, estimateVariantBytes, pickVideoVariant } from '../src/x-monitor/fetch.mjs';
+import { extractVideo, estimateVariantBytes, pickVideoVariant } from '../plugins/x-posts/lib/fetch.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };

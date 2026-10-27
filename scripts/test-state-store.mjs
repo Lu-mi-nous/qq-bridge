@@ -6,11 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { createJsonStore } from '../src/state/store.js';
 import { saveTokenFuseState, loadTokenFuseState, tokenFuseFile } from '../src/token-fuse.js';
 import { createSessionGap } from '../src/session-gap.js';
-import { saveSharedMemory, loadSharedMemory, sharedMemoryFile } from '../src/shared-memory.js';
-import { saveSlang, loadSlang } from '../src/slang-learner.js';
-import { saveStickerStore, loadStickerStore } from '../src/sticker-lib.js';
-import { createImageStore } from '../src/image-store.js';
-import { createVideoMemory } from '../src/bili.js';
+import { saveSharedMemory, loadSharedMemory, sharedMemoryFile } from '../plugins/shared-memory/lib/shared-memory.js';
+import { saveSlang, loadSlang } from '../plugins/slang/lib/slang-learner.js';
+import { saveStickerStore, loadStickerStore } from '../plugins/stickers/lib/sticker-lib.js';
+import { createImageStore } from '../plugins/images/lib/image-store.js';
+import { createVideoMemory } from '../plugins/bili/lib/bili.js';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -215,20 +215,20 @@ console.log('\n── 6. 桥接接线 ──');
   const fuseSrc = fs.readFileSync(new URL('../src/token-fuse.js', import.meta.url), 'utf8');
   check('token-fuse 经 store 且无直接写文件', /createJsonStore/.test(fuseSrc) && !/fs\.writeFileSync/.test(fuseSrc));
   const gapSrc = fs.readFileSync(new URL('../src/session-gap.js', import.meta.url), 'utf8');
-  const shareSrc = fs.readFileSync(new URL('../src/shared-memory.js', import.meta.url), 'utf8');
+  const shareSrc = fs.readFileSync(new URL('../plugins/shared-memory/lib/shared-memory.js', import.meta.url), 'utf8');
   check('session-gap / shared-memory 经 store 且无直接读写文件',
     /createJsonStore/.test(gapSrc) && !/fs\.readFileSync|fs\.writeFileSync/.test(gapSrc)
     && /createJsonStore/.test(shareSrc) && !/fs\.readFileSync|fs\.writeFileSync/.test(shareSrc));
-  const slangSrc = fs.readFileSync(new URL('../src/slang-learner.js', import.meta.url), 'utf8');
-  const stickerSrc = fs.readFileSync(new URL('../src/sticker-lib.js', import.meta.url), 'utf8');
+  const slangSrc = fs.readFileSync(new URL('../plugins/slang/lib/slang-learner.js', import.meta.url), 'utf8');
+  const stickerSrc = fs.readFileSync(new URL('../plugins/stickers/lib/sticker-lib.js', import.meta.url), 'utf8');
   check('slang / stickers 使用数组 store', /array: true/.test(slangSrc) && /array: true/.test(stickerSrc)
     && /slangSessionStore = createJsonStore/.test(bridge));
-  const imageSrc = fs.readFileSync(new URL('../src/image-store.js', import.meta.url), 'utf8');
+  const imageSrc = fs.readFileSync(new URL('../plugins/images/lib/image-store.js', import.meta.url), 'utf8');
   const imageFacadeSrc = fs.readFileSync(new URL('../src/image-facade.js', import.meta.url), 'utf8');
   check('image index/recent/rejected 使用 store',
     /indexStore = createJsonStore/.test(imageSrc) && /recentStore = createJsonStore/.test(imageSrc)
     && /rejectedStore = createJsonStore/.test(imageSrc));
-  const biliSrc = fs.readFileSync(new URL('../src/bili.js', import.meta.url), 'utf8');
+  const biliSrc = fs.readFileSync(new URL('../plugins/bili/lib/bili.js', import.meta.url), 'utf8');
   check('bili-memory 使用 store 且保留 mtime 刷新', /createJsonStore/.test(biliSrc) && /reloadOnMtime: true/.test(biliSrc));
   check('roles 状态使用 store', /roleStateStore = createJsonStore/.test(bridge) && /conversationRoleStore = createJsonStore/.test(bridge));
   check('image-fetch-state 使用 store', /imageFetchStateStore = createJsonStore/.test(imageFacadeSrc) && /imageFetchStateStore\.write/.test(imageFacadeSrc));

@@ -3,11 +3,11 @@
 // 只负责图库存储与图源拉取；发图准入、来源标注、差评换图仍由 bridge/发送层编排。
 import fs from 'node:fs';
 import path from 'node:path';
-import { createImageStore } from './image-store.js';
+import { createImageStore } from './images-api.js';
 import { createJsonStore } from './state/store.js';
-import { fetchFromSources } from './image-sources.js';
+import { fetchFromSources } from './images-api.js';
 import { safeFetchBuffer } from './safe-fetch.js';
-import { extractStyleVectors, cosine } from './image-style.js';
+import { extractStyleVectors, cosine } from './images-api.js';
 
 export function createImageFacade({
   cfg,

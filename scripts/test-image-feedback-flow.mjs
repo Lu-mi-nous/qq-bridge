@@ -3,8 +3,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createImageStore } from '../src/image-store.js';
-import { classifyImageFeedback, createFeedbackGate } from '../src/image-feedback.js';
+import { createImageStore } from '../plugins/images/lib/image-store.js';
+import { classifyImageFeedback, createFeedbackGate } from '../plugins/images/lib/image-feedback.js';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };

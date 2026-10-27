@@ -52,14 +52,29 @@
 | 内核 | `src/social-loop.js` | 仿真社交状态机（R3-13） |
 | 内核 | `src/pipeline/reply-target.js` | 引用目标解析（R3-13） |
 | 内核 | `src/error-service.js` | 报错只私聊管理员（R3-14） |
-| 内核 | `src/bili-bootstrap.js` / `src/upscale-bootstrap.js` | B站/ASR/超分启动装配（R3-14） |
+| 内核 | `src/bili-bootstrap.js` | B站/ASR 启动装配（R3-14） |
+| 内核 | `src/bili-api.js` | B 站能力网关（R4.5-4）：插件在则转发，缺席降级 |
+| 插件 | `plugins/bili/` | B 站实现：API/搜索/观看/自刷/观看记忆（R4.5-4） |
+| 内核 | `src/images-api.js` | 图片能力网关（R4.5-5a）：插件在则转发，缺席降级 |
+| 插件 | `plugins/images/` | 图片实现：图源/反查/归档/画风/反馈/Pixiv 凭据/图库存储（R4.5-5a/5b） |
+| 内核 | `src/stickers-api.js` | 表情能力网关（R4.5-6）：插件在则转发，缺席降级 |
+| 插件 | `plugins/stickers/` | 表情实现：库/挑选/语气/提示词（R4.5-6） |
+| 插件 | `plugins/upscale/` | 超分实现与启动自检（R4.5-1）；核心只留 `src/upscale-bin.js` 探针 |
+| 插件 | `plugins/web-search/` | 搜索引擎链与回退（R4.5-2）；MCP 动态 import，缺席不注册 `web_search` |
 | 内核 | `src/plugins/` | 插件宿主与上下文：manifest 校验、生命周期、权限、状态隔离 |
 | 内核 | `src/plugin-runtime.js` | 插件运行时装配：启动/停止、TTS 能力查询（R3-4） |
 | 内核 | `src/pipeline/` | 消息管线纯计算层：身份/提示拼装/消息段/出站归一化 |
 | 内核 | `src/dsh-client.js` | DSH 协议客户端：RPC + WebSocket 事件流 + turn 收集 |
 | 内核 | `src/mcp-snowluma-safe.js` | 给 DSH agent 用的安全 QQ 工具（只读 + 白名单发送） |
 | 内核 | `src/mcp-host-server.js` | 给 DSH agent 用的 SnowLuma 进程管理（默认禁用启停） |
-| 内核 | `src/slang-learner.js` | 群聊黑话/网络用语学习：存储、候选提取、研究调度、注入 |
+| 内核 | `src/slang-api.js` | 黑话能力网关（R4.5-7）：插件在则转发，缺席降级 |
+| 插件 | `plugins/slang/` | 黑话实现：存储/候选提取/研究提示词/注入（R4.5-7） |
+| 内核 | `src/shared-memory-api.js` | 跨会话人物记忆网关（R4.5-8）：插件在则转发，缺席降级 |
+| 插件 | `plugins/shared-memory/` | 跨会话人物记忆实现：存储/合并/脱敏/格式化（R4.5-8，注入点留核心） |
+| 内核 | `src/media-tools-api.js` | 媒体工具网关（R4.5-9）：插件在则转发，缺席抛错 |
+| 插件 | `plugins/media-tools/` | GitHub 截图/功能菜单图/Token 报表图（R4.5-9） |
+| 内核 | `src/content-review-api.js` | 内容审查网关（R4.5-10）：插件在则转发，缺席返回 unavailable |
+| 插件 | `plugins/content-review/` | 内容审查实现：规则/模型注入/审计（R4.5-10，默认关闭） |
 | 内核 | `src/mcp-web-search-safe.js` | 给 DSH agent 用的只读 Web Search MCP（查网络用语/梗） |
 | 外核 | `public/console.html` | 本地控制台：状态、参数、手动切换、重置 |
 | 外核 | `config.json` | 运行配置（白名单、QQ/DSH 地址、社交参数）；**不入库** |
@@ -94,15 +109,32 @@ qq-bridge/
 │   ├── pipeline/reply-target.js # 引用目标解析（R3-13）
 │   ├── error-service.js        # 报错只私聊管理员（R3-14）
 │   ├── bili-bootstrap.js       # B站/ASR 启动装配（R3-14）
-│   ├── upscale-bootstrap.js    # 超分启动装配（R3-14）
+│   ├── bili-api.js             # B 站能力网关（R4.5-4）
+│   ├── images-api.js           # 图片能力网关（R4.5-5a）
+│   ├── stickers-api.js         # 表情能力网关（R4.5-6）
+│   ├── upscale-bin.js          # Upscayl 二进制探针（R4.5-1，供功能菜单同步判断）
 │   ├── plugins/                # 插件宿主与上下文（manifest / 生命周期 / 权限）
+│   │   ├── tts/                # 语音合成插件（R2.5 试点）
+│   │   ├── upscale/            # 超分插件（R4.5-1）
+│   │   ├── web-search/         # 联网搜索插件（R4.5-2）
+│   │   ├── x-posts/            # X 帖子插件（R4.5-3，P0 关闭中）
+│   │   ├── bili/               # B 站插件（R4.5-4）
+│   │   ├── images/             # 图片插件（R4.5-5a/5b）
+│   │   ├── stickers/           # 表情插件（R4.5-6）
+│   │   ├── slang/              # 黑话插件（R4.5-7）
+│   │   ├── shared-memory/      # 跨会话人物记忆插件（R4.5-8）
+│   │   ├── media-tools/        # 媒体工具插件（R4.5-9）
+│   │   └── content-review/     # 内容审查插件（R4.5-10，默认关闭）
 │   ├── plugin-runtime.js       # 插件运行时装配（宿主/启动停止/TTS 能力）
 │   ├── pipeline/               # 消息管线纯计算层（身份/提示/消息段/归一化）
 │   ├── dsh-client.js           # DSH API 客户端
 │   ├── mcp-snowluma-safe.js    # 安全 MCP（QQ 读/发工具）
 │   ├── mcp-host-server.js      # MCP（SnowLuma 进程管理，默认禁用启停）
 │   ├── mcp-web-search-safe.js  # 安全 MCP（只读 Web Search/Fetch）
-│   ├── slang-learner.js        # 黑话/网络用语学习模块
+│   ├── slang-api.js            # 黑话能力网关（R4.5-7）
+│   ├── shared-memory-api.js    # 跨会话人物记忆网关（R4.5-8）
+│   ├── media-tools-api.js      # 媒体工具网关（R4.5-9）
+│   ├── content-review-api.js   # 内容审查网关（R4.5-10）
 │   ├── md-to-plain.js          # Markdown 转纯文本
 │   ├── safe-fetch.js           # SSRF 防护的 HTTP(S) 抓取
 │   └── self-test.js            # DSH 侧自检
@@ -357,7 +389,7 @@ node --check src/bridge.js
 node --check src/dsh-client.js
 node --check src/mcp-snowluma-safe.js
 node --check src/mcp-web-search-safe.js
-node --check src/slang-learner.js
+node --check src/slang-api.js && node --check plugins/slang/lib/slang-learner.js
 ```
 
 控制台 HTML 内联脚本语法校验：

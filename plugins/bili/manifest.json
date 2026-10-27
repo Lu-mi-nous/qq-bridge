@@ -1,0 +1,13 @@
+{
+  "id": "bili",
+  "name": "B 站（搜索 / 观看 / 自刷 / 观看记忆）",
+  "version": "1.0.0",
+  "engines": { "qqBridge": ">=0.4.0" },
+  "enabledByDefault": false,
+  "configPath": "socialV2.bili",
+  "configSchema": "config.schema.js",
+  "permissions": ["network", "process", "state", "console:route"],
+  "hooks": ["onStart", "onStop"],
+  "mcpTools": ["qq_bili_search", "qq_watch_bili", "qq_bili_memory", "qq_bili_record"],
+  "console": { "cards": ["bili"], "routes": ["/api/plugins/bili/card"] }
+}

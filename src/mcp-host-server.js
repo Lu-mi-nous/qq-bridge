@@ -136,7 +136,7 @@ function findSnowLumaPids() {
   return result;
 }
 
-const server = new McpServer({ name: 'snowluma-host', version: '0.4.1' });
+const server = new McpServer({ name: 'snowluma-host', version: '0.5.0' });
 
 server.tool(
   'snowluma_status',

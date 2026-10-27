@@ -1,5 +1,5 @@
 // 回归测试：从群友的话里识别指定图源 + 会话级记忆。
-import { detectSourceRequest, createSourceHintStore } from '../src/image-source-hint.js';
+import { detectSourceRequest, createSourceHintStore } from '../plugins/images/lib/image-source-hint.js';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };

@@ -9,7 +9,7 @@
 // 而不是只看代码——「裁没裁」只有看像素才靠得住。
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
-import { renderPostImage } from '../src/x-monitor/render.mjs';
+import { renderPostImage } from '../plugins/x-posts/lib/render.mjs';
 import { findFfmpeg } from '../src/gif-frames.js';
 
 let pass = 0, fail = 0;

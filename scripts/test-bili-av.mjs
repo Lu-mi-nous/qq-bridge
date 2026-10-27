@@ -28,15 +28,15 @@ const skipped = (n, why) => { skip++; console.log(`SKIP  ${n}  （${why}）`); }
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const asrSrc = fs.readFileSync(path.join(root, 'src', 'asr.js'), 'utf8');
-const biliSrc = fs.readFileSync(path.join(root, 'src', 'bili.js'), 'utf8');
-const browseSrc = fs.readFileSync(path.join(root, 'src', 'bili-browse.js'), 'utf8');
+const biliSrc = fs.readFileSync(path.join(root, 'plugins', 'bili', 'lib', 'bili.js'), 'utf8');
+const browseSrc = fs.readFileSync(path.join(root, 'plugins', 'bili', 'lib', 'bili-browse.js'), 'utf8');
 const bridgeSrc = fs.readFileSync(path.join(root, 'src', 'pipeline/bili-runtime.js'), 'utf8');
 const consoleServerSrc = readConsoleSource();
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 const pySrc = fs.readFileSync(path.join(root, 'scripts', 'asr-server.py'), 'utf8');
 
 const { createAsrEngine, pickModelSpec, resolveModelSpec, KNOWN_MODEL_DIRS } = await import('../src/asr.js');
-const { videoFramesHint } = await import('../src/bili.js');
+const { videoFramesHint } = await import('../plugins/bili/lib/bili.js');
 
 // ── 1. 模型复用 ──
 console.log('── 1. 模型复用（不重复下载 3GB）──');

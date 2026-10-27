@@ -18,7 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   loadBiliAuth, searchVideos, buildSearchKeywords, pickSearchQuery
-} from '../src/bili-auth.js';
+} from '../plugins/bili/lib/bili-auth.js';
 import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
@@ -138,7 +138,7 @@ console.log('\n── 3b. cid 缺失与补全 ──');
   }
 
   const browse = fs.readFileSync(
-    path.join(path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1'), '..', 'src', 'bili-browse.js'),
+    path.join(path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1'), '..', 'plugins', 'bili', 'lib', 'bili-browse.js'),
     'utf8'
   );
   check('watchVideo 在 cid 缺失时补查 view',

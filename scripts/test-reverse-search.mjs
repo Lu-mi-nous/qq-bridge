@@ -6,7 +6,7 @@
 //   ② 代理不稳时会被 Cloudflare 挑战页挡住（返回 HTML 而非 JSON）—— 要能识别并说明。
 //   ③ 免费额度 30 秒 4 次 / 每天 100 次 —— 超了要给「等 N 秒」而不是让模型反复重试。
 // 这些错误都必须**可区分**，否则群友会听到「搜不到」而实际是「没配 key」或「被限流」。
-import { parseSauceResponse, prettySiteName, DB_INDEX, createReverseSearcher } from '../src/image-reverse-search.mjs';
+import { parseSauceResponse, prettySiteName, DB_INDEX, createReverseSearcher } from '../plugins/images/lib/image-reverse-search.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

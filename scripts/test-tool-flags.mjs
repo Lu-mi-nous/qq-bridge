@@ -109,6 +109,10 @@ console.log('\n── 4. 桥接接线 ──');
   check('fetchXPosts 关闭时桥接路由拒绝拉取',
     /!v2ToolEnabled\('fetchXPosts'\)/.test(consoleRoutes)
       && /X 帖子转发已临时关闭/.test(consoleRoutes));
+  // R4.5-3：实现迁到 plugins/x-posts 后，插件缺席时控制台端点要明确 503，不能 500。
+  check('X 插件缺席时控制台端点回 503',
+    /X 插件未加载/.test(consoleRoutes)
+      && /plugins\/x-posts\//.test(fs.readFileSync(path.join(root, 'plugins', 'x-posts', 'index.js'), 'utf8')));
 }
 
 console.log('\n── 5. 控制台不再硬编码 ──');

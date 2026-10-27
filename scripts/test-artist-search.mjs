@@ -2,8 +2,8 @@
 // 覆盖：统一 artist: 语法的各源翻译、本地 artist 字段精确匹配、标签校验不误杀画师查询。
 import fs from 'node:fs';
 import path from 'node:path';
-import { translateArtistTag, fetchFromSources } from '../src/image-sources.js';
-import { createImageStore } from '../src/image-store.js';
+import { translateArtistTag, fetchFromSources } from '../plugins/images/lib/image-sources.js';
+import { createImageStore } from '../plugins/images/lib/image-store.js';
 import { proxyGet } from '../src/proxy-tunnel.js';
 
 const PROXY = process.env.QQB_PROXY || 'http://127.0.0.1:7897';

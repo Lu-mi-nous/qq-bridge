@@ -7,7 +7,7 @@ import {
   buildResearchPrompt,
   buildSlangContext,
   SLANG_STATUS,
-} from '../src/slang-learner.js';
+} from '../plugins/slang/lib/slang-learner.js';
 
 let passed = 0;
 function ok(name) {

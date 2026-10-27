@@ -1,0 +1,13 @@
+{
+  "id": "content-review",
+  "name": "内容审查（X 转发安全，默认关闭）",
+  "version": "1.0.0",
+  "engines": { "qqBridge": ">=0.4.0" },
+  "enabledByDefault": false,
+  "configPath": "xMonitor.review",
+  "configSchema": "config.schema.js",
+  "permissions": ["network", "state", "console:route"],
+  "hooks": ["onStart", "onStop"],
+  "mcpTools": [],
+  "console": { "cards": ["content-review"], "routes": ["/api/plugins/content-review/card"] }
+}

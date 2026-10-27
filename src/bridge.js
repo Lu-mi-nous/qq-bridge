@@ -32,13 +32,13 @@ import { looksLikeUnfinished } from './v2-wait.js';
 import { shrinkStickerForUpload, STICKER_UPLOAD_MAX_BYTES, STICKER_UPLOAD_TARGET_BYTES } from './image-downscale.js';
 // 群文件只读分类（列表/统计/搜索，不做写操作），见模块顶部说明。
 import { summarizeGroupFiles, formatSummary, searchGroupFiles, humanSize } from './group-files.js';
-import { fetchFromSources, resolveTagName, sourcePageOf } from './image-sources.js';
-import { loadPixivAuth, setPixivCookie } from './pixiv-auth.js';
+import { fetchFromSources, resolveTagName, sourcePageOf } from './images-api.js';
+import { loadPixivAuth, setPixivCookie } from './images-api.js';
 import { createAsrEngine } from './asr.js';
 import { DEFAULT_SOVITS_DIR, TTS_DEFAULT_PROBABILITY } from './tts.js';
 import { createPluginRuntime } from './plugin-runtime.js';
 import { collectCacheItems, summarizeCache, purgeCache, humanBytes, CACHE_GROUPS } from './cache-manager.js';
-import { detectSourceRequest } from './image-source-hint.js';
+import { detectSourceRequest } from './images-api.js';
 import { createImageFacade } from './image-facade.js';
 import { createImageRequestService } from './image-request.js';
 import { createMediaService } from './media-service.js';
@@ -46,9 +46,8 @@ import { createSocialEngine } from './social-engine.js';
 import { createSocialLoop } from './social-loop.js';
 import { createErrorService } from './error-service.js';
 import { createBiliBootstrap } from './bili-bootstrap.js';
-import { createUpscaleBootstrap } from './upscale-bootstrap.js';
-import { createReverseSearcher } from './image-reverse-search.mjs';
-import { classifyImageFeedback } from './image-feedback.js';
+import { createReverseSearcher } from './images-api.js';
+import { classifyImageFeedback } from './images-api.js';
 // 回复时按概率 @ 对方：由桥接掷骰（模型几乎不主动传 atUserId），见 auto-at.js 顶部说明。
 import { pickAutoAt, DEFAULT_AUTO_AT } from './auto-at.js';
 // 非白名单群的 @：预设话术直接回，不经过 DSH（不消耗 token）。
@@ -85,7 +84,6 @@ import {
   formatMemoryPack,
   createSummarizer
 } from './context-memory.js';
-import { XMonitor } from './x-monitor/index.mjs';
 import {
   classifyUpstreamError,
   condenseUpstreamDetail,
@@ -100,13 +98,13 @@ import { safeFetchBuffer, validateFetchUrl } from './safe-fetch.js';
 // 超分回传要按魔数确认"这确实是图片"，不能变成任意文件发送通道。
 import { sniffImageMime } from './web-image-fetch.js';
 // B 站：自己刷视频 + 全局观看记忆。见 bili.js / bili-browse.js 顶部说明。
-import { createVideoMemory, resolveBiliId, fetchVideoInfo, fetchPopularVideos, setBiliCookie } from './bili.js';
-import { loadBiliAuth, searchVideos, buildSearchKeywords, pickSearchQuery } from './bili-auth.js';
+import { createVideoMemory, resolveBiliId, fetchVideoInfo, fetchPopularVideos, setBiliCookie } from './bili-api.js';
+import { loadBiliAuth, searchVideos, buildSearchKeywords, pickSearchQuery } from './bili-api.js';
 import {
   pickCandidate, watchDepth, watchVideo, canSelfBrowse,
   nextBrowseDelay, buildBrowsePrompt, buildScanPrompt, buildExtendedPrompt,
   parseScanVerdict, categoryGroup, categoryWeight, GAME_KEYWORDS
-} from './bili-browse.js';
+} from './bili-api.js';
 import { extractForwardIds, forwardIdFromData, sanitizeForwardId, formatForwardResponse } from './forward.js';
 import { stripLeadingMetaMarker, stripLeadingMetaMarkers } from './meta-marker.js';
 import { extractQuotedMedia, buildReplyText, reserved2MediaFetchHint, inlineMediaFactHint } from './quoted-media.js';
@@ -116,14 +114,14 @@ import { resolvePokeTarget, isSymbolicPokeRef } from './poke-target.js';
 import { parseShareCard, formatShareCard, coverUrlOf, extractShareCards } from './share-card.js';
 import { crawlUrl, crawlAigengtu, saveStickerImage, isAigengtuUrl } from './web-crawler.js';
 // 群友功能菜单图（HTML+CSS → Chrome 无头截图），见 feature-menu.js 顶部说明。
-import { renderFeatureMenu } from './feature-menu-render.js';
-import { parseGitHubUrl, extractGitHubUrl, screenshotGitHubRepo } from './github-shot.js';
+import { renderFeatureMenu } from './media-tools-api.js';
+import { parseGitHubUrl, extractGitHubUrl, screenshotGitHubRepo } from './media-tools-api.js';
 import { describeJoinRequest, createJoinQueue, DEFAULT_TTL_MS as JOIN_TTL_MS } from './join-request.js';
 import { CREDENTIAL_ITEMS, maskValue } from './credentials-doc.js';
 import { TOOL_FLAGS, toolNamesOf, groupedToolFlags } from './tool-flags.js';
 import { aggregateTokenUsage, humanTokens, dayKey } from './token-usage.js';
-import { buildTokenReport, summarizeTokenReport } from './token-report.js';
-import { renderTokenReport, pruneTokenReportCache } from './token-report-render.js';
+import { buildTokenReport, summarizeTokenReport } from './media-tools-api.js';
+import { renderTokenReport, pruneTokenReportCache } from './media-tools-api.js';
 import { validateEmojiId, createReactionGate, REACTION_EMOJIS, emojiMenuText } from './emoji-react.js';
 import {
   loadSlang,
@@ -137,17 +135,17 @@ import {
   createSlangEntry,
   mergeEvidence,
   SLANG_STATUS
-} from './slang-learner.js';
+} from './slang-api.js';
 import {
   formatStickerList,
   buildStickerContext,
   buildStickerStrategyHint,
   markStickerUsed,
   writeStickerCacheImage
-} from './sticker-lib.js';
+} from './stickers-api.js';
 import { createStickerService } from './sticker-service.js';
 // 表情包主动要求：按本轮语气挑候选（见模块顶部说明）
-import { pickStickerCandidates, buildStickerNudge, moodOfText } from './sticker-pick.js';
+import { pickStickerCandidates, buildStickerNudge, moodOfText } from './stickers-api.js';
 import { createConsoleServer } from './console-server.js';
 import { createAdminCommands, isAdminCommand, canBypassAdmission, rawTextOfMessage } from './admin-commands.js';
 import { createContextRecovery, isContextOverflowError, rotateContextSession } from './context-recovery.js';
@@ -158,7 +156,7 @@ import {
   normalizeSharedMemoryConfig,
   mergeEpisodeToSharedMemory,
   formatSharedMemoryForWake
-} from './shared-memory.js';
+} from './shared-memory-api.js';
 import { createTokenFuse } from './token-fuse.js';
 import { needsNewSession } from './pipeline/session-generation.js';
 import { createSessionService } from './session-service.js';
@@ -6034,14 +6032,6 @@ async function main() {
   if (process.env.QQB_RESTARTED_BY) {
     log(`桥接已就绪（控制台自重启，PID ${process.pid}）`);
   }
-  const upscaleBootstrap = createUpscaleBootstrap({
-    cfg,
-    root: ROOT,
-    stateDir: STATE_DIR,
-    log
-  });
-  upscaleBootstrap.start();
-
   const biliBootstrap = createBiliBootstrap({
     cfg,
     root: ROOT,
@@ -6102,13 +6092,9 @@ async function main() {
   }
 
   // ── X（Twitter）按需拉取 ────────────────────────────────────────────────
-  // 不再定时推送：群友在群里点名要看某个 X 账号的帖子时，AI 调用 MCP 工具
-  // qq_fetch_x_posts 现场拉取 → 渲染成卡片图 → 发到当前会话。
-  // 账号/条数/时间条件都由调用方给，xMonitor 段只存放共享设置（代理、翻译开关）。
-  const xMonitor = new XMonitor({
-    root: ROOT,
-    log: (m) => log(m)
-  });
+  // 实现已迁到 plugins/x-posts/（R4.5-3）：插件构造 XMonitor 并暴露能力；
+  // 插件缺席时 xMonitor 为 null，控制台相关端点回 503（P0 关闭时根本走不到）。
+  const xMonitor = pluginRuntime?.xMonitor?.() ?? null;
 
   startDshWatch();
   createConsoleServer({

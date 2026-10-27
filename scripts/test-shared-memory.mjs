@@ -22,7 +22,7 @@ import {
   clearSharedMemory,
   loadSharedMemory,
   sharedMemoryFile
-} from '../src/shared-memory.js';
+} from '../plugins/shared-memory/lib/shared-memory.js';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };

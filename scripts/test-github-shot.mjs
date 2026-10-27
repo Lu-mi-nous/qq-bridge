@@ -12,7 +12,7 @@
 // 依赖真实网络与 Chrome 的用例在不可用时跳过，不算失败。
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseGitHubUrl, extractGitHubUrl } from '../src/github-shot.js';
+import { parseGitHubUrl, extractGitHubUrl } from '../plugins/media-tools/lib/github-shot.js';
 import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
@@ -119,12 +119,12 @@ console.log('\n── 3. 真实截图 ──');
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
   const proxy = String(cfg.socialV2?.githubShot?.proxy || cfg.socialV2?.images?.proxy || '').trim();
   try {
-    const { findBrowser } = await import('../src/feature-menu-render.js');
+    const { findBrowser } = await import('../plugins/media-tools/lib/feature-menu-render.js');
     const bin = findBrowser();
     if (!bin) { skipped('真实截图', '未找到 Chrome/Edge'); }
     else if (!proxy) { skipped('真实截图', '未配置代理，GitHub 在本机直连不通'); }
     else {
-      const { screenshotGitHubRepo } = await import('../src/github-shot.js');
+      const { screenshotGitHubRepo } = await import('../plugins/media-tools/lib/github-shot.js');
       const shot = await screenshotGitHubRepo('https://github.com/Lu-mi-nous/qq-bridge', {
         proxy, width: 1400, sliceHeight: 2400, maxHeight: 12000, waitMs: 2500, timeoutMs: 120000
       });

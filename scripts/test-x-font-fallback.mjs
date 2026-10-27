@@ -3,7 +3,7 @@
 // 背景（2026-10-10）：群友看到卡片里「好大方框」——雅黑(msyh)不含韩文与 emoji，
 // drawtext 又没有字体回退链，于是韩文/emoji 全渲染成 □。实测那条帖子有 53 个韩文字。
 // 修法是按字符分段、各段换能出字形的字体（韩文→malgun，emoji→seguiemj）。
-import { fontClassOf, segmentByFont } from '../src/x-monitor/render.mjs';
+import { fontClassOf, segmentByFont } from '../plugins/x-posts/lib/render.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };

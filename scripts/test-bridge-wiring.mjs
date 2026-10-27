@@ -137,7 +137,7 @@ check('代码默认 autoApprove: false', /autoApprove: false/.test(bridge));
 {
 
 
-check('桥接导入凭据模块', /from '\.\/pixiv-auth\.js'/.test(bridge));
+check('桥接导入凭据模块（经 images-api 网关）', /from '\.\/images-api\.js'/.test(bridge) && /loadPixivAuth/.test(bridge));
 check('启动时注入', /applyPixivAuth\(\)/.test(bridge) && /setPixivCookie\(pa\.loaded \? pa\.cookie : ''\)/.test(bridge));
 check('日志只报状态不打印内容',
     /pixiv 登录态已加载/.test(bridge) && !/log\([^)]*pixivAuth\.cookie/.test(bridge) && !/log\([^)]*pa\.cookie/.test(bridge));

@@ -5,10 +5,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createImageStore } from '../src/image-store.js';
+import { createImageStore } from '../plugins/images/lib/image-store.js';
 import {
   isGroupImage, isGroupLike, characterTagCount, personCount, GROUP_IMAGE_TAGS
-} from '../src/image-quality.js';
+} from '../plugins/images/lib/image-quality.js';
 
 let pass = 0, fail = 0;
 const check = (name, cond, extra = '') => {

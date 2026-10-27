@@ -14,8 +14,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildTokenReport, prettyModelName, humanAge, summarizeTokenReport } from '../src/token-report.js';
-import { buildTokenReportHtml, escapeHtml } from '../src/token-report-html.js';
+import { buildTokenReport, prettyModelName, humanAge, summarizeTokenReport } from '../plugins/media-tools/lib/token-report.js';
+import { buildTokenReportHtml, escapeHtml } from '../plugins/media-tools/lib/token-report-html.js';
 import { readConsoleSource } from './lib/console-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
@@ -171,11 +171,11 @@ console.log('\n── 4. 摘要同源 ──');
 // ── 5. 渲染（真实浏览器，可选）──
 console.log('\n── 5. 渲染 ──');
 {
-  const { findBrowser } = await import('../src/feature-menu-render.js');
+  const { findBrowser } = await import('../plugins/media-tools/lib/feature-menu-render.js');
   if (!findBrowser()) {
     skipped('真实渲染 PNG', '本机没有 Chrome/Edge');
   } else {
-    const { renderTokenReport, REPORT_WIDTH } = await import('../src/token-report-render.js');
+    const { renderTokenReport, REPORT_WIDTH } = await import('../plugins/media-tools/lib/token-report-render.js');
     const usage = {
       updatedAt: NOW - 60 * 1000, turns: 9, calls: 19, files: 1,
       days: {

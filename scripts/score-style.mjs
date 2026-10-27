@@ -2,8 +2,8 @@
 // 用法: node scripts/score-style.mjs [数量上限]
 import fs from 'node:fs';
 import path from 'node:path';
-import { createImageStore } from '../src/image-store.js';
-import { extractStyleVectors, cosine } from '../src/image-style.js';
+import { createImageStore } from '../plugins/images/lib/image-store.js';
+import { extractStyleVectors, cosine } from '../plugins/images/lib/image-style.js';
 
 const LIB = 'state/image-lib';
 const CENTER_FILE = 'state/style-center.json';

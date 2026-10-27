@@ -20,7 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   loadPixivAuth, setPixivCookie, hasPixivCookie, withPixivAuth
-} from '../src/pixiv-auth.js';
+} from '../plugins/images/lib/pixiv-auth.js';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -111,7 +111,7 @@ console.log('\n── 2. 请求头注入 ──');
 // ── 3. 只发给 pixiv，不漏给别的源 ──
 console.log('\n── 3. 凭据作用域 ──');
 {
-  const s = fs.readFileSync(path.join(root, 'src/image-sources.js'), 'utf8');
+  const s = fs.readFileSync(path.join(root, 'plugins', 'images', 'lib', 'image-sources.js'), 'utf8');
   // 关键设计：cookie 包在 pixiv 适配器内部（apiFetch），而不是加在 fetchFromSources
   // 那个所有源共用的 jsonFetch 工厂上——否则 safebooru / yande.re 也会收到 pixiv 的凭据。
   check('pixiv 适配器内部包了一层 apiFetch', /const apiFetch = async \(url, headers = \{\}\) => \{/.test(s));
@@ -139,7 +139,7 @@ console.log('\n── 3. 凭据作用域 ──');
 // ── 4. 503 的措辞（维护 ≠ 标签写错）──
 console.log('\n── 4. 503 降级说明 ──');
 {
-  const s = fs.readFileSync(path.join(root, 'src/image-sources.js'), 'utf8');
+  const s = fs.readFileSync(path.join(root, 'plugins', 'images', 'lib', 'image-sources.js'), 'utf8');
   check('503 被单独识别', /Number\(error\?\.status\) === 503/.test(s));
   check('提到"站点维护"', /站点维护/.test(s));
   check('匿名时提示可配凭据', /可在控制台配置登录凭据后重试/.test(s));

@@ -123,6 +123,7 @@ export async function handle(req, res, url, ctx) {
   // 凭据会因改密码/登出而失效，出问题时先打这个端点定位。
   if (req.method === 'POST' && url.pathname === '/api/socialV2/x-auth-check') {
     if (req.headers['x-agent-token']) { sendJson({ ok: false, error: '该接口仅控制台可用' }, 403); return; }
+    if (!xMonitor) { sendJson({ ok: false, error: 'X 插件未加载（plugins/x-posts）' }, 503); return; }
     const st = xMonitor.describeAuth();
     if (!st.available) { sendJson({ ok: false, ...st, hint: '按记忆 x-monitor 登录态的说明取 auth_token/ct0 写入 state/x-auth.json' }); return; }
     // 真的发一次请求验证（凭据存在≠有效）
@@ -148,6 +149,7 @@ export async function handle(req, res, url, ctx) {
       sendJson({ ok: false, error: 'X 帖子转发已临时关闭' }, 403);
       return;
     }
+    if (!xMonitor) { sendJson({ ok: false, error: 'X 插件未加载（plugins/x-posts）' }, 503); return; }
 
     const account = handleRaw.replace(/^@/, '').trim();
     if (!/^[A-Za-z0-9_]{1,15}$/.test(account)) {

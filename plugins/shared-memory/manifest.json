@@ -1,0 +1,13 @@
+{
+  "id": "shared-memory",
+  "name": "跨会话人物记忆（隐私敏感）",
+  "version": "1.0.0",
+  "engines": { "qqBridge": ">=0.4.0" },
+  "enabledByDefault": false,
+  "configPath": "socialV2.sharedMemory",
+  "configSchema": "config.schema.js",
+  "permissions": ["state", "console:route"],
+  "hooks": ["onStart", "onStop"],
+  "mcpTools": [],
+  "console": { "cards": ["shared-memory"], "routes": ["/api/plugins/shared-memory/card"] }
+}

@@ -3,7 +3,7 @@
 // 输出: state/style-center.json（512 维向量 + 元信息）
 import fs from 'node:fs';
 import path from 'node:path';
-import { extractStyleVectors, meanVector } from '../src/image-style.js';
+import { extractStyleVectors, meanVector } from '../plugins/images/lib/image-style.js';
 
 const DIR = process.argv[2] || 'D:/图片/pixiv';
 const SAMPLE = Number(process.argv[3]) || 400;

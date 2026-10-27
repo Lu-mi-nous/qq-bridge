@@ -1,0 +1,13 @@
+{
+  "id": "slang",
+  "name": "黑话学习（候选 / 研究 / 注入）",
+  "version": "1.0.0",
+  "engines": { "qqBridge": ">=0.4.0" },
+  "enabledByDefault": false,
+  "configPath": "slang",
+  "configSchema": "config.schema.js",
+  "permissions": ["state", "console:route"],
+  "hooks": ["onStart", "onStop"],
+  "mcpTools": ["qq_slang_query", "qq_slang_submit"],
+  "console": { "cards": ["slang"], "routes": ["/api/plugins/slang/card"] }
+}

@@ -40,6 +40,14 @@ export function createPluginRuntime({
     return host.get('tts');
   }
 
+  function upscale() {
+    return host.get('upscale');
+  }
+
+  function xMonitor() {
+    return host.get('x-posts')?.monitor ?? null;
+  }
+
   function ttsEngine() {
     return tts()?.engine ?? null;
   }
@@ -48,5 +56,5 @@ export function createPluginRuntime({
     return tts()?.speechParams?.() ?? {};
   }
 
-  return { host, start, stop, get, list, tts, ttsEngine, ttsSpeechParams };
+  return { host, start, stop, get, list, tts, ttsEngine, ttsSpeechParams, upscale, xMonitor };
 }

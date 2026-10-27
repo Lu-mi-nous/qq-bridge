@@ -2,8 +2,8 @@
 // 需要 models/clip-vision-quantized.onnx 与 state/style-center.json 存在。
 import fs from 'node:fs';
 import path from 'node:path';
-import { extractStyleVectors, cosine, meanVector } from '../src/image-style.js';
-import { createImageStore } from '../src/image-store.js';
+import { extractStyleVectors, cosine, meanVector } from '../plugins/images/lib/image-style.js';
+import { createImageStore } from '../plugins/images/lib/image-store.js';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };

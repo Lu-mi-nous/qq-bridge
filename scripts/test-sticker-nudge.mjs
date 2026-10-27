@@ -23,14 +23,14 @@ let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
-const pickSrc = fs.readFileSync(path.join(root, 'src', 'sticker-pick.js'), 'utf8');
+const pickSrc = fs.readFileSync(path.join(root, 'plugins', 'stickers', 'lib', 'sticker-pick.js'), 'utf8');
 
 const wakeSrc = fs.readFileSync(path.join(root, 'src', 'pipeline', 'wake.js'), 'utf8');
 const consoleServerSrc = readConsoleSource();
 const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
 
 const { MOOD_RULES, moodOfSticker, moodOfText, pickStickerCandidates, buildStickerNudge } =
-  await import('../src/sticker-pick.js');
+  await import('../plugins/stickers/lib/sticker-pick.js');
 
 // 构造一组典型表情（对应真实库里的备注格式）
 const LIB = [

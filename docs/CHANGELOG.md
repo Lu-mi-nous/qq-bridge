@@ -6,6 +6,12 @@
 
 （暂无）
 
+## 0.5.0（2026-10-27）
+
+- **R4.5 插件化收尾**（2026-10-27）：upscale / web-search / x-posts / bili / images / stickers / slang / shared-memory / media-tools 依次出核（9 个可选功能域），核心经 `src/<domain>-api.js` 网关调用；插件缺席时静默降级（同步空值/异步抛明确错误），桥接启动与其它功能不受影响。顺带统一了「实现进 plugins/、核心只做装配」的边界。
+- **新增 content-review 插件**（2026-10-27，默认关闭）：X 转发内容安全审查的落点——统一审核入口（本地规则 + 可选模型注入 + fail-closed）、JSONL 审计只存 hash/分类/动作、不存原文；敏感词表不进仓库，由使用者在 `xMonitor.review` 维护。
+- **版本号 0.5.0**：`npm run version:set -- 0.5.0` 同步全部镜像；更新日志按新标准剪版。
+
 ## 0.4.1（2026-10-27）
 
 - **版本号统一为 0.4.1**（2026-10-27 用户要求）：`package.json` / `package-lock.json`、控制台关于页 fallback、三个 MCP server 的元数据、`plugins/qq-mode-console` 统一为 0.4.1；新增 `npm run version:set` 一键同步与 `test-version-sync` 护栏。

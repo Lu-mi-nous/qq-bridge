@@ -2,8 +2,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { sourcePageOf, SOURCE_PAGE_RULES } from '../src/image-sources.js';
-import { createImageStore } from '../src/image-store.js';
+import { sourcePageOf, SOURCE_PAGE_RULES } from '../plugins/images/lib/image-sources.js';
+import { createImageStore } from '../plugins/images/lib/image-store.js';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };

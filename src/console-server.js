@@ -5,7 +5,7 @@ import {
   listSharedPeople,
   forgetSharedPerson,
   clearSharedMemory
-} from './shared-memory.js';
+} from './shared-memory-api.js';
 import { normalizeTokenFuseConfig, normalizeTokenFuseOverride, effectiveTokenFuseThresholds } from './token-fuse.js';
 import { normalizeGapNoticeConfig } from './session-gap.js';
 import { createConsoleRouter } from './console/router.js';

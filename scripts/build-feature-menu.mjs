@@ -1,8 +1,8 @@
 // 预生成群友功能声明：只写本地 HTML/PNG，不连接 QQ 或调用模型。
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { buildFeatureMenuHtml, menuStats } from '../src/feature-menu.js';
-import { avatarDataUrl, readFeatureMenuOptions, renderFeatureMenu } from '../src/feature-menu-render.js';
+import { buildFeatureMenuHtml, menuStats } from '../plugins/media-tools/lib/feature-menu.js';
+import { avatarDataUrl, readFeatureMenuOptions, renderFeatureMenu } from '../plugins/media-tools/lib/feature-menu-render.js';
 
 try {
   const options = readFeatureMenuOptions();

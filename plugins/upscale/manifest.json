@@ -1,0 +1,13 @@
+{
+  "id": "upscale",
+  "name": "超分放大（Real-ESRGAN / Upscayl）",
+  "version": "1.0.0",
+  "engines": { "qqBridge": ">=0.4.0" },
+  "enabledByDefault": false,
+  "configPath": "socialV2.upscale",
+  "configSchema": "config.schema.js",
+  "permissions": ["process", "state", "console:route"],
+  "hooks": ["onStart", "onStop"],
+  "mcpTools": ["qq_upscale_image"],
+  "console": { "cards": ["upscale"], "routes": ["/api/plugins/upscale/card"] }
+}

@@ -2,7 +2,7 @@
 // 依赖真实网络（图站 API）；无网络时相关用例会失败并在输出中说明。
 // 注意：本机对 safebooru.donmai.us 直连会 ETIMEDOUT（2026-09-24 起），
 // 生产靠 images.proxy 兜底，所以测试也带上代理，否则测的是「直连不可用」而非查询逻辑。
-import { fetchFromSources, safebooru } from '../src/image-sources.js';
+import { fetchFromSources, safebooru } from '../plugins/images/lib/image-sources.js';
 
 const PROXY = process.env.QQB_PROXY || 'http://127.0.0.1:7897';
 let pass = 0, fail = 0;
@@ -105,7 +105,7 @@ try {
 console.log(`\n${pass} passed, ${fail} failed`);
 // ── 标签名纠错（booru 精确全名常带括号限定）──
 {
-  const { resolveTagName } = await import('../src/image-sources.js');
+  const { resolveTagName } = await import('../plugins/images/lib/image-sources.js');
   // 精确存在的词不应被改动
   const exact = await resolveTagName('cat');
   check('已存在的标签保持精确', exact?.exact === true && exact.name === 'cat');

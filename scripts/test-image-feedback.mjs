@@ -1,5 +1,5 @@
 // 回归测试：负面评价识别与换图限流（纯逻辑，不依赖网络）。
-import { classifyImageFeedback, createFeedbackGate } from '../src/image-feedback.js';
+import { classifyImageFeedback, createFeedbackGate } from '../plugins/images/lib/image-feedback.js';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };

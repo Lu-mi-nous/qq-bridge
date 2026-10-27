@@ -1,6 +1,6 @@
 // 验证新功能：pixiv `artist:<数字ID>` 按画师取图（免登录、可靠）。
 // 对照 lack userId=83739（日榜实测存在，596 个作品）。
-import { pixiv, translateArtistTag } from '../src/image-sources.js';
+import { pixiv, translateArtistTag } from '../plugins/images/lib/image-sources.js';
 import { proxyGet } from '../src/proxy-tunnel.js';
 
 const PROXY = process.env.QQB_PROXY || 'http://127.0.0.1:7897';

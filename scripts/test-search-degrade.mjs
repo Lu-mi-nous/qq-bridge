@@ -20,7 +20,7 @@
 //
 // 2026-10-23 追加：查询「南京 今天 明天 天气预报」被降级成「南京市百科」，
 // 旧判据只看到"南京"命中就放行。这里同时锁住"天气意图必须出现天气词"。
-import { looksOffTopic, longestChunk, queryChunks, entityChunk, retryQueryFor, isWeatherQuery, weatherLocation } from '../src/web-search/engines/bing-html.mjs';
+import { looksOffTopic, longestChunk, queryChunks, entityChunk, retryQueryFor, isWeatherQuery, weatherLocation } from '../plugins/web-search/lib/engines/bing-html.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -175,12 +175,12 @@ console.log('\n── 6. 源码接线（防漏接）──');
   const path = await import('node:path');
   const url = await import('node:url');
   const root = path.dirname(url.fileURLToPath(import.meta.url)) + '/..';
-  const html = fs.readFileSync(path.join(root, 'src/web-search/engines/bing-html.mjs'), 'utf8');
-  const rss = fs.readFileSync(path.join(root, 'src/web-search/engines/bing-rss.mjs'), 'utf8');
-  const idx = fs.readFileSync(path.join(root, 'src/web-search/index.mjs'), 'utf8');
+  const html = fs.readFileSync(path.join(root, 'plugins/web-search/lib/engines/bing-html.mjs'), 'utf8');
+  const rss = fs.readFileSync(path.join(root, 'plugins/web-search/lib/engines/bing-rss.mjs'), 'utf8');
+  const idx = fs.readFileSync(path.join(root, 'plugins/web-search/lib/index.mjs'), 'utf8');
   const mcp = fs.readFileSync(path.join(root, 'src/mcp-web-search-safe.js'), 'utf8');
-  const plan = fs.readFileSync(path.join(root, 'src/web-search/query-plan.mjs'), 'utf8');
-  const weather = fs.readFileSync(path.join(root, 'src/web-search/engines/weather.mjs'), 'utf8');
+  const plan = fs.readFileSync(path.join(root, 'plugins/web-search/lib/query-plan.mjs'), 'utf8');
+  const weather = fs.readFileSync(path.join(root, 'plugins/web-search/lib/engines/weather.mjs'), 'utf8');
 
   check('bing-html 降级后重试', /looksOffTopic\(first, query\)/.test(html) && /fetchOne\(retryQuery\)/.test(html));
   check('bing-html 使用实体词重试（不是最长词块）', /retryQueryFor\(query\)/.test(html));

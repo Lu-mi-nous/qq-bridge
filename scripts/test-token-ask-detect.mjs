@@ -79,7 +79,7 @@ console.log('\n── 4. MCP 工具描述也补齐了（模型看到的第二份
 console.log('\n── 5. 渲染链路可用的前提 ──');
 {
   // 浏览器是渲染 PNG 的硬依赖，找不到就会「图调不出来」
-  const hasFindBrowser = /findBrowser/.test(fs.readFileSync(path.join(root, 'src/token-report-render.js'), 'utf8'));
+  const hasFindBrowser = /findBrowser/.test(fs.readFileSync(path.join(root, 'plugins', 'media-tools', 'lib', 'token-report-render.js'), 'utf8'));
   check('渲染模块通过 findBrowser 找浏览器', hasFindBrowser);
   const cacheDir = path.join(root, 'state', 'token-report');
   check('报表缓存目录存在', fs.existsSync(cacheDir));

@@ -1,9 +1,9 @@
 // 图片请求服务（R3-9）：发图冷却、来源过滤、预检、原图收藏与来源标注。
-import { createFeedbackGate } from './image-feedback.js';
-import { createSourceHintStore } from './image-source-hint.js';
-import { saveOriginalImage } from './image-archive.js';
+import { createFeedbackGate } from './images-api.js';
+import { createSourceHintStore } from './images-api.js';
+import { saveOriginalImage } from './images-api.js';
 import { safeFetchBuffer } from './safe-fetch.js';
-import { sourcePageOf } from './image-sources.js';
+import { sourcePageOf } from './images-api.js';
 
 export function createImageRequestService({
   cfg,

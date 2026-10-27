@@ -1,7 +1,7 @@
 // 图库挑选、按需拉取、发送与成功记账。
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveTagName as defaultResolveTagName, sourcePageOf } from '../image-sources.js';
+import { resolveTagName as defaultResolveTagName, sourcePageOf } from '../images-api.js';
 
 export function createImageSender(deps) {
   const {

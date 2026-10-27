@@ -3,8 +3,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createImageStore } from '../src/image-store.js';
-import { fetchFromSources, getSource, SOURCES } from '../src/image-sources.js';
+import { createImageStore } from '../plugins/images/lib/image-store.js';
+import { fetchFromSources, getSource, SOURCES } from '../plugins/images/lib/image-sources.js';
 
 let pass = 0, fail = 0;
 const check = (name, cond, extra = '') => {

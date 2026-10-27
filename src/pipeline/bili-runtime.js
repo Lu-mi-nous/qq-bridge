@@ -1,8 +1,8 @@
 // 自主浏览编排：列表/搜索 → 初判 → 可选追加 → 记账/投递/分享。
 import { GAME_KEYWORDS, buildBrowsePrompt, buildExtendedPrompt,
-  canSelfBrowse, pickCandidate as defaultPickCandidate, watchVideo as defaultWatchVideo } from '../bili-browse.js';
-import { fetchPopularVideos as defaultFetchPopularVideos } from '../bili.js';
-import { buildSearchKeywords, pickSearchQuery, searchVideos as defaultSearchVideos } from '../bili-auth.js';
+  canSelfBrowse, pickCandidate as defaultPickCandidate, watchVideo as defaultWatchVideo } from '../bili-api.js';
+import { fetchPopularVideos as defaultFetchPopularVideos } from '../bili-api.js';
+import { buildSearchKeywords, pickSearchQuery, searchVideos as defaultSearchVideos } from '../bili-api.js';
 
 export function createBiliRuntime(deps) {
   const { cfg, socialV2, live, log, scheduleBiliBrowse, pickBiliSessionKey, biliBrowseState,

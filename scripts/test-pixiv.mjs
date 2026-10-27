@@ -1,6 +1,6 @@
 // 回归测试：pixiv 源（需代理；图床需 Referer）。
 // 覆盖：日榜、关键词搜索、分级过滤（sexual/xRestrict=0）、原图 URL 推导、格式探测。
-import { fetchFromSources, pixiv, SOURCES } from '../src/image-sources.js';
+import { fetchFromSources, pixiv, SOURCES } from '../plugins/images/lib/image-sources.js';
 import { proxyGet } from '../src/proxy-tunnel.js';
 
 const PROXY = process.env.QQB_PROXY || 'http://127.0.0.1:7897';

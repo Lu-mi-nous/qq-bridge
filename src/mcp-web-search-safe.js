@@ -19,9 +19,21 @@ import https from 'node:https';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-// 可插拔搜索引擎模块：引擎在 src/web-search/engines/ 下，开关与顺序在 config.json 的
-// webSearch.engines（mtime 热加载，改配置不用重启）。首个返回非空结果的引擎胜出。
-import { searchWeb, describeEngines, sanitizeQuery } from './web-search/index.mjs';
+// 可插拔搜索引擎模块（R4.5-2 起在 plugins/web-search/）：引擎在其 lib/engines/ 下，
+// 开关与顺序在 config.json 的 webSearch.engines（mtime 热加载，改配置不用重启）。
+// 首个返回非空结果的引擎胜出。插件目录缺失时下面拿不到实现 → 不注册 web_search，
+// 但 web_fetch / web_view_image 不受影响（它们不依赖引擎链）。
+let searchWeb = null;
+let describeEngines = async () => '';
+let sanitizeQuery = (query) => String(query ?? '');
+try {
+  const lib = await import('../plugins/web-search/lib/index.mjs');
+  searchWeb = lib.searchWeb;
+  describeEngines = lib.describeEngines;
+  sanitizeQuery = lib.sanitizeQuery;
+} catch (error) {
+  console.error(`[web-search] 搜索插件未加载，web_search 不注册：${error?.message ?? error}`);
+}
 // 微信公众号文章解析（纯函数）。见 weixin-article.js 顶部说明：UA 残缺会被风控拦，
 // 且正文在 50KB 之后，必须读全量再解析。
 import { parseWeixinArticle, isWeixinArticleUrl, WEIXIN_READ_CHARS } from './weixin-article.js';
@@ -399,8 +411,9 @@ async function safeFetchViaProxy(urlString, proxy) {
   };
 }
 
-const server = new McpServer({ name: 'web-search-safe', version: '0.4.1' });
+const server = new McpServer({ name: 'web-search-safe', version: '0.5.0' });
 
+if (searchWeb) {
 server.tool(
   'web_search',
   '联网搜索（只读）：当群友问时事/新闻/事实/价格/天气/梗的含义，或任何你不确定、需要依据的信息时调用。多引擎自动回退（天气→百度→必应→DuckDuckGo），天气类查询直接返回实时天气数据；其它查询返回标题/URL/摘要。回答时请注明信息来自搜索。仅搜索，不执行任何本地操作。',
@@ -457,6 +470,7 @@ server.tool(
     }
   }
 );
+}
 
 server.tool(
   'web_fetch',

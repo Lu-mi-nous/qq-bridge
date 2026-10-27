@@ -22,10 +22,10 @@ let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.dirname(fileURLToPath(import.meta.url)) + '/..';
-const m = await import(new URL('../src/feature-menu.js', import.meta.url));
+const m = await import(new URL('../plugins/media-tools/lib/feature-menu.js', import.meta.url));
 const { MENU_SECTIONS, MENU_HEADER, MENU_FOOTER, buildFeatureMenuHtml, menuStats, escapeHtml } = m;
 
-const renderSrc = fs.readFileSync(path.join(root, 'src/feature-menu-render.js'), 'utf8');
+const renderSrc = fs.readFileSync(path.join(root, 'plugins', 'media-tools', 'lib', 'feature-menu-render.js'), 'utf8');
 const wakeSrc = fs.readFileSync(path.join(root, 'src/pipeline/wake.js'), 'utf8');
 const consoleServerSrc = readConsoleSource();
 const mcpSrc = fs.readFileSync(path.join(root, 'src/mcp-snowluma-safe.js'), 'utf8');
@@ -203,7 +203,7 @@ console.log('\n── 10. 实际启用能力、准确声明与缓存失效 ─�
   check('说明记忆不是提醒服务', full.includes('不是定时提醒'));
   check('说明原图保存在本地', full.includes('存到机器人本地'));
   check('不再承诺每次都回复', !/被叫到必回|每次必回|历史都查得到/.test(full));
-  const { menuCacheKey } = await import('../src/feature-menu-render.js');
+  const { menuCacheKey } = await import('../plugins/media-tools/lib/feature-menu-render.js');
   const options = { config: fullConfig, roleName: '测试角色' };
   const key = menuCacheKey(options);
   check('相同内容指纹稳定', key === menuCacheKey(options));
@@ -261,7 +261,7 @@ console.log('\n── 11. 实际发送路由的隔离验证（发送器为本地
 
 if (process.argv.includes('--render')) {
   console.log('\n── 12. 真实 PNG、并发合并与缓存复用（不连接 QQ）──');
-  const { renderFeatureMenu } = await import('../src/feature-menu-render.js');
+  const { renderFeatureMenu } = await import('../plugins/media-tools/lib/feature-menu-render.js');
   const options = { config: { socialV2: { images: { enabled: true } }, imageReverseSearch: { apiKey: 'test-only' } }, roleName: '菜单渲染回归' };
   let outputFile;
   try {

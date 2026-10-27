@@ -651,6 +651,17 @@
     "mediaMaxFiles": 400,
     "ownOnly": true,
     "includeVideo": true,
-    "maxVideoBytes": 104857600
+    "maxVideoBytes": 104857600,
+    "review": {
+      "enabled": false,
+      "mode": "warn",
+      "failClosed": true,
+      "maxChars": 4000,
+      "timeoutMs": 8000,
+      "keywordsByCategory": {},
+      "blockedDomains": [],
+      "auditFile": "state/x-monitor/review-audit.jsonl",
+      "auditMaxEntries": 2000
+    }
   }
 }

@@ -1,5 +1,5 @@
 // 验证 pixiv 的 booru 标签兜底：angelina_(arknights) 应能自动改用空格写法并拿到图。
-import { pixiv } from '../src/image-sources.js';
+import { pixiv } from '../plugins/images/lib/image-sources.js';
 import { proxyGet } from '../src/proxy-tunnel.js';
 
 const PROXY = process.env.QQB_PROXY || 'http://127.0.0.1:7897';

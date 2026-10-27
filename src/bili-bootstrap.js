@@ -1,8 +1,8 @@
 // B 站启动装配（R3-14）：记忆、凭据、字幕/ASR 与自主刷调度。
 import path from 'node:path';
-import { createVideoMemory } from './bili.js';
-import { loadBiliAuth } from './bili-auth.js';
-import { setBiliCookie } from './bili.js';
+import { createVideoMemory } from './bili-api.js';
+import { loadBiliAuth } from './bili-api.js';
+import { setBiliCookie } from './bili-api.js';
 import { createAsrEngine } from './asr.js';
 
 export function createBiliBootstrap({
@@ -26,6 +26,11 @@ export function createBiliBootstrap({
       const mem = createVideoMemory(memFile, {
         maxItems: cfg.socialV2?.bili?.memory?.maxItems
       });
+      if (!mem) {
+        log('[B站] 插件未加载（plugins/bili），B 站功能等同关闭');
+        setBiliMem(null);
+        return;
+      }
       const st = mem.stats();
       log(`[B站] 已启用：记忆 ${st.total} 条（喜欢 ${st.liked} / 不喜欢 ${st.disliked}），今日已看 ${Math.round(st.today.seconds)}s`);
       // 凭据：只报状态，绝不打印内容（state/ 已在 .gitignore 里）
