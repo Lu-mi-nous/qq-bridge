@@ -72,7 +72,7 @@ console.log('\n── 4. 昵称解析 ──');
   const unread = [msg('群友C', '1000000012', '怎么一直戳我', 100)];
   const r1 = resolvePokeTarget({ ref: '群友C', unread, recentMessages: [] });
   check('昵称唯一命中', r1.ok && r1.userId === '1000000012' && r1.reason === 'name', JSON.stringify(r1));
-  const r2 = resolvePokeTarget({ ref: 'memberc', unread, recentMessages: [] });
+  const r2 = resolvePokeTarget({ ref: 'memberc', unread: [msg('MemberC', '1000000012', '怎么一直戳我', 100)], recentMessages: [] });
   check('大小写不敏感', r2.ok && r2.userId === '1000000012', JSON.stringify(r2));
 
   // 同名两人 → 必须拒绝并列候选
