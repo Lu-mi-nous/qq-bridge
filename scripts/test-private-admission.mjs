@@ -83,16 +83,16 @@ console.log('\n── 边界 ──');
 
 console.log('\n── 新加好友必须立刻能用（2026-10-13「私聊怎么不回人了」）──');
 {
-  // 实测现场：好友列表缓存 6 人（5 分钟 TTL），用户新加好友 100002029（昵称"牢"），
-  // 之后发了两条私聊全被丢弃，日志只有 `忽略未授权会话 private:100002029`。
+  // 实测现场：好友列表缓存 6 人（5 分钟 TTL），用户新加好友 3344952470（昵称"牢"），
+  // 之后发了两条私聊全被丢弃，日志只有 `忽略未授权会话 private:3344952470`。
   // SnowLuma 侧查同一个人是好友 —— 纯属缓存过期，不是陌生人。
   //
   // 修法：私聊被拒时强制刷新一次好友列表（带全局限流）再定论。
   const cfg = cfgOf('friends', []);
-  const stale = new Set(['100002000', '100002003']);            // 旧缓存（缺新好友）
-  const fresh = new Set([...stale, '100002029']);                 // 刷新后
-  check('缓存过期时新好友被拒（复现 bug）', privateAllowed(100002029, cfg, stale) === false);
-  check('刷新后同一好友放行（修复生效）', privateAllowed(100002029, cfg, fresh) === true);
+  const stale = new Set(['1000000000', '1000000009']);            // 旧缓存（缺新好友）
+  const fresh = new Set([...stale, '3344952470']);                 // 刷新后
+  check('缓存过期时新好友被拒（复现 bug）', privateAllowed(3344952470, cfg, stale) === false);
+  check('刷新后同一好友放行（修复生效）', privateAllowed(3344952470, cfg, fresh) === true);
   check('刷新不会误放陌生人', privateAllowed(9999999999, cfg, fresh) === false);
 
   const h = incomingHarness({ refreshFriendList: async () => h.friends.add('3') });

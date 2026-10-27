@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { extractStyleVectors, meanVector } from '../plugins/images/lib/image-style.js';
 
-const DIR = process.argv[2] || 'D:/图片/pixiv';
+const DIR = process.argv[2] || 'C:/pixiv';
 const SAMPLE = Number(process.argv[3]) || 400;
 const OUT = 'state/style-center.json';
 

@@ -7,7 +7,7 @@ import path from 'node:path';
 
 const DSH = 'http://127.0.0.1:3080';
 const GATEWAY = 'http://127.0.0.1:7863/v1';
-const BRIDGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const BRIDGE_DIR = 'C:/qq-bridge';
 const CONFIG = path.join(BRIDGE_DIR, 'config.json');
 const PROVIDER = 'vgw';
 const NEW_MODEL = 'global:deepseek-v4.1-flash';

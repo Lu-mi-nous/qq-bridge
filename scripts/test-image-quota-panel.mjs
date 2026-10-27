@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readConsoleSource } from './lib/console-src.mjs';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -21,7 +22,7 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const bridge = readConsoleSource().replace(/\r\n/g, '\n');
 const revSrc = fs.readFileSync(path.join(root, 'plugins', 'images', 'lib', 'image-reverse-search.mjs'), 'utf8');
-const consoleHtml = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+const consoleHtml = readConsoleUiSource({ unescape: true });
 
 console.log('── 1. 反查额度统计 ──');
 {
@@ -49,21 +50,18 @@ console.log('\n── 2. 桥接端点 ──');
 
 console.log('\n── 3. 控制台卡片 ──');
 {
-  check('卡片存在', /id="imageQuotaCard"/.test(consoleHtml));
-  check('有状态行', /id="imgQuotaStatus"/.test(consoleHtml));
-  check('反查额度单独一块', /id="imgQuotaReverse"/.test(consoleHtml));
-  check('拉取冷却单独一块', /id="imgQuotaFetch"/.test(consoleHtml));
-  check('图库容量单独一块', /id="imgQuotaLib"/.test(consoleHtml));
-  check('图源开关单独一块', /id="imgQuotaSources"/.test(consoleHtml));
-  check('有函数 refreshImageQuota', /async function refreshImageQuota/.test(consoleHtml));
+  check('卡片存在', /15 取图额度卡片/.test(consoleHtml) && /api\/socialV2\/image-quota/.test(consoleHtml));
+  check('有状态行', /const status = document\.createElement\('div'\)/.test(consoleHtml));
+  check('反查额度单独一块', /const reverse = document\.createElement\('div'\)/.test(consoleHtml) && /s\.reverseSearch/.test(consoleHtml));
+  check('拉取冷却单独一块', /const fetchLine = document\.createElement\('div'\)/.test(consoleHtml) && /s\.fetch/.test(consoleHtml));
+  check('图库容量单独一块', /const libLine = document\.createElement\('div'\)/.test(consoleHtml) && /s\.library/.test(consoleHtml));
+  check('图源开关单独一块', /const sources = document\.createElement\('div'\)/.test(consoleHtml) && /s\.sources/.test(consoleHtml));
+  check('有刷新函数', /async function refresh\(\)/.test(consoleHtml));
   // 首屏调用：不要断言"紧跟在 refreshBiliStatus 之后"——中间后来又插入了
   // refreshTtsStatus() / refreshCacheStatus()，这条断言一度因"相邻"失效而误报。
   // 真正要保证的是：首屏那串初始化调用里确实包含它（且不在 setInterval 里）。
-  check('首屏调用一次', (() => {
-    const line = (consoleHtml.match(/^refresh\(\);.*$/m) || [''])[0];
-    return line.includes('refreshImageQuota()');
-  })());
-  check('挂进 3 秒轮询', /setInterval\([\s\S]{0,300}refreshImageQuota\(\)/.test(consoleHtml));
+  check('首屏调用一次', /await refresh\(\);/.test(consoleHtml));
+  check('挂进 15 秒轮询', /setInterval\(\(\) => \{ if \(document\.visibilityState !== 'hidden'\) void refresh\(\); \}, 15000\)/.test(consoleHtml));
   check('反查用完时状态行高亮', /反查额度已用完/.test(consoleHtml));
   check('未配 key 时说明不影响其它取图', /其余取图功能不受影响/.test(consoleHtml));
   check('卡片说明三类上限互相独立', /三类上限互相独立/.test(consoleHtml));

@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0;
@@ -28,7 +29,7 @@ check('package.json 版本号是 x.y.z 形态', /^\d+\.\d+\.\d+$/.test(v), v);
     lock.version === v && lock.packages?.['']?.version === v,
     `${lock.version} / ${lock.packages?.['']?.version}`);
 
-  const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+  const html = readConsoleUiSource();
   const vCount = (html.match(new RegExp(`v${v.replace(/\./g, '\\.')}`, 'g')) || []).length;
   check('控制台 fallback 共 3 处（侧栏 / 徽标 / JS 兜底）', vCount === 3, String(vCount));
   const stray = [...html.matchAll(/v0\.\d+\.\d+/g)].map((m) => m[0]).filter((x) => x !== `v${v}`);

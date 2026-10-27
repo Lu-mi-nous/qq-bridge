@@ -12,24 +12,24 @@ const { isAtBotInMessage, buildWhitelistNotice, takeWhitelistNotice, DEFAULT_WHI
 
 console.log('── 1. @机器人 识别 ──');
 {
-  const self = '100002025';
-  check('at 段数字 qq → true', isAtBotInMessage([{ type: 'at', data: { qq: 100002025 } }], self));
-  check('at 段字符串 qq → true', isAtBotInMessage([{ type: 'at', data: { qq: '100002025' } }], self));
+  const self = '1000000001';
+  check('at 段数字 qq → true', isAtBotInMessage([{ type: 'at', data: { qq: 1000000001 } }], self));
+  check('at 段字符串 qq → true', isAtBotInMessage([{ type: 'at', data: { qq: '1000000001' } }], self));
   check('@全体成员 → false', !isAtBotInMessage([{ type: 'at', data: { qq: 'all' } }], self));
   check('@别人 → false', !isAtBotInMessage([{ type: 'at', data: { qq: '123456' } }], self));
   check('普通文本 → false', !isAtBotInMessage([{ type: 'text', data: { text: '@机器人 你好' } }], self));
   check('字符串消息 → false（不猜）', !isAtBotInMessage('@机器人 你好', self));
-  check('selfId 为空 → false', !isAtBotInMessage([{ type: 'at', data: { qq: '100002025' } }], ''));
+  check('selfId 为空 → false', !isAtBotInMessage([{ type: 'at', data: { qq: '1000000001' } }], ''));
 }
 
 console.log('── 2. 预设话术 ──');
 {
   check('ownerQQ 为空 → null', buildWhitelistNotice({ ownerQQ: '', groupId: 123 }) === null);
-  const r = buildWhitelistNotice({ ownerQQ: '100002000', groupId: '100002031', random: () => 0 });
+  const r = buildWhitelistNotice({ ownerQQ: '1000000000', groupId: '1000000002', random: () => 0 });
   check('默认话术至少 3 条', DEFAULT_WHITELIST_NOTICE_MESSAGES.length >= 3);
   check('返回一条文本和索引', !!r && typeof r.text === 'string' && Number.isInteger(r.index));
-  check('包含管理员 QQ', r.text.includes('100002000'), r.text);
-  check('包含群号', r.text.includes('100002031'), r.text);
+  check('包含管理员 QQ', r.text.includes('1000000000'), r.text);
+  check('包含群号', r.text.includes('1000000002'), r.text);
   check('占位符已替换干净', !r.text.includes('{ownerQQ}') && !r.text.includes('{groupId}'));
 
   const custom = buildWhitelistNotice({

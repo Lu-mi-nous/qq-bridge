@@ -13,6 +13,9 @@
     "homeDir": "",
     "allowProcessControl": false
   },
+  "plugins": {
+    "disabled": []
+  },
   "sessionCwd": "",
   "agentPreset": "qq-chat",
   "workspaceTitle": "QQ 聊天",
@@ -363,6 +366,7 @@
         }
       },
       "recentSendBlockMs": 600000,
+      "reverseSearchApiKey": "",
       "proxy": ""
     },
     "githubShot": {

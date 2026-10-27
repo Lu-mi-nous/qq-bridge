@@ -2,7 +2,7 @@
 import { NodeApiClient, unwrap } from '../src/dsh-client.js';
 
 const api = new NodeApiClient('http://127.0.0.1:3080');
-const created = unwrap(await api.sessions.create({ cwd: 'E:\\Downloads\\qq-bridge-main\\state\\local-e2e' }), 'session.create');
+const created = unwrap(await api.sessions.create({ cwd: 'C:\\qq-bridge\\state\\local-e2e' }), 'session.create');
 const sessionId = created.sessionId;
 console.log('会话:', sessionId);
 const sel = unwrap(await api.sessions.selectModel({ sessionId, provider: 'local', model: 'cn:deepseek-v4.1-flash' }), 'session.selectModel');

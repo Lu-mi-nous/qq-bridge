@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>媒体工具预览</title>
+<style>
+  html,body{margin:0;padding:12px;background:transparent;font:12px/1.6 system-ui,sans-serif;color:#334}
+  h3{margin:0 0 6px;font-size:14px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:10px}
+  .card{border:1px solid #dbe2ee;border-radius:10px;padding:10px;background:#fff}
+  .card b{display:block;font-size:12px;margin-bottom:3px}
+  .meta{opacity:.7;font-size:11px}
+</style>
+</head>
+<body>
+<h3 id="title">媒体工具</h3>
+<div id="desc" class="meta"></div>
+<div class="grid">
+  <div class="card"><b>GitHub 仓库截图</b><span class="meta">分段截图，避免被 QQ 压成细线</span></div>
+  <div class="card"><b>功能菜单图</b><span class="meta">按当前配置生成群友功能清单</span></div>
+  <div class="card"><b>Token 报表图</b><span class="meta">按日/按模型汇总，依赖本机 Chrome/Edge</span></div>
+</div>
+<div class="meta" style="margin-top:8px">此面板为独立 iframe（sandbox 无 allow-same-origin），只展示插件元数据，不接触主控制台 DOM。</div>
+<script>
+  function reportHeight() {
+    parent.postMessage({ type: 'console-panel-height', height: Math.ceil(document.documentElement.scrollHeight) }, '*');
+  }
+  window.addEventListener('message', (event) => {
+    const data = event.data || {};
+    if (data.type === 'console-panel-init' && data.card) {
+      document.getElementById('title').textContent = data.card.title || '媒体工具';
+      document.getElementById('desc').textContent = data.card.description || '';
+      reportHeight();
+    }
+  });
+  window.addEventListener('load', reportHeight);
+  window.addEventListener('resize', reportHeight);
+</script>
+</body>
+</html>

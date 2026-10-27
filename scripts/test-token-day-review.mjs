@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readConsoleSource } from './lib/console-src.mjs';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -27,7 +28,7 @@ const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:
 const usageSrc = fs.readFileSync(path.join(root, 'src', 'token-usage.js'), 'utf8');
 
 const consoleServerSrc = readConsoleSource();
-const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+const html = readConsoleUiSource({ unescape: true });
 
 // ── 1. 解析层：dayModels 确实存在且自洽 ──
 console.log('── 1. 解析层 ──');

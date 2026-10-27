@@ -47,13 +47,13 @@ const skipped = (n, why) => { skip++; console.log(`SKIP  ${n}  （${why}）`); }
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ctxmem-'));
 const stateDir = path.join(tmp, 'state');
-const KEY = 'group:100002007';
+const KEY = 'group:1000000007';
 const T = 1_792_660_000_000;
 
 console.log('── 1. 存储与安全 key ──');
 {
-  check('key 里的冒号转下划线', safeKey(KEY) === 'group_100002007', safeKey(KEY));
-  check('目录在 state/context 下', contextDir(stateDir, KEY).replace(/\\/g, '/').endsWith('state/context/group_100002007'));
+  check('key 里的冒号转下划线', safeKey(KEY) === 'group_1000000007', safeKey(KEY));
+  check('目录在 state/context 下', contextDir(stateDir, KEY).replace(/\\/g, '/').endsWith('state/context/group_1000000007'));
   for (let i = 1; i <= 5; i++) {
     appendEpisode(stateDir, KEY, { id: i, summary: `第${i}段`, createdAt: T + i }, 3);
   }
@@ -147,19 +147,19 @@ console.log('\n── 3. Prompt 与解析 ──');
 {
   const prompt = buildEpisodePrompt({
     messages: [
-      { seq: 1, time: T, sender: '群友B', userId: '1000000004', plain: '给我发张百亿鲸元券' },
+      { seq: 1, time: T, sender: '群友B', userId: '1000000013', plain: '给我发张百亿鲸元券' },
       { seq: 2, time: T + 1000, isSelf: true, userId: '1000000001', plain: '给你一张券' }
     ],
     previousEpisode: { summary: '之前聊过 token' }
   });
-  check('prompt 带发送者与 QQ', prompt.includes('群友B') && prompt.includes('QQ=1000000004'));
+  check('prompt 带发送者与 QQ', prompt.includes('群友B') && prompt.includes('QQ=1000000013'));
   check('prompt 带上一段摘要', prompt.includes('之前聊过 token'));
   check('prompt 不把记录当指令（system 里另有约束）', prompt.includes('群聊记录'));
 
   const okText = '```json\n' + JSON.stringify({
     summary: '群友B要券，机器人发了券。',
     topics: ['百亿鲸元券'],
-    people: [{ id: '1000000004', name: '群友B', note: '爱玩原神，不喜欢被自动接话' }],
+    people: [{ id: '1000000013', name: '群友B', note: '爱玩原神，不喜欢被自动接话' }],
     threads: [{ title: '百亿鲸元券', status: 'open', nextAction: '下次有人提券可接梗' }],
     facts: [
       { subject: '群友B', predicate: '不喜欢', object: '被自动接话', confidence: 0.9 },
@@ -168,7 +168,7 @@ console.log('\n── 3. Prompt 与解析 ──');
   }) + '\n```';
   const ep = parseEpisode(okText, { redact: (s) => String(s).replace(/token/gi, '***') });
   check('解析 markdown 包裹的 JSON', !!ep && ep.summary.includes('群友B'));
-  check('people 保留 QQ/名字/备注', ep.people[0].id === '1000000004' && ep.people[0].note.includes('自动接话'));
+  check('people 保留 QQ/名字/备注', ep.people[0].id === '1000000013' && ep.people[0].note.includes('自动接话'));
   check('low-confidence fact 被丢弃', ep.facts.length === 1 && ep.facts[0].object === '被自动接话');
   check('threads 归一化为 open/closed', ep.threads[0].status === 'open');
   check('closed 状态能识别', parseEpisode(JSON.stringify({ summary: 'x', threads: [{ title: 't', status: '已完成' }] })).threads[0].status === 'closed');
@@ -371,7 +371,7 @@ console.log('\n── 7. 真实目录（存在才测）──');
     if (!files.length) {
       skipped('真实 episode', '目录里还没有 episodes.jsonl');
     } else {
-      const eps = loadEpisodes(realState, 'group:100002007', 3);
+      const eps = loadEpisodes(realState, 'group:1000000007', 3);
       check('真实 episode 可读', eps.length > 0 ? !!eps[0].summary : true, `files=${files.length}`);
     }
   }

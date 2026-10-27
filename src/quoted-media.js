@@ -37,7 +37,7 @@ export function extractQuotedMedia(segments) {
  * @param {{sender?:string, text?:string, messageId?:string, mediaCount?:number}} info
  * @param {(messageId:string, count:number)=>string|null} [mediaFetchHint]
  *   取图提示生成器；返回 null/空表示"本模式取图方式不适用"（则退回只报事实）
- * @returns {string} 形如 `[引用 群友O：[图片]]（被引用的这条消息含 1 个图片/表情，…）`
+ * @returns {string} 形如 `[引用 月狐：[图片]]（被引用的这条消息含 1 个图片/表情，…）`
  */
 export function buildReplyText(info, mediaFetchHint = null) {
   let replyText = '';

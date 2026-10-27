@@ -63,7 +63,7 @@ export function createWakePromptBuilder(deps) {
     // 写进唤醒提示的理由：群友问"用了多少 token"时，模型若不知道有这个工具，
     // 会自己去翻日志或凭印象编数字——那是最糟的结果。
     //
-    // ⚠️ 触发词必须写全。实测（2026-10-21 group:100002004）：
+    // ⚠️ 触发词必须写全。实测（2026-10-21 group:1000000001）：
     //   问「你用了多少token」→ 调用了工具（6 次成功）；
     //   问「看看你吃了多少token」「你怎么这么能吃白饭」→ **没调用**，
     //   反而编出「35.27B里prompt占35.25B」这种数，下一条又改口
@@ -237,7 +237,7 @@ export function createWakePromptBuilder(deps) {
       // 摘要**不能只截开头**：引用类消息的结构是
       //   "[引用 某人：[图片]]（被引用的这条消息含 1 个图片/表情。要看到它请调用 …）@大肥鱼 超分一下"
       // 真正对你说的话在**末尾**。只取前 30 字，模型看到的是"引用…请调用工具…"，
-      // 完全看不到「@大肥鱼 超分一下」→ 实测它输出"没点我"就收尾了（2026-10-21 group:100002033）。
+      // 完全看不到「@大肥鱼 超分一下」→ 实测它输出"没点我"就收尾了（2026-10-21 group:1000000004）。
       // 现在：短消息原样给；长消息保留开头 + 末尾（末尾更重要，因为指令通常在那儿）。
       const showText = (m) => {
         const t = String(m.text || m.plain || '').trim();
@@ -280,9 +280,9 @@ export function createWakePromptBuilder(deps) {
     if (pokeSelfs.length) {
       // 必须**带上 QQ 号**，否则模型手里没有任何可用目标。
       //
-      // 实测事故（2026-10-22 group:100002005）：提示只说「有人戳了你（群友F）」，
-      // 而 qq_send_poke 要的是数字号。模型没有群友F的号，就复用上下文里残留下来的
-      // 另一个号（群友A 的 100002009），一路拍了十几次，群里被问「怎么一直戳我」。
+      // 实测事故（2026-10-22 group:1000000005）：提示只说「有人戳了你（群友G）」，
+      // 而 qq_send_poke 要的是数字号。模型没有群友G的号，就复用上下文里残留下来的
+      // 另一个号（群友C 的 1000000012），一路拍了十几次，群里被问「怎么一直戳我」。
       // 现在直接把号摆出来，模型不需要记忆、也不需要猜。
       const who = pokeSelfs
         .map((m) => {
@@ -342,7 +342,7 @@ export function createWakePromptBuilder(deps) {
 // 明确未答的点名判定；由事件收尾和控制台读/潜水护栏共用。
 export function findPendingCallers(st, aliasInfo) {
   // 与自动@ 用同一份别名（含当前群的群名片），避免出现
-  // "提示说群友B在叫它、自动@ 却选了别人"这种自相矛盾。
+  // "提示说群友A在叫它、自动@ 却选了别人"这种自相矛盾。
   const unreadList = Array.isArray(st?.unread) ? st.unread : [];
   const lastReplyAt = Number(st?.lastAiReplyAt) || 0;
   const callers = unreadList.filter((m) => m && !m.isSelf).filter((m) => {
@@ -364,7 +364,7 @@ export function findPendingCallers(st, aliasInfo) {
   // 已答过 = 明确引用回复过的 seq（answeredSeqs）。不再按时间推断：
   // 同一批里回复了 A，不代表比 A 更早/更新的 B 也答过了。旧状态没有
   // answeredSeqs 时走一次时间兜底（仅兼容旧数据/测试），加载时会补种。
-  // 实测 2026-10-23 群 100002005：机器人引用回复 seq7150 后，owner 的
+  // 实测 2026-10-23 群 1000000005：机器人引用回复 seq7150 后，owner 的
   // seq7128「查下来源」仍是未答，但旧时间判据让它被 mark_read 一并标掉。
   const hasAnsweredTracking = Array.isArray(st?.answeredSeqs);
   const answeredSet = new Set(

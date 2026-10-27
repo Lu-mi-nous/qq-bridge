@@ -67,8 +67,8 @@ console.log('\n── 2. 小图放大 ──');
   } else {
     const buf = zlib.gunzipSync(fs.readFileSync(fx));
     const dims = imageSizeOf(buf);
-    check('夹具是 305×92 的小截图（合成内容）', dims.width === 305 && dims.height === 92, JSON.stringify(dims));
-    check('夹具很小（KB 量级，符合截图特征）', buf.length < 20 * 1024, `${(buf.length / 1024).toFixed(1)}KB`);
+    check('夹具就是那张 305×92', dims.width === 305 && dims.height === 92, JSON.stringify(dims));
+    check('夹具很小（6.6KB 量级）', buf.length < 20 * 1024, `${(buf.length / 1024).toFixed(1)}KB`);
 
     const r = await upscaleIfSmall(buf, { mimeType: 'image/png', log: () => {} });
     check('被放大', r.upscaled === true, String(r.reason || ''));

@@ -299,7 +299,7 @@ export function createDshEventPump(deps) {
     // 繁忙期间被暂存的唤醒原因：当前 turn 结束后补一次，避免关键 @/提问被漏掉。
     //
     // ⚠️ 2026-10-11 修：原先只 `shift()` **最旧**一条（FIFO），结果 @ 会被更早的
-    // poke/probability 插队——实测群 100002007：用户 16:08:31 @ 机器人（atMention@20893），
+    // poke/probability 插队——实测群 1000000007：用户 16:08:31 @ 机器人（atMention@20893），
     // 但补发取的是更早的 poke@20871，@ 那条一直排在队列里没补，直到 16:10:01 才被处理，
     // 延迟 90 秒。群友感受就是「@ 它不是必回」。
     // 现在改为：**在仍相关的项里挑优先级最高的**（atMention/question 高于 poke/probability），

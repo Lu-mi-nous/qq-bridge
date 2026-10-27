@@ -16,6 +16,7 @@ import * as style from './lib/image-style.js';
 import * as pixiv from './lib/pixiv-auth.js';
 import * as quality from './lib/image-quality.js';
 import * as store from './lib/image-store.js';
+import { createConfigItems } from './config-items.js';
 
 export function create(ctx) {
   ctx.console?.registerCard?.({
@@ -24,6 +25,7 @@ export function create(ctx) {
     description: '按标签/画师找图、发图额度、反查出处、收藏原图；图库存储暂留核心。',
     endpoint: '/api/plugins/images/card'
   });
+  ctx.console?.registerConfigItems?.(createConfigItems(ctx));
   ctx.console?.registerRoute?.('/api/plugins/images/card', (req, res, url, helpers) => {
     const cfg = ctx.config.get() || {};
     const sourcesCfg = cfg.sources ?? {};

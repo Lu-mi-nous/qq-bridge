@@ -13,12 +13,13 @@
 // （display 无法过渡）。时长/缓动集中在 --anim-dur / --anim-ease。
 import fs from 'node:fs';
 import path from 'node:path';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
-const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+const html = readConsoleUiSource();
 
 console.log('── 0. 统一动画参数 ──');
 {
@@ -30,8 +31,9 @@ console.log('── 0. 统一动画参数 ──');
 
 console.log('\n── 1. details（黑话系统参数）──');
 {
-  check('加了 animated-details 类', /<details class="animated-details"/.test(html));
-  check('内容有 grid 包裹层 .details-anim', /class="details-anim"/.test(html));
+  // 模块卡把标记写在 JS 模板字符串里，引号是转义的；两种形态都要认。
+  check('加了 animated-details 类', /class=\\?"animated-details\\?"/.test(html));
+  check('内容有 grid 包裹层 .details-anim', /class=\\?"details-anim\\?"/.test(html));
   check('收起态 0fr + opacity 0',
     /details\.animated-details > \.details-anim \{[^}]*grid-template-rows: 0fr/.test(html));
   check('展开态 1fr', /details\.animated-details\[open\] > \.details-anim \{ grid-template-rows: 1fr/.test(html));
@@ -47,11 +49,11 @@ console.log('\n── 2. 可收起卡片（06）──');
   check('改用 grid-template-rows: 0fr',
     /\.collapsible\.collapsed > \.collapsible-body \{ grid-template-rows: 0fr/.test(html));
   check('有 transition', /\.collapsible > \.collapsible-body \{[^}]*transition:/.test(html));
-  check('有内层包裹 .collapsible-inner（防内容变形）',
-    /class="collapsible-body"><div class="collapsible-inner">/.test(html));
   check('内层 overflow:hidden', /\.collapsible-inner \{ overflow: hidden/.test(html));
-  // 折叠状态仍由既有 JS 的 .collapsed 类驱动（不要改成内联样式）
-  check('仍由 .collapsed 类驱动', /classList\.toggle\('collapsed'/.test(html));
+  // C6 后 06 只在整页详情里展示，标题栏的 collapse 按钮隐藏；
+  // 即使旧状态里带了 collapsed 类，也必须强制展开，不能打开是空的。
+  check('详情视图强制展开 collapsible',
+    /\.detail-page-body section\.collapsible\.collapsed > \.collapsible-body \{[\s\S]{0,120}?grid-template-rows: 1fr/.test(html));
 }
 
 console.log('\n── 3. 弹窗（黑话确认框）──');
@@ -78,7 +80,7 @@ console.log('\n── 4. 临时卡片（会话消息回看）──');
     && /classList\.add\('card-hidden'\)/.test(html));
   check('没有残留的 style.display 切换',
     !/msgViewerCard'\)\.style\.display/.test(html));
-  check('内容包在 .expandable-inner', /class="expandable-inner"/.test(html));
+  check('内容包在 .expandable-inner', /class=\\?"expandable-inner\\?"/.test(html));
   check('内层有 transition', /\.expandable-inner \{[^}]*transition:/.test(html));
   check('收起时完全塌陷（max-height:0）',
     /\.expandable-card\.card-hidden \{[^}]*max-height: 0/.test(html));
@@ -90,7 +92,25 @@ console.log('\n── 4. 临时卡片（会话消息回看）──');
     /\.expandable-card \{ align-self: start/.test(html));
 }
 
-console.log('\n── 5. 无障碍：减少动效 ──');
+console.log('\n── 5. 整页详情（摘要卡 ↔ 详情）──');
+{
+  check('ghost 有 transform 过渡',
+    /\.detail-ghost \{[\s\S]{0,700}?transition:[\s\S]{0,160}?transform/.test(html));
+  // 关键坑（2026-10-27 用户反馈「卡片没有收起动画」）：如果 ghost 追加后不强制 reflow，
+  // 同一帧写入终点 transform 会被浏览器当成初始值，transition 完全不触发。
+  check('收起 ghost 追加后强制 reflow',
+    /document\.body\.appendChild\(ghost\);[\s\S]{0,260}?void ghost\.offsetHeight;/.test(html));
+  // 长详情卡（如第二列的 02）比视口高：缩放必须按 ghost 实际可见矩形算，
+  // 用整张 section 的高度会让 136px 的卡片最终缩成 27px 细条。
+  check('收起缩放按可见矩形计算（长卡片不缩成细条）',
+    /const from = \{[\s\S]{0,420}?height: Math\.max\(1, Math\.min\(window\.innerHeight, rawFrom\.bottom\)/.test(html));
+  check('收起动画时长覆盖 .54s 过渡（不能提前移除 ghost）',
+    /ghost\.classList\.add\('run'\);[\s\S]{0,360}?\}, 620\)/.test(html));
+  check('整页退出有淡出过渡',
+    /\.detail-page\.manual-exit \{[\s\S]{0,220}?transition: opacity/.test(html));
+}
+
+console.log('\n── 6. 无障碍：减少动效 ──');
 {
   check('有 prefers-reduced-motion 规则', /@media \(prefers-reduced-motion: reduce\)/.test(html));
   // 页面可能有多个 prefers-reduced-motion 块（例如 about 视图单独一块）；
@@ -104,7 +124,7 @@ console.log('\n── 5. 无障碍：减少动效 ──');
   check('用 !important 确保覆盖', /transition: none !important/.test(block));
 }
 
-console.log('\n── 6. 全量覆盖检查 ──');
+console.log('\n── 7. 全量覆盖检查 ──');
 {
   // 每一类都必须至少有 transition —— 防以后新增可展开元素时漏掉
   const kinds = [

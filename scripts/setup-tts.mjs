@@ -26,7 +26,7 @@
 //
 // 用法：
 //   node scripts/setup-tts.mjs              # 部署到默认位置
-//   node scripts/setup-tts.mjs --dir D:\GPT-SoVITS
+//   node scripts/setup-tts.mjs --dir C:\GPT-SoVITS
 //   node scripts/setup-tts.mjs --check      # 只检查，不安装
 import fs from 'node:fs';
 import path from 'node:path';
@@ -42,7 +42,7 @@ function arg(name, dflt = '') {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : dflt;
 }
 const CHECK_ONLY = process.argv.includes('--check');
-const TARGET = path.resolve(arg('dir', process.env.GPT_SOVITS_DIR || path.join(os.homedir(), 'GPT-SoVITS')));
+const TARGET = path.resolve(arg('dir', 'C:\\GPT-SoVITS'));
 const PROXY = arg('proxy', process.env.HTTPS_PROXY || 'http://127.0.0.1:7897');
 
 const MODEL_BASE = 'https://www.modelscope.cn/models/villia/dania/resolve/master';

@@ -138,6 +138,7 @@ import {
 } from './slang-api.js';
 import {
   formatStickerList,
+  findSticker,
   buildStickerContext,
   buildStickerStrategyHint,
   markStickerUsed,
@@ -500,6 +501,13 @@ function loadConfig() {
     // （见 startConsoleServer 的 CSRF 段）。想看令牌拦截效果就设回 true。
     consoleAuth: file.consoleAuth !== false,
     consoleToken: file.consoleToken ?? '',
+    // 插件加载开关：控制台只写这个列表，宿主启动时据此跳过插件。
+    // 必须在这里显式保留，否则 file.plugins 会被 loadConfig 丢弃，重启后开关失效。
+    plugins: {
+      disabled: Array.isArray(file.plugins?.disabled)
+        ? [...new Set(file.plugins.disabled.map((id) => String(id).trim()).filter(Boolean))]
+        : []
+    },
     security: {
       interceptNotify: true,
       ...(file.security ?? {})
@@ -804,6 +812,8 @@ function loadConfig() {
 
   // socialV2.tools 需要与默认值深度合并：旧 config.json 若缺少新增工具开关，
   // 不能因为外层 spread 覆盖而丢失默认开关。
+  if (!cfg.socialV2.images || typeof cfg.socialV2.images !== 'object') cfg.socialV2.images = {};
+  if (cfg.socialV2.images.reverseSearchApiKey == null) cfg.socialV2.images.reverseSearchApiKey = '';
   cfg.socialV2.tools = {
     getPrompt: true,
     getUnread: true,
@@ -986,6 +996,10 @@ function loadConfig() {
     proxy: '',        // 留空则继承 socialV2.images.proxy
     ...(file.imageReverseSearch ?? {})
   };
+  // 旧配置迁移：SauceNAO key 现在由 images 插件在 socialV2.images 命名空间里注册/保存。
+  if (cfg.socialV2?.images && !cfg.socialV2.images.reverseSearchApiKey && cfg.imageReverseSearch.apiKey) {
+    cfg.socialV2.images.reverseSearchApiKey = cfg.imageReverseSearch.apiKey;
+  }
 
   // 配置校验：类型错误直接拒绝启动（给出字段路径），未知键只告警。
   const report = validateConfig(file);
@@ -1160,6 +1174,31 @@ const REJECT_WORDS = new Set(['拒绝', '不同意', '不允许', '驳回', 'no'
 async function main() {
   const cfg = loadConfig();
 
+  // 插件配置写入：只能由插件宿主调用，路径已由 context 限制在插件自己的
+  // configPath 命名空间内。写盘失败时不改内存（与其它配置保存一致）。
+  function writeConfigPath(dotted, value) {
+    const segs = String(dotted || '').split('.').filter(Boolean);
+    if (!segs.length || segs.some((s) => s === '..' || s === '.')) {
+      throw new Error(`配置路径不合法：${dotted}`);
+    }
+    const file = path.join(ROOT, 'config.json');
+    const disk = readJsonSafe(file, null, true);
+    let cur = disk;
+    for (let i = 0; i < segs.length - 1; i++) {
+      if (!cur[segs[i]] || typeof cur[segs[i]] !== 'object') cur[segs[i]] = {};
+      cur = cur[segs[i]];
+    }
+    cur[segs[segs.length - 1]] = value;
+    atomicWriteJson(file, disk);
+    let mem = cfg;
+    for (let i = 0; i < segs.length - 1; i++) {
+      if (!mem[segs[i]] || typeof mem[segs[i]] !== 'object') mem[segs[i]] = {};
+      mem = mem[segs[i]];
+    }
+    mem[segs[segs.length - 1]] = value;
+    return true;
+  }
+
   // 配置摘要：一眼看出关键能力是否开启，以及有多少字段在用默认值。
   {
     const s = configSummary(cfg);
@@ -1289,7 +1328,7 @@ async function main() {
     root: ROOT,
     log: (m) => log(`[反查] ${m}`),
     proxy: String(cfg.imageReverseSearch?.proxy || cfg.socialV2?.images?.proxy || ''),
-    apiKey: String(cfg.imageReverseSearch?.apiKey || '').trim()
+    apiKey: String(cfg.socialV2?.images?.reverseSearchApiKey || cfg.imageReverseSearch?.apiKey || '').trim()
   });
   // 上游额度/限流类报错的拦截器：群内发人设化短句（同会话 3 分钟一次），详情私聊管理员。
   const errorNotifier = createErrorNotifier({
@@ -3152,7 +3191,7 @@ async function main() {
   let selfDisplayName = '';
   // 机器人在**每个群**的群名片。@ 时 QQ 显示的是群名片，不是账号昵称。
   //
-  // 2026-10-22 事故（group:100002007）：账号昵称是 `dsh`，群名片是 `?！哦鲸鲸  ? !`，
+  // 2026-10-22 事故（group:1000000007）：账号昵称是 `dsh`，群名片是 `?！哦鲸鲸  ? !`，
   // 而别名表只放了 `dsh`，于是所有 `@?！哦鲸鲸  ? !` 都不算"在叫它"，
   // 自动@ 退化成模糊字面匹配，把票投给了只顺口说了句「大肥鱼可爱」的人。
   const selfCardCache = new Map(); // groupId -> { card, at }
@@ -4662,7 +4701,7 @@ async function main() {
     const tr = st.wakeConfig?.triggers ?? {};
     // 顺序必须按 WAKE_PRIORITY 从高到低。`anyMessage` 若放在前面，会把所有
     // @/提问/指定成员/名字/关键词都吞成低优先级的 anyMessage——群一热闹就被
-    // 限流丢掉。2026-10-23 群 100002005 实测：owner 的「查下来源」被记成
+    // 限流丢掉。2026-10-23 群 1000000005 实测：owner 的「查下来源」被记成
     // anyMessage@seq7064，之后只剩「唤醒频率超限，跳过」，表现就是 @ 了不理。
     if (tr.atMention) {
       const atSelf = Array.isArray(event?.message) && event.message.some((seg) => seg?.type === 'at' && String(seg.data?.qq) === String(event?.self_id ?? ''));
@@ -5106,7 +5145,7 @@ async function main() {
     const st = getSocialV2State(key);
     // 兜底升级：只要未读里还有没答过的 @，这次唤醒就按 atMention 处理。
     // 否则 anyMessage/probability 定时器会在限流时被直接丢掉，@ 跟着一起饿死
-    // （2026-10-23 群 100002005：owner 的「查下来源」就是这样被反复跳过的）。
+    // （2026-10-23 群 1000000005：owner 的「查下来源」就是这样被反复跳过的）。
     try {
       const pendingCallers = findCallersV2(key, st).pending.length;
       if (pendingCallers > 0 && wakePriorityV2(reason) < 90) {
@@ -5502,7 +5541,7 @@ async function main() {
     getTtsPlugin: () => pluginRuntime?.tts?.() ?? null,
     onebotSend,
     syncStickerLibrary,
-    findSticker: (ref) => stickerService.find(ref),
+    findSticker: (entries, ref) => findSticker(entries, ref),
     getStickerEntries: () => stickerService.getEntries(),
     setStickerEntries: (v) => { stickerService.setEntries(v); },
     validateFetchUrl,
@@ -6052,6 +6091,7 @@ async function main() {
     root: ROOT,
     log: (m) => log(m),
     getConfig: () => cfg,
+    setConfig: writeConfigPath,
     services: {
       social: { getState: getSocialV2State, save: saveSocialV2State },
       send: { voiceFile: onebotSendVoiceFile },

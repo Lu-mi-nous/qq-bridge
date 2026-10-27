@@ -118,6 +118,8 @@
 
 静态指标（R4 后，`npm run measure`，含 2026-10-27 口径修正：`src/state/` 不再被当运行态目录跳过）：源码 139 文件 / 47,145 行；`bridge.js` 6,475 行、`console-server.js` **601 行**、测试脚本 145 个 / 24,969 行、控制台端点 155 个、配置键 479、循环依赖 0。
 
+接入范围（C0，控制台重构）：`public/console/`。`console.html` 8,545 → 1,426 行：CSS（1,708 行）与主脚本（5,413 行）外置，新增 Shell 入口（契约版本 v1 + legacy 就绪探测）；`console-server.js` 增加 `/console/*` 静态路由（仅 public/console、扩展名白名单、路径穿越防护、先于令牌鉴权以允许 link/script 加载）。新增 `test-console-shell` 9 项；`test-console-router` 增加静态资源 4 项；20 个前端测试改读 `scripts/lib/console-ui-src.mjs`。行为零变化（legacy 完整保留）。
+
 接入范围（R4.5-10）：`plugins/content-review/`（新建）。统一审核入口 `reviewText`、本地规则（分类关键词/危险域名）、模型审核注入、fail-closed 与 JSONL 审计（只存 hash/分类/动作/时间，不存原文）；configPath `xMonitor.review`，默认关闭，词表不进仓库。新增 `src/content-review-api.js` 网关（插件缺席返回 `decision:unavailable`，P1 按 fail-closed 处理）。`test-content-review` 25 项全过；插件宿主默认关闭态加载正常。
 
 接入范围（R4.5-9）：`plugins/media-tools/`。GitHub 截图、功能菜单图、Token 报表图（7 个文件 1,514 行）从 `src/github-shot.js` / `feature-menu*.js` / `token-report*.js` 迁入插件 lib；核心新增 `src/media-tools-api.js` 网关（顶层 `await`），bridge 导入零改动、按需调用缺席时抛明确错误。`test-feature-menu` 124、`test-token-report` 84、`test-token-day-review` 34、`test-token-ask-detect` 30、`test-console-server` 40 全过；插件宿主实测浏览器可用、卡片/路由各 1；缺席实测降级正常。
@@ -141,6 +143,40 @@
 接入范围（R4.5-1）：`plugins/upscale/`。超分实现（697 行）从 `src/upscale.js` 迁到插件，`src/upscale-bootstrap.js` 的启动自检与缓存定时器并入插件生命周期；核心保留 `src/upscale-bin.js`（功能菜单要同步 stat），出图管线与 MCP 改为动态 import 插件 lib，插件缺席时退回 lanczos / 不注册工具。`test-upscale` 124 项全过（路径与接线断言同步）。
 
 测试（R4）：新增 `test-console-router.mjs` 11 项——用桩依赖真正启动 HTTP 服务，覆盖分域 GET/POST 前缀、动态前缀路由、每请求 `sendJson/readBody`、插件路由转发、404 与 CSRF 415。全量 **134/145、4,885 断言、11 个环境类失败、0 个真实失败**；环境类失败为 SnowLuma/DSH/图站未启动，`test-console.mjs` 需要正在运行的桥接，已归入环境类。复杂度重估见 [COMPLEXITY.md](COMPLEXITY.md)（2026-10-27 新基线）。
+
+测试（C1，控制台注册表）：新增 `/api/console/manifest`（核心 24 卡 + 插件 11 卡元数据）、`public/console/core/{registry,renderer,api}.js`；侧栏改为全部/基础/插件/关于，基础功能平铺，插件功能按插件独立分类；11 静默、12 安全拦截、14 好友入群三张卡迁为声明式（`data/sections/poll`）。新增 `test-console-registry` 21 项；`test-console-router` 20、`test-console-shell` 17、`test-console-layout` 214、`test-console-server` 41、`test-join-request` 67 全过。实测 `/api/console/manifest` 返回 24 核心 + 11 插件卡，浏览器端三张试点卡渲染/保存/轮询正常。全量 **138/149、4,917 断言、11 个环境类失败、0 个真实失败**（`test-console` 单独复跑通过；其余环境类为 SnowLuma/DSH/图站/视觉服务未就绪）。
+
+测试（C2 第一批）：21 测试发送 / 23 后台控制端引导迁为声明式；渲染器新增 `input`、`${...}` 插值、`confirm`；`console.html` 1,403 → 1,377 行，声明式核心卡累计 5 张。`test-console-registry` 扩到 26 项，Shell/Router/Layout 全过；浏览器实测两卡表单渲染、参数插值与错误反馈正常。
+
+测试（C2 第二批）：13 控制台访问令牌迁为声明式；渲染器新增动作响应赋值、`successTemplate`、`storeConsoleToken`；`console.html` 1,377 → 1,369 行，声明式核心卡累计 6 张。`test-console-registry` 扩到 31 项，Shell/Router/Layout/Server/Join-request 全过；浏览器实测状态、密码输入、按钮与摘要联动正常。
+
+测试（C2 第三批）：22 桥接控制迁为声明式；渲染器新增 `waitFor` 重启等待与 `reloadAfter` 自动刷新；`console.html` 1,369 → 1,361 行，声明式核心卡累计 7 张。`test-console-registry` 扩到 35 项，Shell/Router/Layout/Server/Join-request/Bridge-wiring 全过；浏览器实测两个危险动作按钮与说明正常（未实际触发重启/清空）。
+
+测试（C2 第四批）：19 磁盘缓存迁为模块卡，新增 `public/console/cards/19-cache.js` 与 Shell 动态模块加载（`render:"module"`）；`console.html` 1,361 → 1,350 行，已迁核心卡累计 8 张（7 声明式 + 1 模块）。`test-console-registry` 扩到 39 项；浏览器实测 5 组/22 行缓存表格、状态摘要与清理按钮正常（未实际清理）。
+
+测试（C2 第五批）：15 取图额度迁为模块卡，新增 `public/console/cards/15-image-quota.js`；`console.html` 1,350 → 1,342 行，已迁核心卡累计 9 张（7 声明式 + 2 模块）。`test-console-registry` 扩到 42 项；浏览器实测反查额度/补货冷却/图库容量/图源开关四段与摘要联动正常。
+
+测试（C2 第六批）：03 挂起审批 / 提问迁为模块卡，新增 `public/console/cards/03-pending.js`；`console.html` 1,342 行，已迁核心卡累计 10 张（7 声明式 + 3 模块）。`test-console-registry` 扩到 45 项，Layout 的 03 摘要断言改为读模块状态；浏览器实测空态、状态与摘要联动正常。
+
+测试（C2 第七批）：01 运行模式迁为模块卡，新增 `public/console/cards/01-runtime.js`；`console.html` 1,342 → 1,332 行，已迁核心卡累计 11 张（7 声明式 + 4 模块）。`test-console-registry` 扩到 48 项；浏览器实测四模式按钮、预设下拉、active 状态与摘要联动正常。
+
+测试（C2 第八~十批）：04 活动日志、02 会话映射、06 一代仿真迁为模块卡；新增 `04-activity.js`、`02-sessions.js`、`06-reserved.js`；`console.html` 1,332 → 1,227 行，已迁核心卡累计 14 张（7 声明式 + 7 模块）。`test-console-registry` 扩到 58 项；浏览器实测 04 消息流、02 会话列表/02b 回看、06 表单与状态正常。
+
+测试（C2 收尾）：24 张核心卡全部进入 registry/manifest 且有统一挂载点；05/07/08/09/10/16/17/18/20/24 共 10 张复杂卡用 `legacy-adopt.js` 过渡模块接管原 DOM（节点移动不重建，监听保持）。`console.html` 1,237 行；`test-console-registry` 61 项全过；浏览器检查 24 个挂载点均有内容，05 人格、07 二代面板正常。
+
+测试（C3）：插件 `console.card.json` 接入宿主与 `/api/console/manifest`；新增 `test-console-card-contract` 11 项（schema/命名空间/无 HTML/扫描 3 张示例卡）；`test-console-router` 22 项（含 plugin-guide 端点、插件声明式卡进入清单）；`test-console-shell` 19 项；关于页插件开发者文档卡与实时插件清单浏览器实测正常。
+
+测试（C4）：Token 报表预览 iframe `/api/console/panel/token-report`；媒体工具插件 `console.panel.html` + `/api/plugins/media-tools/panel`；统一 `sandbox="allow-scripts"`、无 allow-same-origin、postMessage 高度白名单。新增 `test-console-plugin-ui` 9 项；`test-console-card-contract` 13、`test-console-router` 22、`test-console-server` 41 全过。
+
+测试（C5）：`console.html` 1,237 → **270 行**；旧卡片标记移入 `legacy-markup.js`，`legacy.js` 移除（运行时暂为 `cards/legacy-runtime.js`）；CSS 拆三份；24 卡挂载与摘要正常。`test-console-shell` 19、`test-console-registry` 61、`test-console-layout` 214、`test-console` 连真实桥接通过。
+
+测试（C5 后续）：17 B 站迁为独立模块 `17-bili.js`；`test-console-registry` 62 项；浏览器实测状态/额度/声音内容/推荐目的地与两个按钮正常。
+
+测试（C5 继续）：09 MCP 工具迁为独立模块 `09-tools.js`；`test-console-registry` 63 项；浏览器实测 11 组/61 项工具清单与摘要正常。
+
+测试（C5 继续）：10 白名单迁为独立模块 `10-whitelist.js`；`test-console-registry` 64 项；浏览器实测 9 群/4 私聊/1 管理员与摘要「群 9 · 私聊 4 ｜ 好友放行」正常。
+
+测试（C5 完成）：16/18/20/08/05/07/24 全部拆为独立模块；24 卡 = 7 声明式 + 17 模块，`legacy-adopt` 清零；`test-console-registry` 71、Shell 19、Layout 214、Router 22、Server 41、Plugin UI 9、Card contract 13 全过；`test-console` 连真实桥接通过。
 
 测试（R2.5）：`test-plugin-host` 13、`test-tts` 162、`test-state-store` 49、`test-image-lib` 78、`test-bili` 294、`test-stickers` 57、`test-feature-menu` 124、`test-admin-commands` 123、`test-bridge-wiring` 87、`test-console-server` 29、`test-console-layout` 213 全部通过。全量首轮 **124/131、4,805 断言、7 个环境类失败、0 个真实失败**（基线 120/128、4,631 断言、1 个真实失败）。补插件清单断言后 `test-console-server` 单独 29/29；第二次全量中 `test-github-shot` 因 GitHub 页面高度波动偶发 1 失败，复跑 54/54 通过。
 

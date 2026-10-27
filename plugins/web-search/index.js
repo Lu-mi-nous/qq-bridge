@@ -11,6 +11,7 @@
 // 配置热加载：引擎开关与顺序来自 config.json 的 webSearch.engines，按 mtime 热加载，
 // 改完保存即生效，不用重启桥接/DSH（这一点没有因为插件化而改变）。
 import { searchWeb, describeEngines, sanitizeQuery } from './lib/index.mjs';
+import { createConfigItems } from './config-items.js';
 
 export function create(ctx) {
   ctx.console?.registerCard?.({
@@ -19,6 +20,7 @@ export function create(ctx) {
     description: '天气/百度/必应/DuckDuckGo 按顺序回退；引擎与顺序改配置即生效，代理可选。',
     endpoint: '/api/plugins/web-search/card'
   });
+  ctx.console?.registerConfigItems?.(createConfigItems(ctx));
   ctx.console?.registerRoute?.('/api/plugins/web-search/card', async (req, res, url, helpers) => {
     const cfg = ctx.config.get() || {};
     let engineStatus = '';

@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -21,7 +22,7 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 const root = path.dirname(fileURLToPath(import.meta.url)) + '/..';
 // console.html 是 CRLF 落盘的（Windows 编辑器回写），正则里写 `\n` 匹配不到 `\r\n`，
 // 于是一度报"抽不到 esc/renderMd"。先归一化再抽，避免测试对换行风格敏感。
-const html = fs.readFileSync(path.join(root, 'public/console.html'), 'utf8').replace(/\r\n/g, '\n');
+const html = readConsoleUiSource().replace(/\r\n/g, '\n');
 
 // 抽出 esc() 与 renderMd()（含其上方注释块）
 const escSrc = /function esc\(s\) \{[\s\S]*?\n\}/.exec(html)?.[0];

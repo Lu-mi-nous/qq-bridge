@@ -38,15 +38,15 @@ console.log('── 从消息段提取图片/表情 ──');
 
 console.log('\n── reserved2：引用里含图时给取图指引 ──');
 {
-  const hint = reserved2MediaFetchHint('group:100002005');
-  const info = { sender: '群友O', text: '[图片]', messageId: '-100002037', mediaCount: 1 };
+  const hint = reserved2MediaFetchHint('group:1000000010');
+  const info = { sender: '月狐', text: '[图片]', messageId: '-577523028', mediaCount: 1 };
   const t = buildReplyText(info, hint);
-  check('含被引用者与原文', t.includes('群友O') && t.includes('[图片]'), t);
+  check('含被引用者与原文', t.includes('月狐') && t.includes('[图片]'), t);
   check('含图片数量', t.includes('含 1 个图片/表情'));
-  check('含被引用消息 id', t.includes('-100002037'));
+  check('含被引用消息 id', t.includes('-577523028'));
   check('含取图工具名', t.includes('qq_get_message_images'));
-  check('参数里带正确 key', t.includes('key="group:100002005"'));
-  check('参数里带正确 messageId', t.includes('messageId="-100002037"'));
+  check('参数里带正确 key', t.includes('key="group:1000000010"'));
+  check('参数里带正确 messageId', t.includes('messageId="-577523028"'));
 }
 
 console.log('\n── 不该注入的情况 ──');
@@ -82,7 +82,7 @@ console.log('\n── 被引用的合并转发：必须把 id 交给模型 ─�
   // 事故（2026-10-22）：群友引用一条「群聊的聊天记录」问「这个是什么」，
   // 机器人答「那条转发鱼打不开，id对不上」——它根本没拿到 id。
   // forward 段以前在 buildReplyText 里被完全忽略（只处理 mediaCount）。
-  const t = buildReplyText({ sender: '群友M', text: '[转发消息]', messageId: '123', mediaCount: 0, forwardIds: ['ABC123'] });
+  const t = buildReplyText({ sender: '鱼恋海', text: '[转发消息]', messageId: '123', mediaCount: 0, forwardIds: ['ABC123'] });
   check('包含转发 id', t.includes('id=ABC123'), t);
   check('说明这是合并转发', t.includes('合并转发'));
   check('指出用哪个工具读', t.includes('qq_get_forward_msg'));

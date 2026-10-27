@@ -21,7 +21,7 @@ import readline from 'node:readline';
 const DSH = 'http://127.0.0.1:3080';
 const GATEWAY = 'http://127.0.0.1:7863/v1';
 const GATEWAY_ROOT = 'http://127.0.0.1:7863';
-const BRIDGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const BRIDGE_DIR = 'C:/qq-bridge';
 const CONFIG = path.join(BRIDGE_DIR, 'config.json');
 const PROVIDER = 'vgw';
 const KEEP_MODELS = 4;

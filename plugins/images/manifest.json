@@ -6,7 +6,8 @@
   "enabledByDefault": false,
   "configPath": "socialV2.images",
   "configSchema": "config.schema.js",
-  "permissions": ["network", "process", "state", "console:route"],
+  "permissions": ["network", "process", "state", "console:route", "secrets"],
+  "secrets": ["pixiv-auth.json"],
   "hooks": ["onStart", "onStop"],
   "mcpTools": [
     "qq_send_image",

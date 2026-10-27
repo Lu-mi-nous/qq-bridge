@@ -6,7 +6,8 @@
   "enabledByDefault": false,
   "configPath": "socialV2.bili",
   "configSchema": "config.schema.js",
-  "permissions": ["network", "process", "state", "console:route"],
+  "permissions": ["network", "process", "state", "console:route", "secrets"],
+  "secrets": ["bili-auth.json"],
   "hooks": ["onStart", "onStop"],
   "mcpTools": ["qq_bili_search", "qq_watch_bili", "qq_bili_memory", "qq_bili_record"],
   "console": { "cards": ["bili"], "routes": ["/api/plugins/bili/card"] }

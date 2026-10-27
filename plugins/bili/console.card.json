@@ -1,0 +1,15 @@
+{
+  "id": "bili",
+  "kind": "plugin",
+  "pluginId": "bili",
+  "title": "B 站（搜索 / 观看 / 自刷）",
+  "description": "搜视频、看画面与字幕/ASR、潜水时自己刷；观看记忆跨群共享。",
+  "order": 130,
+  "data": [{ "source": "/api/plugins/bili/card", "as": "st" }],
+  "sections": [
+    { "type": "text", "label": "启用", "bind": "st.enabled", "map": { "true": "已启用", "false": "未启用" }, "fallback": "—" },
+    { "type": "text", "label": "自主刷", "bind": "st.selfBrowsing", "map": { "true": "开", "false": "关" } },
+    { "type": "text", "label": "字幕 / ASR", "bind": "st.asr", "map": { "true": "开", "false": "关" } },
+    { "type": "text", "label": "观看记忆", "bind": "st.memoryFile", "fallback": "—" }
+  ]
+}

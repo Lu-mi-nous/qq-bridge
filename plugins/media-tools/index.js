@@ -13,6 +13,10 @@ import * as menuRender from './lib/feature-menu-render.js';
 import * as report from './lib/token-report.js';
 import * as reportHtml from './lib/token-report-html.js';
 import * as reportRender from './lib/token-report-render.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createConfigItems } from './config-items.js';
 
 export function create(ctx) {
   ctx.console?.registerCard?.({
@@ -21,6 +25,7 @@ export function create(ctx) {
     description: 'GitHub 仓库截图、功能菜单图、Token 用量报表图；都依赖本机 Chrome/Edge。',
     endpoint: '/api/plugins/media-tools/card'
   });
+  ctx.console?.registerConfigItems?.(createConfigItems(ctx));
   ctx.console?.registerRoute?.('/api/plugins/media-tools/card', (req, res, url, helpers) => {
     const cfg = ctx.config.get() || {};
     const browser = (() => {
@@ -34,6 +39,22 @@ export function create(ctx) {
       tokenReport: cfg.tools?.tokenReport !== false,
       browser: browser ? 'found' : 'missing'
     });
+  });
+  const panelFile = path.join(path.dirname(fileURLToPath(import.meta.url)), 'console.panel.html');
+  ctx.console?.registerRoute?.('/api/plugins/media-tools/panel', (req, res) => {
+    try {
+      const html = fs.readFileSync(panelFile);
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; frame-ancestors 'self'",
+        'x-content-type-options': 'nosniff',
+        'cache-control': 'no-store'
+      });
+      res.end(html);
+    } catch {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('panel not found');
+    }
   });
 
   function start() {

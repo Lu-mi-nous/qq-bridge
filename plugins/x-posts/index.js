@@ -9,6 +9,7 @@
 //   - 注意：**内容安全 P0 仍然生效**——工具开关 `socialV2.tools.fetchXPosts=false` 时，
 //     MCP 不注册工具、桥接在拉取前 403。插件化没有、也不应该绕过这道闸门。
 import { XMonitor } from './lib/index.mjs';
+import { createConfigItems } from './config-items.js';
 
 export function create(ctx) {
   const monitor = new XMonitor({
@@ -22,6 +23,7 @@ export function create(ctx) {
     description: '按需拉取并渲染卡片；内容安全 P0 期间工具默认关闭。',
     endpoint: '/api/plugins/x-posts/card'
   });
+  ctx.console?.registerConfigItems?.(createConfigItems(ctx));
   ctx.console?.registerRoute?.('/api/plugins/x-posts/card', (req, res, url, helpers) => {
     let auth = null;
     try { auth = monitor.describeAuth(); } catch (error) { auth = { available: false, error: String(error?.message ?? error) }; }

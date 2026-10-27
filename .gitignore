@@ -11,6 +11,8 @@ config.json.pretest
 *.bak
 *.bak-*
 tmp-*
+roles/.backups/
+__pycache__/
 
 # Secrets / local environment
 .env

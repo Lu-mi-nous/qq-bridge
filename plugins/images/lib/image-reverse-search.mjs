@@ -165,7 +165,7 @@ export function createReverseSearcher({ root, log = () => {}, proxy = '', apiKey
 
   /** 可用性：没配 key 就别装作能用 */
   function available() {
-    return { ok: !!currentApiKey, reason: currentApiKey ? '' : '未配置 SauceNAO API key（config.json 的 imageReverseSearch.apiKey）' };
+    return { ok: !!currentApiKey, reason: currentApiKey ? '' : '未配置 SauceNAO API key（config.json 的 socialV2.images.reverseSearchApiKey（兼容 imageReverseSearch.apiKey））' };
   }
 
   /**

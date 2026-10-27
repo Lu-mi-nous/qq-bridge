@@ -15,7 +15,7 @@ let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 // ── 复刻 bridge.js 的 notifyOwnerOfError（见 src/bridge.js 同名函数） ──
-function makeBridge({ ownerQQ = '100002000', windowMs = 180000, now = () => Date.now(), notifyOwner = true } = {}) {
+function makeBridge({ ownerQQ = '1000000000', windowMs = 180000, now = () => Date.now(), notifyOwner = true } = {}) {
   const sent = []; // {key, text}
   const ownerNotices = new Map();
   async function sendToQQ(key, msg) { sent.push({ key, text: msg }); }
@@ -60,13 +60,13 @@ console.log('── ① 上游 503：群里零消息，管理员收到详情 ─
 {
   let t = 1_700_000_000_000;
   const b = makeBridge({ now: () => t });
-  const handled = await b.handleUpstreamError('group:100002005', REAL_503, { sessionId: 'session-xyz' });
+  const handled = await b.handleUpstreamError('group:1000000010', REAL_503, { sessionId: 'session-xyz' });
   check('识别并接管', handled === true);
-  const group = b.sent.filter((s) => s.key === 'group:100002005');
-  const priv = b.sent.filter((s) => s.key === 'private:100002000');
+  const group = b.sent.filter((s) => s.key === 'group:1000000010');
+  const priv = b.sent.filter((s) => s.key === 'private:1000000000');
   check('群里 0 条（关键）', group.length === 0, `${group.length} 条`);
   check('管理员私聊 1 条', priv.length === 1, `${priv.length} 条`);
-  check('私聊含群号', /群号：100002005/.test(priv[0]?.text ?? ''));
+  check('私聊含群号', /群号：1000000010/.test(priv[0]?.text ?? ''));
   check('私聊含错误码', /no_healthy_account/.test(priv[0]?.text ?? ''));
   check('私聊不含空的「群内已回复」', !/群内已回复/.test(priv[0]?.text ?? ''));
 }
@@ -125,7 +125,7 @@ console.log('\n── ④ 私聊会话本身报错：也不往"群里"发 ──
   const b = makeBridge();
   b.notifyOwnerOfError('private:2677607641', 'agent 处理出错', '某私聊用户的回合炸了');
   check('原会话收到 0 条', b.sent.filter((s) => s.key === 'private:2677607641').length === 0);
-  check('管理员收到 1 条', b.sent.filter((s) => s.key === 'private:100002000').length === 1);
+  check('管理员收到 1 条', b.sent.filter((s) => s.key === 'private:1000000000').length === 1);
   check('带 QQ号 字段', /QQ号：2677607641/.test(b.sent[0]?.text ?? ''));
 }
 
@@ -164,7 +164,7 @@ console.log('\n── ⑥ 长详情截断 ──');
 console.log('\n── ⑦ Token 熔断通知口径 ──');
 {
   const n = buildOwnerNotice({
-    key: 'group:100002005',
+    key: 'group:1000000010',
     title: 'Token 超限熔断',
     header: '【Token 超限熔断】',
     sessionName: '奶龙生活群',
@@ -173,7 +173,7 @@ console.log('\n── ⑦ Token 熔断通知口径 ──');
   check('Token 熔断不再使用「桥接报错」标题', n.startsWith('【Token 超限熔断】') && !n.includes('【桥接报错】'), n.split('\n')[0]);
   check('Token 熔断通知带会话名称', /会话名称：奶龙生活群/.test(n));
   const r = buildOwnerReport({
-    key: 'group:100002005',
+    key: 'group:1000000010',
     code: 'quota',
     rawError: 'x',
     sessionName: '奶龙生活群'

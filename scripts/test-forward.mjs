@@ -54,15 +54,15 @@ check('extractForwardIds 非数组返回空', JSON.stringify(extractForwardIds(n
 // 3. formatForwardResponse / nodeText
 const data = {
   messages: [
-    { sender: { nickname: '群友V', user_id: 10001 }, time: 1700000000, message: [{ type: 'text', data: { text: '第一句' } }, { type: 'image', data: { url: 'https://example.com/a.jpg' } }, { type: 'forward', data: { id: 'nested_001' } }] },
-    { sender: '群友W', time: 1700000001, message: '第二句' },
+    { sender: { nickname: '张三', user_id: 10001 }, time: 1700000000, message: [{ type: 'text', data: { text: '第一句' } }, { type: 'image', data: { url: 'https://example.com/a.jpg' } }, { type: 'forward', data: { id: 'nested_001' } }] },
+    { sender: '李四', time: 1700000001, message: '第二句' },
     { sender: { card: '王五', user_id: 10003 }, time: 1700000002, content: [{ type: 'at', data: { qq: 10001 } }, { type: 'text', data: { text: ' 你好' } }] }
   ]
 };
 const fmt = formatForwardResponse(data);
 check('formatForwardResponse.total=3', fmt.total === 3 && fmt.messages.length === 3);
-check('formatForwardResponse 提取 sender/text', fmt.messages[0].sender === '群友V' && fmt.messages[0].text === '第一句[图片][转发]');
-check('formatForwardResponse 兼容字符串 message', fmt.messages[1].sender === '群友W' && fmt.messages[1].text === '第二句');
+check('formatForwardResponse 提取 sender/text', fmt.messages[0].sender === '张三' && fmt.messages[0].text === '第一句[图片][转发]');
+check('formatForwardResponse 兼容字符串 message', fmt.messages[1].sender === '李四' && fmt.messages[1].text === '第二句');
 check('nodeText 兼容 content 数组', nodeText(data.messages[2]) === '@10001 你好');
 check('formatForwardResponse 暴露图片 media', fmt.messages[0].media.length === 1 && fmt.messages[0].media[0].url === 'https://example.com/a.jpg');
 check('formatForwardResponse 暴露嵌套 forward id', JSON.stringify(fmt.messages[0].nestedForwardIds) === JSON.stringify(['nested_001']));
@@ -79,9 +79,9 @@ check('formatForwardResponse 空 messages', empty.total === 0 && empty.truncated
 const senderFallback = formatForwardResponse({ messages: [{ sender: { nickname: '', card: '王五', user_id: 10003 }, message: 'x' }] });
 check('sender 空 nickname 回退到 card', senderFallback.messages[0].sender === '王五');
 
-const nodeData = { messages: [{ type: 'node', data: { name: '群友V', uin: '10001', time: 1700000000, content: [{ type: 'text', data: { text: '你好' } }] } }] };
+const nodeData = { messages: [{ type: 'node', data: { name: '张三', uin: '10001', time: 1700000000, content: [{ type: 'text', data: { text: '你好' } }] } }] };
 const fmtNode = formatForwardResponse(nodeData);
-check('formatForwardResponse 兼容标准 node.data 结构', fmtNode.messages[0].sender === '群友V' && fmtNode.messages[0].text === '你好' && fmtNode.messages[0].userId === '10001' && fmtNode.messages[0].time === 1700000000);
+check('formatForwardResponse 兼容标准 node.data 结构', fmtNode.messages[0].sender === '张三' && fmtNode.messages[0].text === '你好' && fmtNode.messages[0].userId === '10001' && fmtNode.messages[0].time === 1700000000);
 
 check('nodeText 清洗 CQ 字符串', nodeText({ message: '[CQ:image,file=x]' }) === '[媒体]');
 

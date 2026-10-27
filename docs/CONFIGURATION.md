@@ -48,13 +48,13 @@ cp config.example.json config.json      # Windows CMD: copy config.example.json 
 | `socialV2.upscale` | 超分：`enabled`、`model`（默认 `upscayl-standard-4x`）、`binDir` / `modelDir`（Upscayl 安装路径）、`timeoutMs`；`enabled:false` 时小图回退 lanczos |
 | `socialV2.upscale.cache` | 缓存：`enabled`、`dir`（默认 `state/upscale-cache`）、`maxAgeDays`（默认 3）、`maxBytes`（默认 500MB）、`sweepEveryHours`（默认 6）；超阈值按最旧优先删除 |
 | `socialV2.bili` | B 站：`enabled`；`authFile`（默认 `state/bili-auth.json`，配了才有字幕）；`selfBrowsing.*`（`dailyBudgetSec` 默认 7200、`minIntervalMs`/`maxIntervalMs`、`scanSeconds`/`likedSeconds`、`framesPerSecond`=每秒取样帧数、`maxFramesTotal`=单次帧数上限、`tilesPerSheet`=每张拼图格数、`gameBoost`、`poolPages`、`search.*`、`seenCooldownMs`、`onlyWhenDiving`）；`asr.*`（`enabled`、`model`=本地目录或模型名、`cpuThreads` 默认 8、`timeoutMs`）；`share.*`（`minInterest`/`probability`/`minGapMs`/`askModel`）；`watchShared.*`；`memory.file`/`maxItems` |
-| `imageReverseSearch.*` | SauceNAO 反向搜图（`apiKey`、`db`、`minsim`、`proxy`） |
+| `imageReverseSearch.*` / `socialV2.images.reverseSearchApiKey` | SauceNAO 反向搜图（`db`、`minsim`、`proxy`）；新 key 由图片插件注册在 `socialV2.images.reverseSearchApiKey`，旧 `imageReverseSearch.apiKey` 仍兼容 |
 | `webSearch.*` | 搜索引擎链与顺序（`engines` 数组，mtime 热加载） |
 | `xMonitor.*` | X 按需查询：抓取条数、媒体、视频上限、代理、翻译；该名字沿用旧版，不表示定时监控 |
 | `errorNotify.*` | 报错通知（`notifyOwner`、窗口） |
 | `consolePort` / `consoleToken` / `consoleAuth` | 本地控制台；默认启用鉴权，空或不合法的令牌会回退自动生成；`consoleAuth: false` 显式关闭令牌检查，仍限定本机监听并检查写请求来源 |
 
-> 真实 `config.json` 与 `state/` 不入公开仓库，仓库只提供脱敏模板。
+> 插件凭据与连接项由插件自注册（`ctx.console.registerConfigItems()`），控制台通过 `/api/plugins/<id>/config` 读写；真实 `config.json` 与 `state/` 不入公开仓库，仓库只提供脱敏模板。
 
 ---
 

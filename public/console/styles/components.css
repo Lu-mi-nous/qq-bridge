@@ -1,0 +1,562 @@
+  /* ══════════════════════════════════════════════════════════════════
+     2026-10-22 控制台改版：摘要卡网格 + 液态玻璃 + 整页详情
+     目标：首页无滚动看完 24 张卡的实时摘要，点开看详情。
+     约定：动画一律走 --anim-dur / --anim-ease；浮层禁用 display 切换。
+     ══════════════════════════════════════════════════════════════════ */
+
+  /* ── 交互波浪背景（仿 SnowLuma 登录页 login-waves）──
+     固定层、不参与布局；canvas 由 JS 绘制。
+     静止时是缓慢漂移的宽折痕（像一块布），鼠标经过会被"拨动"并回弹。 */
+  .wave-field {
+    position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    overflow: hidden; opacity: .92;
+  }
+  .wave-field canvas { display: block; width: 100%; height: 100%; }
+
+  /* ── 液态玻璃基类 ──
+     顶部 1px 内高光是"玻璃感"的核心：没有它，半透明面看起来只是半透明。 */
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur-card)) saturate(180%);
+    -webkit-backdrop-filter: blur(var(--glass-blur-card)) saturate(180%);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass { background: oklch(99% .004 240 / .94); }
+  }
+
+  /* ── 摘要卡网格 ──
+     卡片统一固定高度（136px），尺寸完全一致。 */
+  .console-shell { max-width: 1440px; margin: 0 auto; }
+  /* detailPool 隐藏时必须是 display:none。注意 `.grid { display: grid }`（作者样式）
+     会压过浏览器默认的 `[hidden] { display: none }`——同为 (0,1,0) 但作者样式优先，
+     实测表现就是"摘要卡下面还整整齐齐排着 23 张详情卡"。用 !important 兜住。 */
+  #detailPool[hidden] { display: none !important; }
+  .summary-grid[hidden] { display: none !important; }
+  .summary-card[hidden] { display: none !important; }
+  .summary-grid {
+    display: grid;
+    /* 卡片尺寸完全一致：固定最小列宽 + 卡片固定高度。
+       之前用 min-height，内容多的卡（13/14/18/20）会比别的卡高半行。 */
+    grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
+    gap: 14px;
+    max-width: 1440px;
+    margin: 0 auto 18px;
+    align-items: stretch;
+  }
+  .summary-card {
+    position: relative;
+    /* 默认只放"序号 + 名称"，垂直水平都居中 */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 136px;
+    padding: 14px 18px;
+    text-align: center;
+    font: inherit;
+    color: var(--text);
+    appearance: none;
+    /* 光泽必须裁在圆角内，且不能盖住文字：伪元素放 z-index:0，内容抬到 1。 */
+    overflow: hidden;
+    isolation: isolate;
+    opacity: 0;
+    transform: translateY(8px);
+    animation: cardEnter var(--anim-dur) var(--anim-ease) forwards;
+    animation-delay: calc(var(--i, 0) * 30ms);
+    transition: transform var(--anim-dur) var(--anim-ease),
+                box-shadow var(--anim-dur) var(--anim-ease),
+                border-color var(--anim-dur) var(--anim-ease);
+  }
+  .summary-card > * { position: relative; z-index: 1; }
+  @keyframes cardEnter { to { opacity: 1; transform: translateY(0); } }
+  .summary-card:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklch, var(--primary) 32%, var(--glass-border));
+  }
+  .summary-card:active { transform: translateY(0) scale(.98); }
+  .summary-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* 跟随鼠标的柔光（SnowLuma 液态玻璃同款交互）：--mx/--my 由 JS 按卡片坐标写入。 */
+  .summary-card::before {
+    content: ''; position: absolute; inset: 0; border-radius: inherit;
+    pointer-events: none; z-index: 0; opacity: 0;
+    background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%),
+      oklch(100% 0 0 / .40), oklch(100% 0 0 / .10) 42%, transparent 66%);
+    transition: opacity .22s ease;
+  }
+  /* 一道窄光带扫过（只在 hover 触发一次，不循环）；z-index:0 保证在文字下面。 */
+  .summary-card::after {
+    content: ''; position: absolute; inset: 0; border-radius: inherit;
+    pointer-events: none; z-index: 0; opacity: 0;
+    background: linear-gradient(115deg,
+      transparent 38%,
+      oklch(100% 0 0 / .34) 47%,
+      oklch(100% 0 0 / .10) 53%,
+      transparent 62%);
+    transform: translateX(-75%);
+    transition: opacity .22s linear;
+  }
+  .summary-card:hover::before { opacity: 1; }
+  .summary-card:hover::after {
+    opacity: 1;
+    animation: cardSheen 1s cubic-bezier(.22, .61, .36, 1);
+  }
+  @keyframes cardSheen { from { transform: translateX(-75%) } to { transform: translateX(75%) } }
+  @media (hover: none) {
+    .summary-card::before, .summary-card::after { display: none; }
+  }
+
+  /* 序号 + 名称：作为一个整体居中；悬停时整体上移，把下方空间让给简介 */
+  .sc-main {
+    display: flex; flex-direction: column; align-items: center; gap: 5px;
+    max-width: 100%;
+    transition: transform var(--anim-dur) var(--anim-ease);
+    will-change: transform;
+  }
+  .summary-card:hover .sc-main,
+  .summary-card:focus-visible .sc-main { transform: translateY(-26px); }
+
+  .summary-card .sc-no {
+    font-size: 11px; letter-spacing: .12em; font-variant-numeric: tabular-nums;
+    color: var(--muted); line-height: 1;
+  }
+  .summary-card .sc-title {
+    font-size: 14.5px; font-weight: 600; color: var(--heading); line-height: 1.3;
+    max-width: 100%;
+    /* 名称允许两行：像「一代仿真模式（reserved）」这种长标题不该被截成省略号 */
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; overflow-wrap: anywhere;
+  }
+  /* 功能简介：平时隐藏；悬停/键盘聚焦时从下方浮上来（不占据默认布局） */
+  .summary-card .sc-summary {
+    position: absolute; left: 18px; right: 18px; bottom: 14px;
+    margin: 0;
+    font-size: 12px; line-height: 1.45; color: var(--muted);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+    opacity: 0; transform: translateY(8px);
+    pointer-events: none;
+    transition: opacity var(--anim-dur) var(--anim-ease),
+                transform var(--anim-dur) var(--anim-ease);
+  }
+  .summary-card:hover .sc-summary,
+  .summary-card:focus-visible .sc-summary { opacity: 1; transform: none; }
+  /* 有待办（挂起审批 / 加好友）时左上角呼吸圆点 */
+  .summary-card .sc-dot {
+    position: absolute; top: 12px; right: 12px;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--danger);
+    box-shadow: 0 0 0 0 oklch(52% .21 27 / .5);
+    animation: summaryPulse 1.8s ease-out infinite;
+  }
+  .summary-card .sc-dot[hidden] { display: none; }
+  @keyframes summaryPulse {
+    0% { box-shadow: 0 0 0 0 oklch(52% .21 27 / .45) }
+    70% { box-shadow: 0 0 0 8px oklch(52% .21 27 / 0) }
+    100% { box-shadow: 0 0 0 0 oklch(52% .21 27 / 0) }
+  }
+  .summary-card.sc-attention { border-color: oklch(52% .21 27 / .35); }
+
+  /* ── 卡片全页视图 ──
+     点击摘要卡不弹对话框：卡片直接展开成整页（View Transitions 做形变，
+     不支持时退化为淡入/上移）。层级 900 仍低于黑话弹窗(1000)与凭据说明(1200)，
+     所以在详情页里再打开它们不会被盖住。 */
+  .detail-page {
+    position: fixed; inset: 0 0 0 calc(var(--sidebar-w) + 16px); z-index: 900;
+    overflow-y: auto; overflow-x: hidden;
+    overscroll-behavior: contain;
+    background:
+      radial-gradient(1100px 520px at 50% -12%, oklch(100% 0 0 / .75), transparent 62%),
+      var(--bg);
+    color: var(--text);
+  }
+  .detail-page[hidden] { display: none; }
+  .detail-shell { width: min(100%, 1440px); margin: 0 auto; padding: 0 24px 28px; }
+  .detail-bar {
+    position: sticky; top: 0; z-index: 3;
+    display: flex; align-items: center; gap: 14px;
+    margin: 0 -24px 18px; padding: 14px 24px;
+    /* 不用 backdrop-filter：整页在滚动，15px 的背景模糊会每帧重算，
+       动画/滚动都会发涩。纯色底 + 一条细阴影已经够分层。 */
+    background: var(--bg);
+    border-bottom: 1px solid var(--card-border);
+    box-shadow: 0 12px 26px -26px oklch(20% .03 250 / .5);
+  }
+  .detail-back {
+    flex: none; display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-radius: 999px;
+    background: var(--card); color: var(--heading); font-weight: 600;
+    box-shadow: var(--shadow);
+    transition: transform .18s var(--anim-ease), background .18s ease, border-color .18s ease;
+  }
+  .detail-back:hover {
+    transform: translateX(-3px);
+    background: var(--surface-3);
+    border-color: var(--accent-border);
+  }
+  .detail-back .arrow { font-size: 15px; line-height: 1; }
+  .detail-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .detail-heading .sec-no { flex: none; }
+  .detail-heading h2 {
+    margin: 0; font-size: 19px; line-height: 1.25; color: var(--heading);
+    overflow-wrap: anywhere;
+  }
+  .detail-hint { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .detail-page-body > section.card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 20px;
+    padding: 24px;
+    box-shadow: var(--shadow-card);
+    min-height: calc(100vh - 112px);
+    max-height: none;
+    transition: box-shadow .24s ease-out;
+  }
+  /* 展开期间先不要真实白卡的阴影：ghost 还没长到位时，阴影会在它外面
+     先画出一圈灰边。等 ghost 结束（manual-enter 移除）再淡入。 */
+  .detail-page.manual-enter .detail-page-body > section.card { box-shadow: none; }
+  .detail-page-body > section.card + section.card { margin-top: 16px; }
+  /* 标题由顶栏统一显示，避免详情页里再出现一次同样的 h2；
+     但 02b 是 02 的二级视图，它的 h2 里有具体会话名，要保留。 */
+  .detail-page-body > section > h2 { display: none; }
+  .detail-page-body > #msgViewerCard > h2 { display: flex; }
+  .detail-page-body .collapse-btn { display: none; }
+  /* 06 的收起状态是在网格里用的；全页视图必须始终展开（否则打开是空的） */
+  .detail-page-body section.collapsible.collapsed > .collapsible-body {
+    grid-template-rows: 1fr; opacity: 1;
+  }
+  .detail-page-body section.collapsible.collapsed > h2 { border-bottom: 0; }
+
+  /* ── 手动 FLIP 展开 ──
+     不用 View Transitions：整页快照（24 张玻璃卡 + 详情表）截一次图就要几十毫秒，
+     实测开页会有 7 帧 >33ms。改成一块和卡片同尺寸的白色"面"用 transform 长大，
+     整页只做 opacity 淡入；全部是合成器友好的属性，不再生成整页快照。 */
+  .detail-ghost {
+    position: fixed; z-index: 901; pointer-events: none;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: var(--card);
+    border: 0;
+    border-radius: 18px;
+    /* 不能用卡片阴影/边框：ghost 会被 transform 放大，1px 边框和阴影也会
+       变成粗灰边。终点交给真实白卡自己的边框/阴影，ghost 只负责白面。 */
+    box-shadow: none;
+    transform-origin: top left;
+    will-change: transform, opacity;
+    transition:
+      transform .54s cubic-bezier(.4, 0, .2, 1),
+      border-radius .54s cubic-bezier(.4, 0, .2, 1),
+      opacity .16s ease-out .46s;
+  }
+  /* 标题只在前 0.26s 可见；随后白面继续长大，避免文字被拉得很大 */
+  .detail-ghost .sc-main { transition: opacity .26s ease-out; }
+  .detail-ghost .sc-no {
+    font-size: 11px; letter-spacing: .12em; color: var(--muted); line-height: 1;
+  }
+  .detail-ghost .sc-title {
+    font-size: 14.5px; font-weight: 600; color: var(--heading); line-height: 1.3;
+    max-width: 100%; text-align: center; overflow-wrap: anywhere;
+  }
+  .detail-ghost.run { opacity: 0; }
+  .detail-ghost.run .sc-main { opacity: 0; }
+
+  .detail-page.manual-enter { opacity: 0; }
+  .detail-page.manual-enter.open {
+    opacity: 1;
+    transition: opacity .3s ease-out .1s;
+  }
+  /* 整页背景先淡入，但详情内容要等白面快长到卡片大小再出现；
+     否则表格会以半透明状态铺满整屏，看起来像"瞬间全屏"。 */
+  .detail-page.manual-enter .detail-shell { opacity: 0; }
+  .detail-page.manual-enter.open .detail-shell {
+    opacity: 1;
+    transition: opacity .18s ease-out .54s;
+  }
+
+  /* 返回：整页背景淡出，同时大白卡由 JS ghost 缩回摘要卡。
+     不再缩放整页，也不会出现"整页白面"铺满屏幕。 */
+  .detail-page.manual-exit {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .22s ease-out;
+  }
+  /* 大白卡的内容由 ghost 顶替；先快速隐掉，避免整页淡出时表格文字
+     和下面的摘要卡叠成重影。ghost 正好盖住卡片区域，看不出硬切。 */
+  .detail-page.manual-exit .detail-shell {
+    opacity: 0;
+    transition: opacity .1s ease-out;
+  }
+
+  /* ── 减少动效：位移动画全部关掉，背景静止 ── */
+  @media (prefers-reduced-motion: reduce) {
+    .summary-card { animation: none !important; opacity: 1 !important; transform: none !important; }
+    .summary-card:hover, .summary-card:active { transform: none; }
+    button:not(.side-item):not(.summary-card):not(.cred-eye):not(:disabled):active {
+      transform: none; filter: none;
+    }
+    .cred-input-wrap .cred-eye:active {
+      transform: translateY(-50%); filter: none;
+    }
+    .summary-card::before, .summary-card::after { display: none; }
+    .summary-card .sc-dot { animation: none; }
+    /* 名称上移与简介浮现保留"状态切换"，但不做过渡（无动画） */
+    .sc-main, .sc-summary { transition: none; }
+    .wave-field { opacity: .3; }
+    .detail-ghost { display: none !important; }
+    .detail-page.manual-enter,
+    .detail-page.manual-enter.open,
+    .detail-page.manual-exit { transition: none; }
+  }
+
+  /* 窄屏：侧栏变横向导航，摘要卡单列 */
+  @media (max-width: 900px) {
+    :root { --sidebar-w: 0px; }
+    .app-layout { display: block; }
+    .console-sidebar {
+      position: sticky; top: 0; width: auto; height: auto; margin: 0;
+      flex-direction: row; align-items: center; gap: 8px;
+      padding: 8px 12px; border-radius: 0; border-left: 0; border-right: 0; border-top: 0;
+      overflow-x: auto; z-index: 40;
+    }
+    .sidebar-brand, .sidebar-foot { display: none; }
+    .sidebar-nav { flex-direction: row; align-items: center; overflow: visible; gap: 3px; flex: 1; }
+    .sidebar-bottom { margin: 0; padding: 0; border: 0; display: flex; }
+    .sidebar-bottom .side-item { margin-top: 0; }
+    .side-label { display: none; }
+    .side-item { width: auto; padding: 7px 10px; white-space: nowrap; }
+    .side-count { display: none; }
+    .app-main { padding: 14px; }
+    .detail-page { left: 0; }
+  }
+  @media (max-width: 640px) {
+    .app-main { padding: 14px; }
+    .topbar { margin-bottom: 14px; }
+    .status-badge { width: 100%; max-width: none; }
+    .summary-grid { grid-template-columns: 1fr; gap: 12px; }
+    .summary-card { height: 112px; padding: 12px 14px; }
+    .summary-card .sc-summary { left: 14px; right: 14px; bottom: 12px; }
+    .detail-shell { padding: 0 14px 18px; }
+    .detail-bar { margin: 0 -14px 14px; padding: 10px 14px; gap: 10px; }
+    .detail-heading h2 { font-size: 16px; }
+    .detail-hint { display: none; }
+    .detail-page-body > section.card {
+      padding: 16px; border-radius: 16px;
+      min-height: calc(100vh - 90px);
+    }
+  }
+
+/* ══════════════════════════════════════════════════════════════════════
+   C1：声明式卡片 + 插件功能分类
+   ══════════════════════════════════════════════════════════════════════ */
+.side-sub {
+  margin-left: 18px;
+  width: calc(100% - 18px);
+  font-size: 13px;
+}
+.plugin-category-view { margin-top: 18px; }
+.plugin-detail-pool[hidden] { display: none !important; }
+.plugin-detail-card .plugin-card-list { grid-template-columns: 1fr; }
+.plugin-detail-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.plugin-empty { grid-column: 1 / -1; text-align: center; padding: 32px 0; }
+.plugin-manage-view { max-width: 1100px; margin: 18px auto 0; }
+.plugin-manage-view[hidden] { display: none !important; }
+.plugin-manage-host { display: flex; flex-direction: column; gap: 14px; }
+.plugin-group { padding: 18px; }
+.plugin-group-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.plugin-group-head h3 { margin: 0; font-size: 16px; }
+.plugin-card-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.plugin-card-item {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 12px; border-radius: 12px;
+  background: oklch(100% 0 0 / .52);
+  border: 1px solid oklch(88% .01 250 / .55);
+}
+.plugin-card-item b { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.plugin-card-item small { font-weight: 400; opacity: .65; font-size: 11px; }
+.plugin-card-item span { font-size: 12px; opacity: .78; line-height: 1.45; }
+.plugin-card-endpoint { font-size: 11px; opacity: .6; overflow-wrap: anywhere; }
+
+.declarative-card { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.dc-section { display: flex; flex-direction: column; gap: 8px; }
+.dc-row { display: flex; align-items: center; gap: 10px; }
+.dc-row.dc-column { flex-direction: column; align-items: stretch; }
+.dc-label { flex: 1; font-size: 13px; }
+.dc-value { font-size: 13px; font-weight: 600; }
+.dc-input {
+  min-width: 120px; padding: 6px 8px; border-radius: 8px;
+  border: 1px solid oklch(85% .01 250 / .8);
+  background: oklch(100% 0 0 / .72); font: inherit;
+}
+.dc-switch-row { justify-content: space-between; }
+.dc-switch-row input { width: auto; }
+.dc-note { margin: 0; font-size: 12px; line-height: 1.6; opacity: .72; }
+.dc-muted { font-size: 12px; opacity: .65; }
+.dc-ok { font-size: 12px; color: oklch(52% .14 150); }
+.dc-err { font-size: 12px; color: oklch(55% .2 25); }
+.dc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.dc-list { display: flex; flex-direction: column; gap: 4px; }
+.dc-list-item { font-size: 13px; line-height: 1.55; }
+.dc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.dc-table th, .dc-table td { padding: 5px 8px; border-bottom: 1px solid oklch(88% .01 250 / .5); text-align: left; }
+.dc-progress { width: 100%; height: 8px; }
+.plugin-card-body { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.plugin-guide-example {
+  max-height: 260px; overflow: auto; padding: 10px 12px; border-radius: 10px;
+  background: oklch(20% .01 250 / .06); font-size: 11px; line-height: 1.5;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.console-panel { display: block; width: 100%; border: 1px solid oklch(88% .01 250 / .55); border-radius: 12px; background: oklch(100% 0 0 / .45); }
+.plugin-card-item.plugin-card-full { grid-column: 1 / -1; }
+.plugin-manager { margin-top: 0; }
+.plugin-manage-view .plugin-manager { padding: 0; background: transparent; border: 0; box-shadow: none; }
+.plugin-manager-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.plugin-manager-empty { grid-column: 1 / -1; padding: 24px 0; text-align: center; }
+.plugin-manage-card {
+  position: relative; display: flex; flex-direction: column; gap: 10px;
+  min-height: 170px; padding: 18px; overflow: hidden; isolation: isolate;
+  border: 1px solid oklch(100% 0 0 / .62); border-radius: 18px;
+  /* 透明玻璃：低 alpha 的白色渐变让背景波浪透进来；backdrop-filter 负责磨砂 + 提亮。
+     多层内阴影分别模拟上沿高光、下沿反光和极细的内框，避免只像半透明白块。 */
+  background:
+    linear-gradient(135deg,
+      oklch(100% 0 0 / .13) 0%,
+      oklch(100% 0 0 / .02) 44%,
+      oklch(94% .025 235 / .07) 100%);
+  backdrop-filter: blur(3px) saturate(210%) brightness(1.05) contrast(1.02);
+  -webkit-backdrop-filter: blur(3px) saturate(210%) brightness(1.05) contrast(1.02);
+  box-shadow:
+    inset 0 1px 0 oklch(100% 0 0 / .92),
+    inset 0 -1px 0 oklch(100% 0 0 / .22),
+    inset 0 0 0 1px oklch(100% 0 0 / .12),
+    0 18px 40px -30px oklch(28% .06 250 / .55);
+  animation: pluginManageCardIn .36s cubic-bezier(.22, 1, .36, 1) both;
+  animation-delay: calc(var(--i, 0) * 30ms);
+  transition: transform .22s cubic-bezier(.22, 1, .36, 1),
+              border-color .22s ease, box-shadow .22s ease;
+  will-change: transform;
+}
+.plugin-manage-card > * { position: relative; z-index: 1; }
+/* 鼠标跟随的镜面高光：--mx/--my 由 runtime-visuals 写入。 */
+.plugin-manage-card::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  z-index: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(280px circle at var(--mx, 30%) var(--my, 20%),
+    oklch(100% 0 0 / .62), oklch(100% 0 0 / .12) 38%, transparent 70%);
+  mix-blend-mode: screen;
+  transition: opacity .24s ease;
+}
+/* 一条很轻的斜向反光，模拟玻璃厚度边缘的光带。 */
+.plugin-manage-card::after {
+  content: ''; position: absolute; inset: -20% -50%;
+  z-index: 0; pointer-events: none; opacity: .38;
+  background: linear-gradient(115deg,
+    transparent 35%, oklch(100% 0 0 / .28) 44%,
+    oklch(100% 0 0 / .06) 51%, transparent 60%);
+  transform: translateX(-18%);
+  transition: transform .7s cubic-bezier(.22, 1, .36, 1), opacity .3s ease;
+}
+.plugin-manage-card:hover {
+  transform: translateY(-2px);
+  border-color: oklch(100% 0 0 / .82);
+  box-shadow:
+    inset 0 1px 0 oklch(100% 0 0 / 1),
+    inset 0 -1px 0 oklch(100% 0 0 / .28),
+    inset 0 0 0 1px oklch(100% 0 0 / .18),
+    0 22px 46px -30px oklch(28% .06 250 / .6);
+}
+.plugin-manage-card:hover::before { opacity: 1; }
+.plugin-manage-card:hover::after { opacity: .58; transform: translateX(18%); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .plugin-manage-card { background: oklch(99% .004 240 / .92); }
+}
+@keyframes pluginManageCardIn {
+  from { opacity: 0; transform: translateY(8px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.plugin-manage-card-top { display: flex; align-items: flex-start; gap: 11px; }
+.plugin-manage-icon {
+  width: 38px; height: 38px; flex: none; border-radius: 12px;
+  display: grid; place-items: center;
+  color: #fff; font-size: 15px; font-weight: 700;
+  box-shadow: 0 6px 14px -8px oklch(35% .12 250 / .65);
+  background: linear-gradient(145deg, #5b8cff, #3157d8);
+}
+.plugin-manage-icon[data-tone="2"] { background: linear-gradient(145deg, #b06bff, #7040c9); }
+.plugin-manage-icon[data-tone="3"] { background: linear-gradient(145deg, #34c759, #1f9d45); }
+.plugin-manage-icon[data-tone="4"] { background: linear-gradient(145deg, #ff9f0a, #e57500); }
+.plugin-manage-icon[data-tone="5"] { background: linear-gradient(145deg, #ff6482, #d9365b); }
+.plugin-manage-title { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.plugin-manage-title b { font-size: 14px; line-height: 1.35; color: var(--heading); overflow-wrap: anywhere; }
+.plugin-manage-title .meta { font-size: 11px; color: var(--muted); }
+.plugin-manage-switch {
+  position: relative; flex: none; width: 48px; height: 28px; padding: 0;
+  border: 0; border-radius: 999px; cursor: pointer;
+  background: oklch(82% .006 250 / .78);
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color .26s cubic-bezier(.4, 0, .2, 1);
+}
+.plugin-manage-switch[aria-checked="true"] { background: #34c759; }
+.plugin-manage-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.plugin-manage-switch:disabled { opacity: 1; cursor: progress; }
+.plugin-manage-knob {
+  position: absolute; top: 2px; left: 2px; width: 24px; height: 24px;
+  border-radius: 50%; background: #fff;
+  box-shadow: 0 2px 5px oklch(20% .02 250 / .22), 0 0 1px oklch(20% .02 250 / .18);
+  transform: translateX(0);
+  transition: transform .28s cubic-bezier(.22, 1, .36, 1);
+  will-change: transform;
+}
+.plugin-manage-switch[aria-checked="true"] .plugin-manage-knob { transform: translateX(20px); }
+.plugin-manage-desc {
+  margin: 0; min-height: 2.7em;
+  font-size: 12px; line-height: 1.5; color: var(--muted);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+/* display:-webkit-box 会压过 [hidden]；无描述的插件直接收起这一行。 */
+.plugin-manage-desc[hidden] { display: none !important; }
+.plugin-manage-foot {
+  margin-top: auto; padding-top: 9px;
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  border-top: 1px solid oklch(88% .01 250 / .45);
+}
+.plugin-manage-dot {
+  width: 8px; height: 8px; flex: none; border-radius: 50%;
+  background: oklch(72% .01 250);
+  box-shadow: 0 0 0 3px oklch(72% .01 250 / .12);
+  transition: background-color .2s ease, box-shadow .2s ease;
+}
+.plugin-manage-card[data-state="on"] .plugin-manage-dot { background: #34c759; box-shadow: 0 0 0 3px oklch(76% .16 145 / .16); }
+.plugin-manage-card[data-state="pending"] .plugin-manage-dot { background: #ff9f0a; box-shadow: 0 0 0 3px oklch(82% .16 75 / .16); }
+.plugin-manage-card[data-state="error"] .plugin-manage-dot { background: #ff3b30; box-shadow: 0 0 0 3px oklch(70% .2 25 / .16); }
+.plugin-manage-status { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.plugin-manage-card[data-state="on"] .plugin-manage-status { color: #248a3d; }
+.plugin-manage-card[data-state="pending"] .plugin-manage-status { color: #b26a00; }
+.plugin-manage-card[data-state="error"] .plugin-manage-status { color: #c62d25; }
+.plugin-manage-count { margin-left: auto; font-size: 11px; }
+.plugin-manage-msg { flex: 1 0 100%; font-size: 11px; line-height: 1.35; color: var(--muted); min-height: 0; }
+.plugin-manage-card[data-state="error"] .plugin-manage-msg { color: var(--danger); }
+.plugin-manager-restart {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 16px; padding: 12px 16px;
+  border: 1px solid oklch(88% .01 250 / .55); border-radius: 14px;
+  background: oklch(100% 0 0 / .72);
+  box-shadow: 0 12px 28px -24px oklch(20% .03 250 / .55);
+  animation: pluginManageRestartIn .3s cubic-bezier(.22, 1, .36, 1) both;
+}
+@keyframes pluginManageRestartIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* display:flex 会压过 UA 的 [hidden]{display:none}，必须显式补一条。 */
+.plugin-manager-restart[hidden] { display: none !important; }
+@media (hover: none) {
+  .plugin-manage-card::before, .plugin-manage-card::after { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plugin-manage-card, .plugin-manager-restart { animation: none !important; }
+  .plugin-manage-card, .plugin-manage-switch, .plugin-manage-knob { transition: none !important; }
+  .plugin-manage-card::before, .plugin-manage-card::after { transition: none !important; }
+  .plugin-manage-card::after { display: none; }
+}

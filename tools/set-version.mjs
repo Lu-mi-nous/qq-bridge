@@ -31,11 +31,15 @@ const MIRRORS = [
   { file: 'package-lock.json', pairs: (v) => [[`"version": "${v}"`, `"version": "${target}"`]] },
   {
     file: 'public/console.html',
-    pairs: (v) => [
-      [`<span id="sidebarVersion">v${v}</span>`, `<span id="sidebarVersion">v${target}</span>`],
-      [`<span class="about-badge" id="aboutVersion">v${v}</span>`, `<span class="about-badge" id="aboutVersion">v${target}</span>`],
-      [`'v${v}'`, `'v${target}'`]
-    ]
+    pairs: (v) => [[`<span id="sidebarVersion">v${v}</span>`, `<span id="sidebarVersion">v${target}</span>`]]
+  },
+  {
+    file: 'public/console/app/about-view.js',
+    pairs: (v) => [[`<span class="about-badge" id="aboutVersion">v${v}</span>`, `<span class="about-badge" id="aboutVersion">v${target}</span>`]]
+  },
+  {
+    file: 'public/console/app/layout.js',
+    pairs: (v) => [[`'v${v}'`, `'v${target}'`]]
   },
   { file: 'src/mcp-snowluma-safe.js', pairs: (v) => [[`version: '${v}'`, `version: '${target}'`]] },
   { file: 'src/mcp-host-server.js', pairs: (v) => [[`version: '${v}'`, `version: '${target}'`]] },

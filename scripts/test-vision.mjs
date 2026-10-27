@@ -1,14 +1,10 @@
 // test-vision.mjs — 测试哪些模型真的能看图
 // 用法: node scripts/test-vision.mjs [模型ID ...]
 import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const BASE = 'http://127.0.0.1:7863/v1';
 const KEY = 'local';
-const IMG = process.argv[3] ?? path.join(ROOT, 'state', 'vision-test.jpg');
+const IMG = 'C:/qq-bridge/state/vision-test.jpg';
 
 const models = process.argv.slice(2);
 if (models.length === 0) models.push('cn:deepseek-v4.1-flash', 'cn:glm-5.3-flash', 'cn:glm-5.2');

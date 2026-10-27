@@ -32,9 +32,7 @@ console.log('── 推荐表情清单 ──');
 console.log('\n── 表情 id 校验（防模型凭印象编）──');
 {
   // 拿真实目录当白名单
-  const catalogPath = process.env.SNOWLUMA_HOME
-    ? `${process.env.SNOWLUMA_HOME}/data/sys-face-catalog.json`
-    : 'sys-face-catalog.json';
+  const catalogPath = 'C:/SnowLuma/data/sys-face-catalog.json';
   let ids = null;
   if (fs.existsSync(catalogPath)) {
     const j = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));

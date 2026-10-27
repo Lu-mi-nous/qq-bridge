@@ -16,6 +16,9 @@ export const CONFIG_DEFAULTS = {
     "homeDir": "C:\\path\\to\\SnowLuma",
     "allowProcessControl": false
   },
+  "plugins": {
+    "disabled": []
+  },
   "sessionCwd": "",
   "agentPreset": "qq-chat",
   "workspaceTitle": "QQ 聊天",
@@ -341,7 +344,7 @@ export const CONFIG_DEFAULTS = {
       "feedbackSwap": true,
       "feedbackWindowMs": 120000,
       "feedbackCooldownMs": 90000,
-      "archiveDir": "E:\\tmp\\collected",
+      "archiveDir": "C:\\tmp\\collected",
       "archiveOverwrite": false,
       "sources": {
         "safebooru": {
@@ -362,6 +365,7 @@ export const CONFIG_DEFAULTS = {
         }
       },
       "recentSendBlockMs": 600000,
+      "reverseSearchApiKey": "",
       "proxy": ""
     },
     "githubShot": {

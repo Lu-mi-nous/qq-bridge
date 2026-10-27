@@ -11,6 +11,7 @@ import {
   createSessionGap,
   sessionGapFile
 } from '../src/session-gap.js';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -79,7 +80,7 @@ console.log('\n── 5. 接线 ──');
   const bridge = fs.readFileSync(new URL('../src/bridge.js', import.meta.url), 'utf8');
   const wake = fs.readFileSync(new URL('../src/pipeline/wake.js', import.meta.url), 'utf8');
   const events = fs.readFileSync(new URL('../src/pipeline/dsh-events.js', import.meta.url), 'utf8');
-  const html = fs.readFileSync(new URL('../public/console.html', import.meta.url), 'utf8');
+  const html = readConsoleUiSource({ unescape: true });
   check('回合结束记录处理时间', /recordSessionProcessed\?\.\(key\)/.test(events)
     && /recordSessionProcessed: \(key\) => sessionGap\.markProcessed\(key\)/.test(bridge));
   check('唤醒注入断层背景', /deps\.buildGapNotice/.test(wake) && /lastGapChars/.test(wake));

@@ -1,0 +1,15 @@
+{
+  "id": "stickers",
+  "kind": "plugin",
+  "pluginId": "stickers",
+  "title": "表情包（图库 / 挑选 / 收藏）",
+  "description": "表情库同步、按语气挑候选、群友收藏；与图片插件共用缓存目录策略。",
+  "order": 110,
+  "data": [{ "source": "/api/plugins/stickers/card", "as": "st" }],
+  "sections": [
+    { "type": "text", "label": "启用", "bind": "st.enabled", "map": { "true": "已启用", "false": "未启用" }, "fallback": "—" },
+    { "type": "text", "label": "提示词喂表情", "bind": "st.includeInPrompt", "map": { "true": "开", "false": "关" } },
+    { "type": "text", "label": "自动催图", "bind": "st.autoNudge", "map": { "true": "开", "false": "关" } },
+    { "type": "text", "label": "群友收藏", "bind": "st.collect", "map": { "true": "开", "false": "关" } }
+  ]
+}

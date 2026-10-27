@@ -1,12 +1,8 @@
 // test-vision-gateway.mjs — 直接在网关层测试模型看图（绕开 DSH）
 // 用法: node scripts/test-vision-gateway.mjs <图片路径> <提问> [模型ID ...]
 import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-const imgPath = process.argv[2] ?? path.join(ROOT, 'state', 'vision-number.png');
+const imgPath = process.argv[2] ?? 'C:/qq-bridge/state/vision-number.png';
 const ask = process.argv[3] ?? '读出图中的数字，只回答数字本身。';
 const models = process.argv.slice(4);
 if (models.length === 0) models.push('cn:glm-5.2', 'cn:glm-5.3-flash', 'cn:deepseek-v4.1-flash');

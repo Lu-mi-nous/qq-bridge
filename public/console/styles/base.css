@@ -1,0 +1,347 @@
+  /* 浅色主题（2026-10-13 用户要求）。
+     做法：把配色全部收敛到变量 + 少量语义变量（--surface / --surface-2 / --border / --shadow），
+     不再散落硬编码色值——否则改主题会漏掉一半（上一版就有 7 处 #343b49、7 处 #232833 写死）。*/
+  :root {
+    /* 2026-10-22 液态玻璃改版：配色统一换成 oklch（与 SnowLuma 控制台同一色域），
+       但**旧变量名全部保留**——下面几百处引用不用动，也不会出现两套令牌并存。*/
+    --bg: oklch(96.5% .008 240);          /* 页面底色：微蓝灰，不是纯白 */
+    --card: oklch(100% 0 0);
+    --card-border: oklch(89.5% .013 240);
+    --surface: oklch(97.6% .006 240);     /* 输入框/代码块/次级面 */
+    --surface-2: oklch(94.6% .012 240);   /* 按钮/tag 底色 */
+    --surface-3: oklch(96.2% .009 240);   /* 悬停 */
+    --text: oklch(20% .03 250);
+    --muted: oklch(48% .022 250);
+    --heading: oklch(29% .03 250);        /* 卡片标题/次级标题 */
+    --accent: oklch(52% .15 250);
+    --accent-border: oklch(62% .17 250);
+    --danger: oklch(52% .21 27);
+    --danger-border: oklch(62% .21 27);
+    --ok: oklch(52% .12 160);
+    --err: oklch(52% .21 27);
+    --pill-blue-bg: oklch(94% .04 250);
+    --pill-blue-fg: oklch(42% .16 250);
+    --pill-green-bg: oklch(95% .05 160);
+    --pill-green-fg: oklch(40% .12 160);
+    --pill-red-bg: oklch(95% .04 20);
+    --pill-red-fg: oklch(45% .19 20);
+    --shadow: 0 1px 2px oklch(20% .03 250 / .04), 0 4px 14px oklch(20% .03 250 / .05);
+    --dashed: oklch(80% .02 240);         /* 虚线边框（placeholder / planned） */
+    --overlay: oklch(20% .03 250 / .38);
+
+    /* ── 液态玻璃令牌（摘要卡 / 弹窗共用）── */
+    --glass-bg: oklch(100% 0 0 / .62);
+    --glass-border: oklch(100% 0 0 / .55);
+    --glass-blur-card: 12px;              /* 23 张同屏，别用 20px（合成器扛不住） */
+    --glass-blur-modal: 20px;             /* 同时只有一个弹窗 */
+    --radius-card: 18px;
+    --radius-modal: 22px;
+    --shadow-card:
+      inset 0 1px 0 oklch(100% 0 0 / .8),
+      inset 0 -1px 0 oklch(20% .03 250 / .04),
+      0 1px 2px oklch(20% .03 250 / .05),
+      0 12px 32px -22px oklch(20% .03 250 / .28);
+    --primary: oklch(68.5% .155 230);     /* SnowLuma 同款主色 */
+    --sidebar-w: 260px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 0;
+  }
+  .app-layout { display: flex; align-items: flex-start; min-height: 100vh; }
+  .app-main { flex: 1 1 auto; min-width: 0; padding: 24px; }
+
+  /* ── 左侧分类导航（参考 SnowLuma 控制台的浅色侧栏）── */
+  .console-sidebar {
+    position: sticky; top: 16px; z-index: 960;
+    display: flex; flex-direction: column; gap: 12px;
+    flex: 0 0 var(--sidebar-w); width: var(--sidebar-w);
+    height: calc(100vh - 32px); margin: 16px 0 16px 16px; padding: 16px 12px;
+    background: oklch(100% 0 0 / .58);
+    border: 1px solid var(--card-border); border-radius: 18px;
+    box-shadow: var(--shadow-card);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  }
+  .sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 2px 6px 13px; border-bottom: 1px solid var(--card-border); }
+  .icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }
+  .sidebar-logo {
+    width: 38px; height: 38px; border-radius: 12px; flex: none;
+    display: block; padding: 0; overflow: hidden;
+    box-shadow: 0 5px 14px -6px rgba(40, 83, 170, .55);
+  }
+  .sidebar-brand-text b { display: block; font-size: 14.5px; color: var(--heading); letter-spacing: .01em; }
+  .sidebar-brand-text span { display: block; margin-top: 1px; font-size: 11.5px; color: var(--muted); }
+  /* 顶部留出 hover 位移与阴影的空间：否则第一个按钮（总览）的上沿会被滚动容器裁掉。 */
+  .sidebar-nav { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px 0 6px; }
+  .side-label { padding: 13px 9px 5px; font-size: 10.5px; letter-spacing: .14em; color: var(--text-dim); text-transform: uppercase; }
+  .side-item {
+    position: relative; z-index: 0;
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 9px 10px; border: 1px solid oklch(100% 0 0 / .44); border-radius: 10px;
+    background: oklch(100% 0 0 / .52);
+    box-shadow: inset 0 1px 0 oklch(100% 0 0 / .72), 0 1px 2px oklch(20% .03 250 / .06);
+    color: var(--text); font: inherit; font-size: 13.5px; text-align: left;
+    cursor: pointer;
+    transition: background var(--anim-dur) var(--anim-ease),
+                border-color var(--anim-dur) var(--anim-ease),
+                box-shadow var(--anim-dur) var(--anim-ease),
+                transform var(--anim-dur) var(--anim-ease),
+                color var(--anim-dur) var(--anim-ease);
+  }
+  .side-item:hover {
+    z-index: 3;
+    background: oklch(100% 0 0 / .82);
+    border-color: oklch(80% .045 235 / .9);
+    box-shadow: 0 8px 18px -10px oklch(20% .03 250 / .5), inset 0 1px 0 oklch(100% 0 0 / .85);
+    transform: translateY(-1px);
+  }
+  .side-item:focus-visible { z-index: 5; outline: 2px solid var(--accent); outline-offset: 2px; }
+  .side-item.active {
+    z-index: 4;
+    color: var(--heading); font-weight: 600;
+    background: oklch(93.2% .032 230);
+    border-color: oklch(80% .055 230 / .48);
+    box-shadow: inset 0 0 0 1px oklch(96% .02 230 / .9), 0 4px 14px -10px oklch(40% .08 230 / .45);
+  }
+  /* 点击反馈：只做垂直下沉 + 内阴影。
+     不要用 scale：按压缩小、松手回弹时左右边缘会同时向外“弹回”，
+     在侧栏里看起来就是按钮右缘突然贴到滚动条/被相邻按钮盖住（用户反馈的遮挡问题）。 */
+  .side-item:active {
+    z-index: 6;
+    transform: translateY(1px);
+    background: oklch(90.5% .035 230);
+    border-color: oklch(75% .055 230 / .7);
+    box-shadow: inset 0 2px 5px oklch(30% .04 240 / .18);
+    transition-duration: .08s;
+  }
+  .side-ico { width: 18px; height: 18px; flex: none; display: block; color: oklch(48% .045 235); }
+  .side-item.active .side-ico { color: var(--accent); }
+  .side-count { margin-left: auto; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .sidebar-bottom { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--card-border); }
+  .sidebar-bottom .side-item { margin-top: 2px; }
+  .sidebar-foot { display: flex; justify-content: space-between; gap: 8px; padding: 10px 8px 1px; border-top: 1px solid var(--card-border); font-size: 11px; color: var(--muted); }
+
+  .view-head[hidden] { display: none !important; }
+  .view-head { max-width: 1440px; margin: 0 auto 14px; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+  .view-title { margin: 0; font-size: 18px; color: var(--heading); }
+  .view-desc { margin-top: 3px; font-size: 12px; color: var(--muted); }
+
+  /* ── 关于页 ── */
+  .about-view { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  .about-view[hidden] { display: none !important; }
+  .about-view .about-hero { text-align: center; padding: 38px 24px 30px; }
+  .about-logo {
+    width: 70px; height: 70px; margin: 0 auto 14px; border-radius: 20px;
+    display: block; padding: 0; overflow: hidden;
+    box-shadow: 0 12px 28px -12px rgba(40, 83, 170, .6);
+  }
+  .about-hero h2 { display: block; margin: 0; padding: 0; border: 0; font-size: 26px; justify-content: center; }
+  .about-badge { display: inline-block; margin-left: 8px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; vertical-align: 4px; color: var(--pill-blue-fg); background: var(--pill-blue-bg); }
+  .about-tagline { margin-top: 6px; font-size: 13px; color: var(--muted); }
+  .about-desc { max-width: 680px; margin: 12px auto 0; font-size: 13px; line-height: 1.75; color: var(--text); }
+  .about-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 18px; }
+  .about-chips span { padding: 5px 11px; border: 1px solid var(--card-border); border-radius: 999px; background: var(--surface); font-size: 11.5px; color: var(--muted); }
+  .about-chips b { color: var(--heading); font-weight: 600; }
+  .about-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  /* 插件卡片插槽（R4-5）：插件只给文本元数据，外观统一由控制台决定。 */
+  .plugin-card-list { display: grid; gap: 10px; }
+  .plugin-card-item { padding: 12px 14px; border: 1px solid var(--card-border); border-radius: 10px; background: var(--surface); }
+  .plugin-card-item b { display: block; margin-bottom: 4px; font-size: 13px; color: var(--heading); }
+  .plugin-card-item small { float: right; font-size: 11px; font-weight: 400; color: var(--muted); }
+  .plugin-card-item span { font-size: 12px; line-height: 1.65; color: var(--muted); }
+  .about-view .about-card { padding: 20px; }
+  .about-card h3, .about-features h3 { margin: 0 0 10px; font-size: 14px; color: var(--heading); }
+  .about-card p { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--muted); }
+  .about-kv { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--card-border); font-size: 12.5px; }
+  .about-kv:last-child { border-bottom: 0; }
+  .about-kv span { color: var(--muted); }
+  .about-kv b { color: var(--heading); font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+  .about-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-top: 10px; padding: 8px 13px; border-radius: 9px;
+    font-size: 12px; text-decoration: none; color: var(--accent);
+    background: color-mix(in oklch, var(--primary) 14%, white);
+    border: 1px solid color-mix(in oklch, var(--primary) 30%, var(--card-border));
+    box-shadow: inset 0 1px 0 oklch(100% 0 0 / .75);
+    transition: transform var(--anim-dur) var(--anim-ease),
+                background var(--anim-dur) var(--anim-ease),
+                border-color var(--anim-dur) var(--anim-ease),
+                box-shadow var(--anim-dur) var(--anim-ease),
+                color var(--anim-dur) var(--anim-ease);
+  }
+  .about-link:hover {
+    transform: translateY(-2px);
+    background: color-mix(in oklch, var(--primary) 23%, white);
+    border-color: color-mix(in oklch, var(--primary) 50%, var(--card-border));
+    box-shadow: 0 8px 18px -12px oklch(30% .06 240 / .55), inset 0 1px 0 oklch(100% 0 0 / .85);
+  }
+  .about-link:active {
+    transform: translateY(0) scale(.98);
+    background: color-mix(in oklch, var(--primary) 30%, white);
+    box-shadow: inset 0 2px 5px oklch(30% .06 240 / .16);
+  }
+  .about-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* 关于页与摘要卡一致的入场/悬停动画（错峰由 --i 控制） */
+  .about-view .about-anim {
+    opacity: 0; transform: translateY(10px);
+    animation: cardEnter var(--anim-dur) var(--anim-ease) forwards;
+    animation-delay: calc(var(--i, 0) * 70ms);
+    transition: transform var(--anim-dur) var(--anim-ease),
+                box-shadow var(--anim-dur) var(--anim-ease),
+                border-color var(--anim-dur) var(--anim-ease);
+  }
+  .about-view .about-anim:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklch, var(--primary) 32%, var(--card-border));
+    box-shadow: var(--shadow-card);
+  }
+  .about-view .card { background: var(--glass-bg); backdrop-filter: blur(var(--glass-blur-card)); -webkit-backdrop-filter: blur(var(--glass-blur-card)); border-color: var(--glass-border); }
+  .about-features { padding: 20px; }
+  .about-feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-top: 12px; }
+  .about-feature { padding: 13px 14px; border: 1px solid var(--card-border); border-radius: 12px; background: var(--surface); }
+  .about-feature b { display: block; font-size: 12.5px; color: var(--heading); }
+  .about-feature span { display: block; margin-top: 4px; font-size: 11.5px; line-height: 1.6; color: var(--muted); }
+  .about-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 12px; font-size: 11.5px; }
+  .about-flow b { padding: 5px 9px; border-radius: 8px; background: var(--surface); border: 1px solid var(--card-border); color: var(--heading); font-weight: 600; }
+  .about-flow i { color: var(--muted); font-style: normal; }
+  .about-actions { display: flex; justify-content: center; margin-top: 14px; }
+  .about-stack { padding: 20px; }
+  .about-stack h3 { margin: 0 0 10px; font-size: 14px; color: var(--heading); }
+  .about-stack p { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--muted); }
+  .about-link-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 16px; }
+  .about-link-grid .about-link { width: 100%; margin-top: 0; padding: 10px 12px; justify-content: flex-start; border-radius: 10px; box-sizing: border-box; }
+  .about-link-ico { width: 14px; height: 14px; flex: none; opacity: .9; }
+  .about-link-name { font-weight: 600; }
+  .about-link small { margin-left: auto; font-size: 10.5px; font-weight: 500; opacity: .75; white-space: nowrap; }
+  @media (prefers-reduced-motion: reduce) {
+    .about-view .about-anim { animation: none !important; opacity: 1 !important; transform: none !important; }
+    .about-view .about-anim:hover { transform: none; }
+    .about-link { transition: none !important; }
+    .about-link:hover,
+    .about-link:active { transform: none; }
+  }
+  .topbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    max-width: 1440px;
+    margin: 0 auto 20px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .status-badge {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 13px;
+    color: var(--muted);
+    max-width: 720px;
+    white-space: normal;
+    word-break: break-word;
+  }
+  .grid {
+    display: grid;
+    /* 6 列基础网格（2026-10-21 改）。
+       原来是 repeat(auto-fit, minmax(340px, 1fr))，在常见窗口宽度下恰好是 3 列。
+       但 3 列放不下「2 张 + 2 张」这种四卡分组（02/03/04/05 都是 520px 固定高，
+       原本 02/03/04 占一行、05 孤零零落在下一行，右侧空出两列——用户反馈的
+       「中间有空白」正是这一组的问题）。3 也除不尽 4，怎么调都会有落单。
+       换成 6 列后：普通卡跨 2 列（= 原 3 列效果），需要成对的卡跨 3 列（= 2×2）。
+       6 同时能被 2 和 3 整除，所以 2 列组、3 列组都能排满，不再有落单。 */
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 16px;
+    max-width: 1440px;
+    margin: 0 auto;
+  }
+  /* 普通卡片：跨 2 列（6 列里的 1/3，与改造前的三列布局完全一致） */
+  .grid > .card { grid-column: span 2; }
+  /* 需要两两成对的卡片：跨 3 列（6 列的一半 → 2×2 布局） */
+  .grid > .card.card-half { grid-column: span 3; }
+  /* 整行卡片：必须写成 `.grid > .card.span-all`。
+     只用 `.span-all`（特异度 0,1,0）会被上面 `.grid > .card`（0,2,0）压过去——
+     实测踩到了：06/07/08 三张整行卡退化成 440px 窄卡挤在同一行，
+     07 高 4601px 把 06 和 08 一起撑到 7616px 的空白。
+     提高特异度到 (0,3,0) 才稳。 */
+  .grid > .card.span-all { grid-column: 1 / -1; }
+  /* 宽卡：跨 4 列（= 原三列布局的 2/3），旁边还能放一张窄卡 */
+  .grid > .card.card-2col { grid-column: span 4; }
+  /* 窄屏兜底：窗口容不下 6 列时退成一列一个 */
+  @media (max-width: 900px) {
+    .grid > .card, .grid > .card.card-half,
+    .grid > .card.card-2col, .grid > .card.span-all { grid-column: 1 / -1; }
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 18px;
+    min-width: 0;
+  }
+  .card h2 {
+    font-size: 14px;
+    margin: 0 0 12px;
+    color: var(--heading);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--card-border);
+    padding-bottom: 10px;
+  }
+  /* 可收起卡片：标题右侧按钮，把内容区隐藏。
+     标题用 margin-left:auto 把按钮推到最右，与标题文字分开。 */
+  .collapse-btn { margin-left: auto; padding: 2px 10px; font-size: 12px; }
+  /* 可展开卡片（会话消息回看）：默认收起，展开时高度 + 透明度过渡。
+     注意：**动画只作用在内层 .expandable-inner**，不要把 grid 加到 .card 上——
+     那会把 h2/row 都变成 grid item，间距与对齐全变样（实测过）。
+     内层用 grid 0fr↔1fr，内容高度未知也能动画。 */
+  .expandable-inner {
+    display: grid;
+    grid-template-rows: 1fr;
+    opacity: 1;
+    transition: grid-template-rows var(--anim-dur) var(--anim-ease),
+                opacity calc(var(--anim-dur) * .85) ease;
+  }
+  .expandable-inner > * { overflow: hidden; min-height: 0; }
+  .expandable-card.card-hidden .expandable-inner {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  /* 收起时连同内边距/边框一起收掉，避免留下一块空白卡片 */
+  .expandable-card {
+    transition: padding var(--anim-dur) var(--anim-ease),
+                border-width var(--anim-dur) var(--anim-ease),
+                margin var(--anim-dur) var(--anim-ease);
+  }
+  /* 完全收起：高度归零 + 溢出裁剪，避免残留 padding/border 占位（实测会剩 ~78px 空壳） */
+  .expandable-card.card-hidden {
+    max-height: 0;
+    padding: 0;
+    border-width: 0;
+    margin: 0;
+    overflow: hidden;
+  }
+  /* 关键：网格里的卡片默认 align-self:stretch，会被同行其它卡撑到 520px，
+     这样即使内容收起到 0 高度，外框仍占一整行（实测就是这个原因）。
+     改成 start 让它按自身内容高度走，收起才能真正塌陷。 */
+  .expandable-card { align-self: start; }
+
+  /* 会话消息回看（02b）默认**完全退出网格**。
+     2026-10-21 修（用户反馈「02 和 03 卡片中间有空白」）：
+     这个卡片在网格里是 02 与 03 之间的第三个 item。收起时高度已归零，
+     但它**仍占着一个 440px 的网格轨道**，于是 02 和 03 被它隔开，中间空出整整一列
+     （实测 02 在 x=24、02b 在 x=480 且 h=0、03 在 x=936）。
+     试过 grid-column: 1/-1：那样它变成独占一整行，虽然 02 与 03 能相邻了，
+     但收起时仍留下一条 0 高度 + 16px gap 的空行，且把 03 挤到下一行——更糟。
+     正确做法是让它**不参与布局**：display:none。展开时恢复 display:block。
+     动画不受影响：收起是「先播 0fr 过渡再由 JS 加 .card-hidden」，
+     展开是「先移除隐藏类再由内层 0fr→1fr 过渡」，两边都仍有过渡。 */
+  #msgViewerCard.card-hidden { display: none; }
+  #msgViewerCard { grid-column: 1 / -1; }
+

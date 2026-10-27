@@ -14,7 +14,7 @@ param(
   [switch]$IncludeDsh
 )
 
-$BridgeDir     = Split-Path -Parent $PSScriptRoot
+$BridgeDir     = 'C:\qq-bridge'
 $BridgePort    = 3100
 $SnowLumaPort  = 5099
 $OneBotWsPort  = 3001

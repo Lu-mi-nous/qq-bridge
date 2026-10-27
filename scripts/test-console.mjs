@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -19,6 +20,9 @@ function readConsoleToken() {
   }
 }
 const TOKEN = readConsoleToken();
+const CARD_META = fs.readFileSync(path.join(ROOT, 'src', 'console', 'core-cards.js'), 'utf8');
+const appDir = path.join(ROOT, 'public', 'console', 'app');
+const UI = readConsoleUiSource() + '\n' + fs.readdirSync(path.join(ROOT, 'public', 'console', 'cards')).filter((f) => f.endsWith('.js')).map((f) => fs.readFileSync(path.join(ROOT, 'public', 'console', 'cards', f), 'utf8').replace(/\\"/g, '"')).join('\n') + '\n' + fs.readdirSync(appDir).filter((f) => f.endsWith('.js')).map((f) => fs.readFileSync(path.join(appDir, f), 'utf8').replace(/\\"/g, '"')).join('\n');
 const authHeaders = TOKEN ? { 'x-console-token': TOKEN } : {};
 const api = async (path, method, body) => {
   const headers = { ...authHeaders, ...(body ? { 'content-type': 'application/json' } : {}) };
@@ -34,7 +38,7 @@ const ok = (name, cond, extra = '') => {
 // 1. 页面
 const page = await fetch(BASE + '/', { headers: authHeaders });
 const html = await page.text();
-ok('页面加载', page.status === 200 && html.includes('白名单 / 管理员') && html.includes('人格（角色扮演）') && html.includes('测试发送'), `长度 ${html.length}`);
+ok('页面加载', page.status === 200 && CARD_META.includes('白名单 / 管理员') && CARD_META.includes('人格（角色扮演）') && CARD_META.includes('测试发送'), `长度 ${html.length}`);
 
 // 2. 角色列表
 let r = await api('/api/roles');
@@ -88,10 +92,10 @@ ok('会话映射', Array.isArray(r.body.sessions), `共 ${r.body.sessions.length
 // 断言：① 控制台页面有该面板；② 每个会话都能读出消息；③ 能读到机器人自己发的。
 {
   const page = await (await fetch(BASE + '/?token=' + encodeURIComponent(TOKEN), { headers: authHeaders })).text();
-  ok('控制台含消息回看面板', page.includes('id="msgViewerCard"'), '');
-  ok('控制台含查看消息入口', page.includes('data-view-key'), '');
-  ok('控制台含消息读取逻辑', page.includes('async function loadMessages'), '');
-  ok('机器人消息有独立样式（便于分辨）', page.includes('.msgrow.mine'), '');
+  ok('控制台含消息回看面板', UI.includes('id="msgViewerCard"'), '');
+  ok('控制台含查看消息入口', UI.includes('data-view-key'), '');
+  ok('控制台含消息读取逻辑', UI.includes('async function loadMessages'), '');
+  ok('机器人消息有独立样式（便于分辨）', UI.includes('.msgrow.mine'), '');
 
   const sessions = r.body.sessions || [];
   if (sessions.length) {
@@ -122,20 +126,20 @@ ok('会话映射', Array.isArray(r.body.sessions), `共 ${r.body.sessions.length
 // 后来按用户要求改成内嵌框，与活动日志那种框一致）。
 {
   const page = await (await fetch(BASE + '/?token=' + encodeURIComponent(TOKEN), { headers: authHeaders })).text();
-  ok('控制台含人格卡内容框', page.includes('id="rolePreviewBody"'), '');
-  ok('内容框带标题条（显示角色名与体积）', page.includes('id="rolePreviewMeta"'), '');
-  ok('控制台含默认人格下拉', page.includes('id="roleDefaultSelect"'), '');
-  ok('控制台含每群人格列表', page.includes('id="roleGroupList"'), '');
-  ok('控制台含群筛选输入', page.includes('id="roleGroupFilter"'), '');
-  ok('人格卡只渲染在当前群列表的群', page.includes('x.inGroupList !== false'), '');
-  ok('上下文卡含当前/已离群分组', page.includes('ctx-section-title'), '');
-  ok('上下文卡含删除会话按钮', page.includes('data-ctx-delete'), '');
-  ok('控制台含本地表情缓存读取开关', page.includes('id="v2StickerReadLocalCache"'), '');
-  ok('控制台含同步收藏到本地按钮', page.includes('id="v2StickerSyncLocal"'), '');
-  ok('框体样式存在（md-panel）', page.includes('.md-panel'), '');
-  ok('控制台含 Markdown 渲染函数', page.includes('function renderMd'), '');
-  ok('渲染结果有样式（不是裸露标签）', page.includes('.md-body'), '');
-  ok('不再有独立的 05b 卡片', !page.includes('05b'), '');
+  ok('控制台含人格卡内容框', UI.includes('id="rolePreviewBody"'), '');
+  ok('内容框带标题条（显示角色名与体积）', UI.includes('id="rolePreviewMeta"'), '');
+  ok('控制台含默认人格下拉', UI.includes('id="roleDefaultSelect"'), '');
+  ok('控制台含每群人格列表', UI.includes('id="roleGroupList"'), '');
+  ok('控制台含群筛选输入', UI.includes('id="roleGroupFilter"'), '');
+  ok('人格卡只渲染在当前群列表的群', UI.includes('x.inGroupList !== false'), '');
+  ok('上下文卡含当前/已离群分组', UI.includes('ctx-section-title'), '');
+  ok('上下文卡含删除会话按钮', UI.includes('data-ctx-delete'), '');
+  ok('控制台含本地表情缓存读取开关', UI.includes('id="v2StickerReadLocalCache"'), '');
+  ok('控制台含同步收藏到本地按钮', UI.includes('id="v2StickerSyncLocal"'), '');
+  ok('框体样式存在（md-panel）', UI.includes('.md-panel'), '');
+  ok('控制台含 Markdown 渲染函数', UI.includes('function renderMd'), '');
+  ok('渲染结果有样式（不是裸露标签）', UI.includes('.md-body'), '');
+  ok('不再有独立的 05b 卡片', !UI.includes('05b'), '');
 
   // 端点：正常读取
   const roles = (await api('/api/roles')).body.roles || [];

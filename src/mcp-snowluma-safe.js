@@ -45,7 +45,7 @@ const cfg = loadConfig();
 function sovitsAvailable() {
   try {
     const c = cfg.socialV2?.tts ?? {};
-    const dir = String(c.dir || 'E:\\Downloads\\GPT-SoVITS');
+    const dir = String(c.dir || 'C:\\GPT-SoVITS');
     const p = (rel) => (path.isAbsolute(rel) ? rel : path.join(dir, rel));
     const need = [
       p(c.gptModel || 'GPT_SoVITS/dania-e15.ckpt'),
@@ -189,7 +189,7 @@ async function authorizeRead(key, token) {
   await agentApi('/api/authorize/read', { method: 'POST', body: JSON.stringify({ key, token: token || undefined }) });
 }
 
-const server = new McpServer({ name: 'snowluma-safe', version: '0.5.0' });
+const server = new McpServer({ name: 'snowluma-safe', version: '0.6.0' });
 
 server.tool(
   'qq_status',

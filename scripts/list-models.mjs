@@ -19,7 +19,7 @@ import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 
 const GATEWAY = 'http://127.0.0.1:7863';
-const BRIDGE_DIR = 'E:\\Downloads\\qq-bridge-main';
+const BRIDGE_DIR = 'C:\\qq-bridge';
 const CONFIG = path.join(BRIDGE_DIR, 'config.json');
 const SWITCH_SCRIPT = path.join(BRIDGE_DIR, 'scripts', 'switch-realm-model.mjs');
 const NODE_EXE = 'C:\\Program Files\\nodejs\\node.exe';

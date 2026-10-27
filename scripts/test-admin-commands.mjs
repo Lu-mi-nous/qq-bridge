@@ -125,7 +125,7 @@ console.log('── 1. 命令识别 ──');
   }
   const yes = ['/status', '/reset', '/new', '/silent', '/quiet', '/active', '/speak',
     '/role', '/role 阿盐', '/role off', '/recall', '/recall 3', '/撤回', '/撤回 2',
-    '/wl', '/wl add 100002004', '/wl del 100002004', '/白名单',
+    '/wl', '/wl add 1000000001', '/wl del 1000000001', '/白名单',
     '/yes', '/yes 1', '/no 2', '/pending', '/tf', '/tf off group:1'];
   const no = ['/model', '/help', '/compact', '普通消息', '', '/roleplay', '/recallx', '/status extra',
     'status', '/wlsomething', '/白名单列表'];
@@ -152,10 +152,13 @@ console.log('\n── 3. 主命令执行 ──');
   const h = makeHarness();
   const cmds = h.create();
 
-  check('非管理员任何 / 命令都被拦下', await cmds.handleAdminCommand({ ...CTX, plainContent: '/status', isOwner: false }) === true);
+  check('非管理员已知命令被拦下', await cmds.handleAdminCommand({ ...CTX, plainContent: '/status', isOwner: false }) === true);
   check('非管理员收到明确提示', h.lastText() === '管理命令仅管理员可用。');
+  check('非管理员未知 / 命令不消费（交给 DSH）', await cmds.handleAdminCommand({ ...CTX, plainContent: '/model', isOwner: false }) === false);
+  check('非管理员普通 / 文本不回复', await cmds.handleAdminCommand({ ...CTX, plainContent: '/今天天气不错', isOwner: false }) === false);
+  check('非管理员路径样文本不回复', await cmds.handleAdminCommand({ ...CTX, plainContent: '/usr/local/bin', isOwner: false }) === false);
   check('未知 / 命令交给 DSH（不消费）', await cmds.handleAdminCommand({ ...CTX, plainContent: '/model' }) === false);
-  check('未知命令不回复', h.sent.length === 1);
+  check('非管理员未知命令没有产生回复', h.sent.length === 1);
 
   check('/status 被消费', await cmds.handleAdminCommand({ ...CTX, plainContent: '/status' }) === true);
   check('/status 回复包含会话/白名单/角色/模式',

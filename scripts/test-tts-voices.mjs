@@ -21,6 +21,7 @@ import {
   VOICES_MANIFEST_REL
 } from '../src/tts-voices.js';
 import { readConsoleSource } from './lib/console-src.mjs';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -158,7 +159,7 @@ console.log('\n── 6. 接线 ──');
 
   const qqSend = fs.readFileSync(new URL('../src/pipeline/qq-send.js', import.meta.url), 'utf8');
   const consoleServer = readConsoleSource();
-  const html = fs.readFileSync(new URL('../public/console.html', import.meta.url), 'utf8');
+  const html = readConsoleUiSource({ unescape: true });
   check('tts.js 引入音色模块', /from '\.\/tts-voices\.js'/.test(tts) && /pickVoiceRef/.test(tts));
   check('speak 接受 mood/refId', /async speak\(text, callOpts = \{\}\)/.test(tts) && /mood: callOpts\.mood/.test(tts));
   check('请求里带选中的参考音频/台词', /ref_audio_path: useRef\.audio/.test(tts) && /prompt_text: useRef\.text/.test(tts));

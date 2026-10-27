@@ -2,7 +2,7 @@
 
 > 配图：[`docs/feature-comparison.png`](feature-comparison.png)
 
-**基线说明**：基线取自上上游 `main` 分支的发布包（MIT），与 DSH 0.1.2-alpha.1 协议适配分支血缘不同。
+**基线说明**：原版取自 `C:\qq-bridge.zip` 解包结果（原版 README 与工作副本逐字节一致，属同一分支），不是 `qq-bridge-0.1.2-alpha.1`——后者是 DSH 0.1.2-alpha.1 协议适配分支，血缘不同。
 
 ## 规模变化
 

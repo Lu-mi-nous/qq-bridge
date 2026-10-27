@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { TOOL_FLAGS, toolNamesOf, groupedToolFlags } from '../src/tool-flags.js';
 import { readConsoleSource } from './lib/console-src.mjs';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -33,7 +34,7 @@ const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf
 const consoleServer = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
 // R4：路由已迁到分域模块，端点断言要在「主文件 + 全部路由模块」里找。
 const consoleRoutes = readConsoleSource();
-const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+const html = readConsoleUiSource({ unescape: true });
 
 const actualTools = new Set([...mcp.matchAll(/server\.tool\(\s*\n?\s*'([^']+)'/g)].map((x) => x[1]));
 
@@ -126,7 +127,7 @@ console.log('\n── 5. 控制台不再硬编码 ──');
     `出现 ${(html.match(/data-v2-tool=/g) || []).length} 次`);
   check('改为从接口渲染', /async function renderToolFlags/.test(html) && /api\/socialV2\/tool-flags/.test(html));
   check('有容器', /id="tfGroups"/.test(html));
-  check('09 工具清单也从接口渲染', /async function refreshToolInventory/.test(html) && /id="tool09Groups"/.test(html));
+  check('09 工具清单也从接口渲染', /async function refresh\(\)/.test(html) && /tool09Groups/.test(html) && /api\/socialV2\/tool-flags/.test(html));
   check('09 不再写死旧的 9 个工具表', !/qq_get_group_history<\/td><td>群历史/.test(html));
 }
 

@@ -1,0 +1,16 @@
+{
+  "id": "media-tools",
+  "kind": "plugin",
+  "pluginId": "media-tools",
+  "title": "媒体工具（截图 / 菜单 / 报表）",
+  "description": "GitHub 仓库截图、功能菜单图、Token 用量报表图；都依赖本机 Chrome/Edge。",
+  "order": 140,
+  "panel": "/api/plugins/media-tools/panel",
+  "data": [{ "source": "/api/plugins/media-tools/card", "as": "st" }],
+  "sections": [
+    { "type": "text", "label": "浏览器", "bind": "st.browser", "map": { "found": "可用", "missing": "未找到" }, "fallback": "—" },
+    { "type": "text", "label": "GitHub 截图", "bind": "st.githubShot", "map": { "true": "开", "false": "关" } },
+    { "type": "text", "label": "功能菜单", "bind": "st.featureMenu", "map": { "true": "开", "false": "关" } },
+    { "type": "text", "label": "Token 报表", "bind": "st.tokenReport", "map": { "true": "开", "false": "关" } }
+  ]
+}

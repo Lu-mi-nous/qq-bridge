@@ -21,6 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readConsoleSource } from './lib/console-src.mjs';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -32,7 +33,7 @@ const biliSrc = fs.readFileSync(path.join(root, 'plugins', 'bili', 'lib', 'bili.
 const browseSrc = fs.readFileSync(path.join(root, 'plugins', 'bili', 'lib', 'bili-browse.js'), 'utf8');
 const bridgeSrc = fs.readFileSync(path.join(root, 'src', 'pipeline/bili-runtime.js'), 'utf8');
 const consoleServerSrc = readConsoleSource();
-const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+const html = readConsoleUiSource({ unescape: true });
 const pySrc = fs.readFileSync(path.join(root, 'scripts', 'asr-server.py'), 'utf8');
 
 const { createAsrEngine, pickModelSpec, resolveModelSpec, KNOWN_MODEL_DIRS } = await import('../src/asr.js');
@@ -43,7 +44,12 @@ console.log('── 1. 模型复用（不重复下载 3GB）──');
 {
   check('内置本机已知模型目录', KNOWN_MODEL_DIRS.length > 0 && KNOWN_MODEL_DIRS[0].includes('large-v3'));
   const picked = pickModelSpec();
-  check('默认挑到本地目录（不是名字下载）', picked.kind === 'dir', `${picked.kind}: ${picked.value}`);
+  const hasLocalModel = KNOWN_MODEL_DIRS.some((d) => resolveModelSpec(d).kind === 'dir');
+  if (hasLocalModel) {
+    check('默认挑到本地目录（不是名字下载）', picked.kind === 'dir', `${picked.kind}: ${picked.value}`);
+  } else {
+    skipped('默认挑到本地目录', '本机没有已知 faster-whisper 模型');
+  }
 
   const largeDir = KNOWN_MODEL_DIRS[0];
   if (fs.existsSync(path.join(largeDir, 'model.bin'))) {
@@ -56,7 +62,11 @@ console.log('── 1. 模型复用（不重复下载 3GB）──');
   }
   check('不存在的目录判为 missing-dir', resolveModelSpec('Z:\\no\\such\\dir').kind === 'missing-dir');
   check('裸名字当 huggingface 模型名', resolveModelSpec('base').kind === 'name');
-  check('配置指向坏目录时回落到已知模型', pickModelSpec('Z:\\nope').kind === 'dir');
+  if (hasLocalModel) {
+    check('配置指向坏目录时回落到已知模型', pickModelSpec('Z:\\nope').kind === 'dir');
+  } else {
+    skipped('配置指向坏目录时回落到已知模型', '本机没有已知 faster-whisper 模型');
+  }
 }
 
 // ── 2. 常驻进程设计 ──
@@ -123,7 +133,7 @@ console.log('\n── 4. 提示词 ──');
 // ── 5. 控制台 ──
 console.log('\n── 5. 控制台 ──');
 {
-  check('有声音内容区块', /id="biliAudio"/.test(html));
+  check('有声音内容区块', /biliAudio/.test(html));
   check('显示 B 站字幕可用性', /B 站字幕：/.test(html));
   check('显示本地语音识别状态', /本地语音识别：/.test(html));
   check('如实说明"模型只收文字和图片"', /模型只收文字和图片/.test(html));

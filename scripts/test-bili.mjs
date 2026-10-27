@@ -31,6 +31,7 @@ import {
   DEFAULT_CATEGORY_WEIGHTS
 } from '../plugins/bili/lib/bili-browse.js';
 import { readConsoleSource } from './lib/console-src.mjs';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -678,17 +679,17 @@ console.log('\n── 8. 接线 ──');
   check('配置：默认开启', b.enabled !== false);
 
   // ── 控制台可见（2026-10-19 用户要求「在控制台中能看到是不是在刷视频」）──
-  const consoleHtml = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
-  check('控制台有 B 站卡片', /id="biliCard"/.test(consoleHtml));
+  const consoleHtml = readConsoleUiSource({ unescape: true });
+  check('控制台有 B 站卡片', /biliStatusLine/.test(consoleHtml));
   check('卡片显示"正在刷"状态', /正在刷/.test(consoleHtml));
   check('卡片显示今日额度', /今日额度/.test(consoleHtml));
   check('卡片显示口味归纳', /口味/.test(consoleHtml));
   check('卡片显示最近看过', /最近看过/.test(consoleHtml));
-  check('卡片挂进轮询', /setInterval\([\s\S]{0,300}refreshBiliStatus/.test(consoleHtml));
-  check('首屏也调用一次', /loadConsoleAuthState\(\); refreshBiliStatus\(\)/.test(consoleHtml));
+  check('卡片挂进轮询', /setInterval\(\(\) => \{ if \(!document\.hidden\) void refresh\(\); \}, 5000\)/.test(consoleHtml));
+  check('首屏也调用一次', /await refresh\(\);/.test(consoleHtml));
 
   // ── 暂停/恢复自主刷（2026-10-20 用户要求「控制台加一个按钮暂停自主刷B站」）──
-  check('控制台有暂停按钮', /id="biliPause"/.test(consoleHtml));
+  check('控制台有暂停按钮', /biliPause/.test(consoleHtml));
   check('按钮文案跟着状态切换', /恢复自主刷/.test(consoleHtml) && /暂停自主刷/.test(consoleHtml));
   check('按钮调暂停端点', /api\/socialV2\/bili-pause/.test(consoleHtml));
   check('暂停后状态行显示"已暂停"', /⏸ 自主刷已暂停/.test(consoleHtml));

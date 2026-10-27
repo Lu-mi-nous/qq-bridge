@@ -7,11 +7,12 @@ export function createPluginRuntime({
   root,
   log = () => {},
   getConfig = () => ({}),
+  setConfig = null,
   services = {},
   dirs,
   only = null
 } = {}) {
-  const host = createPluginHost({ root, log, getConfig, services, dirs });
+  const host = createPluginHost({ root, log, getConfig, setConfig, services, dirs });
   let started = false;
 
   async function start() {

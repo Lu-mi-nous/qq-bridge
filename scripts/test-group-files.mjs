@@ -1,7 +1,7 @@
 // 回归测试：群文件只读分类。
 //
 // 背景（2026-10-15 用户要求「让机器人访问群文件并且整理一下，先做只读分类」）：
-// 实测群文件 API 可用（群 100002004 有 1161 个文件、6.98GB、跨 6 年）。
+// 实测群文件 API 可用（群 1000000001 有 1161 个文件、6.98GB、跨 6 年）。
 //
 // ⚠️ **只读是硬约束**，本测试最重要的一组断言就是"没有写操作"：
 // 实测 delete_group_file / upload_group_file / move_group_file 这些端点**确实存在且会真实执行**
@@ -140,18 +140,18 @@ console.log('\n── 5. 重名检测（只报告不清理）──');
 console.log('\n── 6. 搜索 ──');
 {
   const raw = [
-    { file_name: '某老师面谈准备.docx', file_size: 47 * 1024, upload_time: 1791972161, uploader_name: '群友C' },
+    { file_name: '陆一飞老师面谈准备.docx', file_size: 47 * 1024, upload_time: 1791972161, uploader_name: '群粥黑' },
     { file_name: '第五章习题解答.docx', file_size: 39 * 1024, upload_time: 1758900000, uploader_name: 'zch' },
-    { file_name: '大图.jpg', file_size: 60 * 1024 * 1024, upload_time: 1791900000, uploader_name: '群友C' },
+    { file_name: '大图.jpg', file_size: 60 * 1024 * 1024, upload_time: 1791900000, uploader_name: '群粥黑' },
   ];
   check('关键词命中', searchGroupFiles(raw, { keyword: '面谈' }).matched === 1);
   check('关键词部分匹配', searchGroupFiles(raw, { keyword: '老师' }).matched === 1);
   check('按扩展名', searchGroupFiles(raw, { ext: 'docx' }).matched === 2);
   check('ext 带点也能匹配', searchGroupFiles(raw, { ext: '.jpg' }).matched === 1);
   check('按分类', searchGroupFiles(raw, { category: '图片' }).matched === 1);
-  check('按上传者（部分匹配）', searchGroupFiles(raw, { uploader: '群友C' }).matched === 2);
+  check('按上传者（部分匹配）', searchGroupFiles(raw, { uploader: '群粥黑' }).matched === 2);
   check('按大小过滤', searchGroupFiles(raw, { minBytes: 10 * 1024 * 1024 }).matched === 1);
-  check('按时间倒序（新的在前）', searchGroupFiles(raw, {}).entries[0].name === '某老师面谈准备.docx',
+  check('按时间倒序（新的在前）', searchGroupFiles(raw, {}).entries[0].name === '陆一飞老师面谈准备.docx',
     `1791972161 比 1791900000 新，应排最前；实际 ${searchGroupFiles(raw, {}).entries[0].name}`);
   check('无匹配返回 0', searchGroupFiles(raw, { keyword: '不存在xyz' }).matched === 0);
   check('limit 生效', searchGroupFiles(raw, { limit: 2 }).entries.length === 2);

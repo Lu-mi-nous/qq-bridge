@@ -18,6 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readConsoleSource } from './lib/console-src.mjs';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -27,7 +28,7 @@ const pickSrc = fs.readFileSync(path.join(root, 'plugins', 'stickers', 'lib', 's
 
 const wakeSrc = fs.readFileSync(path.join(root, 'src', 'pipeline', 'wake.js'), 'utf8');
 const consoleServerSrc = readConsoleSource();
-const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+const html = readConsoleUiSource({ unescape: true });
 
 const { MOOD_RULES, moodOfSticker, moodOfText, pickStickerCandidates, buildStickerNudge } =
   await import('../plugins/stickers/lib/sticker-pick.js');

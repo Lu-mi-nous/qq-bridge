@@ -55,7 +55,7 @@ console.log('\n── 3. 回合 ID 与管理员判定 ──');
 
 {
   const now = Date.now();
-  const owner = '100002000';
+  const owner = '1000000000';
   check('最近一条是管理员', isOwnerTurn({ ownerQQ: owner, state: { lastRequesterId: owner, ownerSpokeAt: now }, now }) === true);
   check('管理员说完 47 秒后被别人覆盖仍通过',
     isOwnerTurn({ ownerQQ: owner, state: { lastRequesterId: 'x', ownerSpokeAt: now - 47_000 }, now }) === true);
@@ -111,8 +111,8 @@ console.log('\n── 6. 消息段转文本 ──');
     { type: 'record', data: {} },
     { type: 'video', data: {} },
     { type: 'file', data: { name: 'a.txt' } }
-  ], { resolveAtName: async () => '群友Y6' });
-  check('文本/@/表情/图片/语音/视频/文件', at === '你好@群友Y6[表情76][图片][语音][视频][文件a.txt]', at);
+  ], { resolveAtName: async () => '小明' });
+  check('文本/@/表情/图片/语音/视频/文件', at === '你好@小明[表情76][图片][语音][视频][文件a.txt]', at);
   check('字符串消息', await segmentsToText('  纯文本  ') === '纯文本');
   const reply = await segmentsToText([
     { type: 'reply', data: { id: 'm1' } },

@@ -13,6 +13,7 @@
 import * as bili from './lib/bili.js';
 import * as auth from './lib/bili-auth.js';
 import * as browse from './lib/bili-browse.js';
+import { createConfigItems } from './config-items.js';
 
 export function create(ctx) {
   ctx.console?.registerCard?.({
@@ -21,6 +22,7 @@ export function create(ctx) {
     description: '搜视频、看画面与字幕/ASR、潜水时自己刷；观看记忆跨群共享。',
     endpoint: '/api/plugins/bili/card'
   });
+  ctx.console?.registerConfigItems?.(createConfigItems(ctx));
   ctx.console?.registerRoute?.('/api/plugins/bili/card', (req, res, url, helpers) => {
     const cfg = ctx.config.get() || {};
     helpers.sendJson({

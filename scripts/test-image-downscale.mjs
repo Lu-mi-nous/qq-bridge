@@ -89,7 +89,7 @@ console.log('\n── 4. 真实问题图（决定性验证）──');
   } else {
     const zlib = await import('node:zlib');
     const buf = zlib.gunzipSync(fs.readFileSync(fx));
-    check('夹具是超大 JPEG（>3MB，尺寸等同手机原图）', buf.length > 3 * 1024 * 1024, `${(buf.length/1024/1024).toFixed(1)}MB`);
+    check('夹具是那张手机原图（>3MB）', buf.length > 3 * 1024 * 1024, `${(buf.length/1024/1024).toFixed(1)}MB`);
     check('夹具是 JPEG', buf[0] === 0xFF && buf[1] === 0xD8, '');
 
     const r = await downscaleIfLarge(buf, { mimeType: 'image/jpeg' });

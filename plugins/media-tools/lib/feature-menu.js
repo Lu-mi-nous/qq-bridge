@@ -88,7 +88,7 @@ export function featureMenuSections(config = null) {
       binDir: v2.upscale?.binDir || undefined
     }),
     images,
-    reverse: tool('reverseSearch') && config.imageReverseSearch?.enabled !== false && !!String(config.imageReverseSearch?.apiKey ?? '').trim(),
+    reverse: tool('reverseSearch') && config.imageReverseSearch?.enabled !== false && !!(String(config.socialV2?.images?.reverseSearchApiKey || config.imageReverseSearch?.apiKey || '').trim()),
     archive: images && tool('archiveImage'),
     swap: images && v2.images?.feedbackSwap !== false,
     search: config.webSearch?.enabled !== false,

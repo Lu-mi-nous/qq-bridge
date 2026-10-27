@@ -36,7 +36,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
 /** 默认的 GPT-SoVITS 安装位置（用户环境）。 */
-export const DEFAULT_SOVITS_DIR = 'E:\\Downloads\\GPT-SoVITS';
+export const DEFAULT_SOVITS_DIR = 'C:\\GPT-SoVITS';
 
 /**
  * 读 wav 头算时长（秒）。仅用于缓存命中时补时长。

@@ -19,7 +19,7 @@ const local = provs.providers.find((p) => p.provider === 'local');
 console.log('local provider displayName:', JSON.stringify(local?.displayName), '| active:', local?.active);
 
 // 2. 建测试会话
-const cwd = 'E:\\Downloads\\qq-bridge-main\\state\\local-provider-test';
+const cwd = 'C:\\qq-bridge\\state\\local-provider-test';
 const created = await call('session.create', { cwd });
 const sessionId = created.sessionId;
 console.log('测试会话:', sessionId);

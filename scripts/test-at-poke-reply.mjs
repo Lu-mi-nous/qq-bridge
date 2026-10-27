@@ -107,7 +107,7 @@ console.log('\n── 4. @ 本身的唤醒链路仍然完整 ──');{
   await events.turn(1);
   check('繁忙时会记录并在回合结束按优先级补发', events.get('scheduleWake')[0]?.[2] === 'atMention');
 
-  // 2026-10-23 群 100002005：anyMessage 放在最前面，把 owner 的 @ 记成
+  // 2026-10-23 群 1000000005：anyMessage 放在最前面，把 owner 的 @ 记成
   // anyMessage@seq7064，随后连续「唤醒频率超限，跳过」——@ 被自己的兜底规则饿死。
   const start = src.indexOf('function evaluateWakeTriggerV2');
   const fn = src.slice(start, start + 3200);

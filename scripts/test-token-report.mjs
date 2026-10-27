@@ -17,6 +17,7 @@ import path from 'node:path';
 import { buildTokenReport, prettyModelName, humanAge, summarizeTokenReport } from '../plugins/media-tools/lib/token-report.js';
 import { buildTokenReportHtml, escapeHtml } from '../plugins/media-tools/lib/token-report-html.js';
 import { readConsoleSource } from './lib/console-src.mjs';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -214,7 +215,7 @@ console.log('\n── 6. 接线 ──');
 
   const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
   const preset = fs.readFileSync(path.join(root, 'dsh', 'agent-presets', 'qq-chat-v2', 'agent.cordis.yml'), 'utf8');
-  const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+  const html = readConsoleUiSource({ unescape: true });
   const { TOOL_FLAGS, toolNamesOf } = await import('../src/tool-flags.js');
 
   check('MCP 注册了 qq_token_report', /server\.tool\(\s*\n?\s*'qq_token_report'/.test(mcp));

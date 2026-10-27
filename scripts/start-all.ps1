@@ -14,10 +14,10 @@ param(
 $ErrorActionPreference = 'Continue'
 
 # ── 路径配置（换目录只改这里）─────────────────────────────────────────────
-$SnowLumaDir  = if ($env:SNOWLUMA_DIR) { $env:SNOWLUMA_DIR } else { Join-Path $env:USERPROFILE 'SnowLuma' }
+$SnowLumaDir  = 'C:\SnowLuma'
 $SnowLumaExe  = Join-Path $SnowLumaDir 'node.exe'
 $SnowLumaMain = Join-Path $SnowLumaDir 'index.mjs'
-$BridgeDir    = Split-Path -Parent $PSScriptRoot
+$BridgeDir    = 'C:\qq-bridge'
 $NodeExe      = 'C:\Program Files\nodejs\node.exe'
 # DSH 由全局 npm 安装，用 .cmd 启动器（内部会挑 node）而不是硬编码 bin.js 路径
 $DshCmd       = Join-Path $env:APPDATA 'npm\dsh.cmd'

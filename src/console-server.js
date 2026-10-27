@@ -242,7 +242,7 @@ export function sanitizeDevLogText(text, { names = [], ids = [] } = {}) {
   s = s.replace(/\b(group|private):\d+\b/gi, '$1:…');
   s = s.replace(/((?:QQ|qq)\s*[:：]?\s*)\d{5,12}/g, '$1***');
   s = s.replace(/(群号?\s*[:：]?\s*)\d{5,12}/g, '$1***');
-  // 已知会话/管理员 QQ 的裸数字也要处理（日志里常有“例如 100002005”这种写法）。
+  // 已知会话/管理员 QQ 的裸数字也要处理（日志里常有“例如 1000000005”这种写法）。
   const knownIds = [...new Set((ids || []).map(String).filter((x) => /^\d{5,12}$/.test(x)))]
     .sort((a, b) => b.length - a.length);
   for (const id of knownIds) s = s.split(id).join('***');
@@ -481,6 +481,37 @@ export function createConsoleServer(deps) {
         req.on('error', () => fail(400, '请求体读取失败'));
         req.on('aborted', () => fail(400, '请求体读取中断'));
       });
+      // 控制台静态资源（C0）：/console/* 只服务 public/console/**，仅本机监听。
+      //
+      // 为什么放在鉴权之前：页面里的 <link>/<script src> 无法带 ?token=，
+      // 若对静态资源也要求令牌，页面样式和脚本会 401。这里只暴露**前端源码**
+      // （仓库里本就可见），不含任何配置/状态数据；数据接口仍然全部鉴权。
+      if (req.method === 'GET' && url.pathname.startsWith('/console/')) {
+        let rel = '';
+        try { rel = decodeURIComponent(url.pathname.slice('/console/'.length)); } catch {}
+        const base = path.join(ROOT, 'public', 'console');
+        const file = path.resolve(base, rel);
+        const ext = path.extname(file).toLowerCase();
+        const MIME = {
+          '.js': 'text/javascript; charset=utf-8',
+          '.css': 'text/css; charset=utf-8',
+          '.json': 'application/json; charset=utf-8',
+          '.svg': 'image/svg+xml',
+          '.html': 'text/html; charset=utf-8'
+        };
+        if (!rel || !file.startsWith(base + path.sep) || !MIME[ext]) {
+          sendJson({ ok: false, error: 'not found' }, 404);
+          return;
+        }
+        try {
+          const buf = fs.readFileSync(file);
+          res.writeHead(200, { 'content-type': MIME[ext], 'cache-control': 'no-cache', ...SECURITY_HEADERS });
+          res.end(buf);
+        } catch {
+          sendJson({ ok: false, error: 'not found' }, 404);
+        }
+        return;
+      }
       // 控制台鉴权：所有请求需带 x-console-token 或 ?token=
       // 注意：MCP 工具（AI 侧）调用时**同时**带 x-console-token 和 x-agent-token
       // （见 mcp-snowluma-safe.js 的 agentApi：它会读 state/console-token 补上），

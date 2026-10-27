@@ -34,17 +34,17 @@ console.log('── 1. 命令解析 ──');
   check('/wl 单独 → list', p('/wl')?.action === 'list');
   check('/WL 大小写不敏感', p('/WL')?.action === 'list');
   check('/白名单 → list', p('/白名单')?.action === 'list');
-  check('/wl add 100002004 → add', p('/wl add 100002004')?.action === 'add'
-    && p('/wl add 100002004').ids[0] === 100002004);
-  check('/wl del 100002004 → del', p('/wl del 100002004')?.action === 'del');
-  check('/wl 移除 → del（中文）', p('/wl 移除 100002004')?.action === 'del');
+  check('/wl add 1000000001 → add', p('/wl add 1000000001')?.action === 'add'
+    && p('/wl add 1000000001').ids[0] === 1000000001);
+  check('/wl del 1000000001 → del', p('/wl del 1000000001')?.action === 'del');
+  check('/wl 移除 → del（中文）', p('/wl 移除 1000000001')?.action === 'del');
   check('/白名单 加 123456789 → add', p('/白名单 加 123456789')?.action === 'add');
   check('/wl add 多个（空格/逗号/顿号混用）', (() => {
-    const r = p('/wl add 100002004，100002031、100002032 100002005');
+    const r = p('/wl add 1000000001，1000000002、1000000003 1000000010');
     return r.ids.length === 4;
   })());
-  check('/wl 100002004（只给群号）按 add 处理', p('/wl 100002004')?.action === 'add');
-  check('/wl add 带 @ 残留不崩', p('/wl add @100002004')?.ids.length === 1 || p('/wl add @100002004')?.ids.length === 0);
+  check('/wl 1000000001（只给群号）按 add 处理', p('/wl 1000000001')?.action === 'add');
+  check('/wl add 带 @ 残留不崩', p('/wl add @1000000001')?.ids.length === 1 || p('/wl add @1000000001')?.ids.length === 0);
   check('/wl 乱写 → help（提示用法，不当成加群）', p('/wl xyz')?.action === 'help');
   check('/wl add 无参数 → ids 为空', p('/wl add')?.ids.length === 0);
 
@@ -64,26 +64,26 @@ console.log('\n── 2. 群号提取 ──');
   check('拒绝太短的（<5 位，防止手滑）', extractIdList('1234').length === 0);
   check('拒绝太长的（>12 位，超出 QQ 号范围）', extractIdList('1234567890123').length === 0);
   check('拒绝 0', extractIdList('0').length === 0);
-  check('正常群号通过（实测群 100002004）', extractIdList('100002004')[0] === 100002004);
+  check('正常群号通过（实测群 1000000001）', extractIdList('1000000001')[0] === 1000000001);
 }
 
 console.log('\n── 3. 增删语义（含幂等）──');
 {
-  const base = [100002004, 100002031];
+  const base = [1000000001, 1000000002];
 
-  const a = applyWhitelistChange(base, 'add', [100002032]);
-  check('加新群 → next 含三者', a.next.length === 3 && a.next.includes(100002032));
-  check('加新群 → added 记录', a.added.length === 1 && a.added[0] === 100002032);
+  const a = applyWhitelistChange(base, 'add', [1000000003]);
+  check('加新群 → next 含三者', a.next.length === 3 && a.next.includes(1000000003));
+  check('加新群 → added 记录', a.added.length === 1 && a.added[0] === 1000000003);
   check('加新群 → unchanged 为空', a.unchanged.length === 0);
 
-  const dup = applyWhitelistChange(base, 'add', [100002004]);
+  const dup = applyWhitelistChange(base, 'add', [1000000001]);
   check('重复加 → next 不变', dup.next.length === 2);
   check('重复加 → added 为空、unchanged 记录（命令要据此说"本来就在"）',
-    dup.added.length === 0 && dup.unchanged[0] === 100002004);
+    dup.added.length === 0 && dup.unchanged[0] === 1000000001);
 
-  const d = applyWhitelistChange(base, 'del', [100002031]);
+  const d = applyWhitelistChange(base, 'del', [1000000002]);
   check('删已有 → removed 记录', d.removed.length === 1 && d.next.length === 1);
-  check('删已有 → 结果不含被删项', !d.next.includes(100002031));
+  check('删已有 → 结果不含被删项', !d.next.includes(1000000002));
 
   const miss = applyWhitelistChange(base, 'del', [999999999]);
   check('删不存在 → 无变化、unchanged 记录', miss.removed.length === 0 && miss.unchanged[0] === 999999999);
@@ -94,10 +94,10 @@ console.log('\n── 3. 增删语义（含幂等）──');
   check('不改入参（纯函数）', base.length === 2, `实为 ${base.length}`);
 
   // 数字/字符串混写（config.json 里手写成字符串也要能用）
-  const mixed = applyWhitelistChange(['100002004'], 'add', [100002032]);
+  const mixed = applyWhitelistChange(['1000000001'], 'add', [1000000003]);
   check('字符串与数字混写不产生重复', mixed.next.length === 2, JSON.stringify(mixed.next));
 
-  const junk = applyWhitelistChange([null, 'abc', 100002004], 'add', [100002032]);
+  const junk = applyWhitelistChange([null, 'abc', 1000000001], 'add', [1000000003]);
   check('入参里的脏值被过滤', junk.next.length === 2, JSON.stringify(junk.next));
 }
 
@@ -141,7 +141,7 @@ console.log('\n── 6. 准入例外条件（必须窄）──');
 
 console.log('\n── 7. 命令识别与闸门同源 ──');
 {
-  const yes = ['/wl', '/WL', '/白名单', '/wl add 100002004', '/wl del 100002004', '/白名单 加 123456789'];
+  const yes = ['/wl', '/WL', '/白名单', '/wl add 1000000001', '/wl del 1000000001', '/白名单 加 123456789'];
   const no = ['/model', '白名单怎么改', '/wlsomething', '/白名单列表', '', null];
   for (const c of yes) check(`isWhitelistCommand 识别 ${c}`, isWhitelistCommand(c) === true);
   for (const c of no) check(`isWhitelistCommand 不误判 ${JSON.stringify(c)}`, isWhitelistCommand(c) === false);

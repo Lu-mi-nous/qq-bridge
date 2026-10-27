@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Token 报表预览</title>
+<style>
+  html,body{margin:0;padding:10px;background:transparent;font:12px/1.5 system-ui,sans-serif;color:#334}
+  .bar{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  button{font:inherit;padding:4px 10px;border-radius:7px;border:1px solid #c9d1e0;background:#fff;cursor:pointer}
+  img{max-width:100%;height:auto;display:block;border-radius:8px}
+  .err{color:#b33}
+</style>
+</head>
+<body>
+<div class="bar"><button type="button" id="refresh">刷新报表</button><span id="msg" class="err"></span></div>
+<img id="report" alt="Token 用量报表">
+<script>
+  const params = new URLSearchParams(location.search);
+  const token = params.get('token') || '';
+  const img = document.getElementById('report');
+  const msg = document.getElementById('msg');
+  function load() {
+    msg.textContent = '生成中…';
+    const q = new URLSearchParams({ force: '1', t: String(Date.now()) });
+    if (token) q.set('token', token);
+    img.onload = () => { msg.textContent = ''; reportHeight(); };
+    img.onerror = () => { msg.textContent = '报表生成失败（查看 state/bridge.log）'; reportHeight(); };
+    img.src = '/api/socialV2/token-report-image?' + q.toString();
+  }
+  function reportHeight() {
+    const h = Math.ceil(document.documentElement.scrollHeight);
+    parent.postMessage({ type: 'console-panel-height', height: h }, '*');
+  }
+  document.getElementById('refresh').addEventListener('click', load);
+  window.addEventListener('load', () => { load(); reportHeight(); });
+  window.addEventListener('resize', reportHeight);
+</script>
+</body>
+</html>

@@ -25,6 +25,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readConsoleSource } from './lib/console-src.mjs';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -32,7 +33,9 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const bridge = readConsoleSource();
 const mainBridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
-const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+const html = readConsoleUiSource();
+const coreCards = fs.readFileSync(path.join(root, 'src', 'console', 'core-cards.js'), 'utf8');
+const renderer = fs.readFileSync(path.join(root, 'public', 'console', 'core', 'renderer.js'), 'utf8');
 
 // 取出 /api/restart 的实现块（到下一个 404 分支为止）
 const start = bridge.indexOf("pathname === '/api/restart'");
@@ -71,23 +74,20 @@ console.log('\n── 2. 子进程：等待父进程释放锁 ──');
 
 console.log('\n── 3. 前端：轮询时间够长、有进度 ──');
 {
-  // credRestart（凭据卡里的按钮）
-  const i1 = html.indexOf("document.getElementById('credRestart')");
-  const b1 = html.slice(i1, i1 + 2200);
-  check('凭据卡按钮轮询 60 次（60 秒）', /for \(let i = 0; i < 60; i\+\+\)/.test(b1));
-  check('凭据卡按钮显示秒数进度', /正在重启…（\$\{i \+ 1\}s）/.test(b1));
-  check('凭据卡按钮失败时说清楚去哪看日志', /state\/bridge\.log/.test(b1));
-  check('凭据卡按钮不再写死 30 秒', !/for \(let i = 0; i < 30; i\+\+\)/.test(b1));
+  // 通用配置卡里的重启按钮
+  check('凭据卡按钮轮询 60 次（60 秒）', /for \(let i = 0; i < 60; i\+\+\)/.test(html));
+  check('凭据卡按钮显示秒数进度', /正在重启…（\$\{i \+ 1\}s）/.test(html));
+  check('凭据卡按钮失败时说清楚去哪看日志', /state\/bridge\.log/.test(html));
+  check('凭据卡按钮不再写死 30 秒', !/for \(let i = 0; i < 30; i\+\+\)/.test(html));
 
-  // restartBtn（20 桥接控制卡里的按钮）
-  const i2 = html.indexOf("document.getElementById('restartBtn')");
-  const b2 = html.slice(i2, i2 + 2400);
-  check('控制卡按钮也轮询 60 次', /for \(let i = 0; i < 60; i\+\+\)/.test(b2));
-  check('控制卡按钮会等它回来再刷新页面', /location\.reload\(\)/.test(b2));
-  check('控制卡按钮显示秒数进度', /正在重启…（\$\{i \+ 1\}s）/.test(b2));
-  // 老实现只发一次请求、不看结果——这是"没有重启效果"的观感来源之一
-  check('控制卡按钮不再只发请求就结束',
-    !/document\.getElementById\('restartBtn'\)\.addEventListener\('click', async \(\) => \{\s*if \(!confirm\('确定重启桥接？'\)\) return;\s*const r = await api\('\/api\/restart', 'POST', \{\}\);\s*document\.getElementById\('restartMsg'\)\.textContent = r\.message \|\| '正在重启…';\s*\}\);/s.test(html));
+  // 17 桥接控制卡（声明式 actions）：由 renderer 统一等待恢复。
+  const i2 = coreCards.indexOf("id: '17'");
+  const b2 = coreCards.slice(i2, i2 + 2200);
+  check('控制卡声明 60 秒恢复等待', /timeoutMs: 60000/.test(b2));
+  check('控制卡会等它回来再刷新页面', /reloadAfter: true/.test(b2)
+    && /item\.reloadAfter[\s\S]{0,80}location\.reload\(\)/.test(renderer));
+  check('控制卡显示秒数进度', /等待服务恢复…（\$\{waited\}s）/.test(renderer));
+  check('控制卡不再只发请求就结束', /waitFor:\s*\{/.test(b2) && /if \(!ready\) throw new Error/.test(renderer));
   check('确认框说清了"会中断对话"', /进行中的对话会中断/.test(b2));
 }
 

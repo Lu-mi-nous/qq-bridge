@@ -13,7 +13,7 @@ let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 // 复刻 bridge.js handleUpstreamError 的流程（保持一致，见该函数）
-function makeHandler({ windowMs = 180000, now = () => Date.now(), ownerQQ = '100002000', messages = DEFAULT_MESSAGES, enabled = true, notifyOwner = true } = {}) {
+function makeHandler({ windowMs = 180000, now = () => Date.now(), ownerQQ = '1000000000', messages = DEFAULT_MESSAGES, enabled = true, notifyOwner = true } = {}) {
   const notifier = createErrorNotifier({ windowMs, now });
   const sent = []; // {key, text}
   async function sendToQQ(key, msg) { sent.push({ key, text: msg }); }
@@ -42,16 +42,16 @@ console.log('── 真实 503：群内人设句 + 私聊详情 ──');
 {
   let t = 1_700_000_000_000;
   const h = makeHandler({ now: () => t });
-  const handled = await h.handleUpstreamError('group:100002005', REAL_503, { sessionId: 'session-xyz' });
+  const handled = await h.handleUpstreamError('group:1000000010', REAL_503, { sessionId: 'session-xyz' });
 
   check('识别并接管（返回 true）', handled === true);
-  const group = h.sent.filter((s) => s.key === 'group:100002005');
-  const priv = h.sent.filter((s) => s.key === 'private:100002000');
+  const group = h.sent.filter((s) => s.key === 'group:1000000010');
+  const priv = h.sent.filter((s) => s.key === 'private:1000000000');
   check('群内正好发 1 条', group.length === 1, `${group.length} 条`);
   check('群内是人设短句', group[0]?.text === DEFAULT_MESSAGES[0], group[0]?.text);
   check('群内**不含**原始 JSON', !/no_healthy_account|\{/.test(group[0]?.text ?? ''), group[0]?.text);
   check('私聊正好发 1 条', priv.length === 1, `${priv.length} 条`);
-  check('私聊含群号字段', /群号：100002005/.test(priv[0]?.text ?? ''));
+  check('私聊含群号字段', /群号：1000000010/.test(priv[0]?.text ?? ''));
   check('私聊含错误码', /no_healthy_account/.test(priv[0]?.text ?? ''));
   check('私聊含原始 JSON', /gateway_hint/.test(priv[0]?.text ?? ''));
   check('私聊含 sessionId', /session-xyz/.test(priv[0]?.text ?? ''));
@@ -73,7 +73,7 @@ console.log('\n── 节流：3 分钟内同群只发一次 ──');
   await h.handleUpstreamError('group:111', REAL_503); // 90 秒：同上
 
   const groups = h.sent.filter((s) => s.key === 'group:111');
-  const privs = h.sent.filter((s) => s.key === 'private:100002000');
+  const privs = h.sent.filter((s) => s.key === 'private:1000000000');
   check('群内只发 1 条（3 次报错）', groups.length === 1, `${groups.length} 条`);
   check('私聊发 3 条（每次报错都通知）', privs.length === 3, `${privs.length} 条`);
   check('被节流时私聊不写"群内已回复"', !privs[1].text.includes('群内已回复'), privs[1].text.split('\n').slice(0, 6).join(' | '));

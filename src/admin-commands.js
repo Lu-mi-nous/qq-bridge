@@ -480,9 +480,11 @@ export function createAdminCommands(deps) {
   async function handleAdminCommand({ key, kind, id, plainContent, isOwner, roleState }) {
     const text = String(plainContent ?? '');
     if (!text.startsWith('/')) return false;
-    // 与原逻辑一致：非管理员的任何 / 命令都在这里被拦下并回复，
-    // 不区分是不是已知管理命令（避免群友用 /model 之类试探 DSH）。
+    // 只拦截「已知管理命令」：普通以 / 开头的句子（路径、DSH 自己的
+    // /model 等斜杠命令）不是管理指令，交给 DSH 正常处理，不能统一回复
+    // 「管理命令仅管理员可用」——那会把正常对话也打断。
     if (!isOwner) {
+      if (!isAdminCommand(text)) return false;
       await deps.sendToQQ(key, '管理命令仅管理员可用。');
       return true;
     }

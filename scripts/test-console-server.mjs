@@ -10,6 +10,7 @@ import {
   sanitizeDevLogText,
   isAgentRouteAllowed
 } from '../src/console-server.js';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
@@ -41,8 +42,8 @@ const domainRouteCount = domainRouteFiles.reduce((n, f) => {
 }, 0);
 const inlineRouteCount = (server.match(/url\.pathname ===/g) || []).length;
 const overviewRouteCount = (overviewRoutes.match(/router\.(?:get|post|put|del)\(/g) || []).length;
-check('路由总数与拆分前一致（155 个端点，含动态前缀）',
-  inlineRouteCount + overviewRouteCount + domainRouteCount === 155,
+check('路由总数与拆分前一致（161 个端点，含动态前缀；C1 manifest + C3 plugin-guide + C4 token panel + C6 插件管理 + 插件配置）',
+  inlineRouteCount + overviewRouteCount + domainRouteCount === 161,
   `${inlineRouteCount}+${overviewRouteCount}+${domainRouteCount}`);
 check('有插件清单接口', /'\/api\/plugins'/.test(overviewRoutes) && /deps\.pluginHost\?\.list/.test(overviewRoutes));
 check('有任务清单/控制接口', /'\/api\/tasks'/.test(overviewRoutes)
@@ -65,13 +66,13 @@ check('开发日志解析：标题/正文/续行', (() => {
     && parsed.sections[0].entries[1].title === '标题B';
 })());
 check('开发日志展示脱敏/开发者措辞', (() => {
-  const out = sanitizeDevLogText('（2026-10-25 用户要求）测试群 group:100002005 QQ 100002000 100002005 E:/Downloads/x 用户反馈 用户要求', {
-    names: [{ name: '测试群', replacement: '某群' }],
-    ids: ['100002005', '100002000']
+  const out = sanitizeDevLogText('（2026-10-25 用户要求）示例群 group:1000000005 QQ 1000000000 1000000005 C:/qq-bridge/x 用户反馈 用户要求', {
+    names: [{ name: '示例群', replacement: '某群' }],
+    ids: ['1000000005', '1000000000']
   });
   return !out.includes('用户要求') && !out.includes('用户反馈')
-    && !out.includes('100002005') && !out.includes('100002000')
-    && !out.includes('E:/Downloads') && out.includes('某群') && out.includes('2026-10-25');
+    && !out.includes('1000000005') && !out.includes('1000000000')
+    && !out.includes('C:/qq-bridge') && out.includes('某群') && out.includes('2026-10-25');
 })());
 
 check('跨会话记忆端点存在', /shared-memory/.test(domainRoutesSrc) && /shared-memory-config/.test(domainRoutesSrc)
@@ -183,14 +184,16 @@ console.log('\n── 会话级 Token 报表合成 ──');
 {
   const contextSrc = fs.readFileSync(path.join(root, 'src', 'plugins', 'context.js'), 'utf8');
   const hostSrc = fs.readFileSync(path.join(root, 'src', 'plugins', 'host.js'), 'utf8');
-  const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+  const html = readConsoleUiSource();
   check('插件可注册控制台卡片', /registerCard\(/.test(contextSrc) && /cards: \[\]/.test(contextSrc));
   check('插件路由必须声明 console:route 且挂在自己命名空间下',
     /console:route/.test(contextSrc) && /\/api\/plugins\/\$\{id\}\//.test(contextSrc));
   check('插件路由由核心统一转发', /getContext\?\.\(plugin\.id\)/.test(server)
     && /console\?\.routes/.test(server));
   check('插件清单暴露 console 元数据', /console: \{/.test(hostSrc) && /cards:/.test(hostSrc));
-  check('控制台有插件卡片插槽', /id="pluginCardSlot"/.test(html) && /renderPluginCards/.test(html));
+  check('控制台有插件功能分类视图', /id="pluginCategoryView"/.test(html) && /mountPluginSurface/.test(html));
+  check('插件清单进入控制台 manifest', /\/api\/console\/manifest/.test(overviewRoutes)
+    && /pluginGroups/.test(overviewRoutes) && /pluginId/.test(overviewRoutes));
 }
 
 // R4：复合条件与动态路径路由必须显式登记，否则模块根本收不到请求。

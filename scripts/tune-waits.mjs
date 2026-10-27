@@ -1,10 +1,7 @@
 // tune-waits.mjs — 缩短等待窗口：沉睡前观察 5min→1min，单次等待上限 10min→2min
 import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const p = path.join(ROOT, 'config.json');
+const p = 'C:/qq-bridge/config.json';
 const c = JSON.parse(fs.readFileSync(p, 'utf8'));
 
 const before = {

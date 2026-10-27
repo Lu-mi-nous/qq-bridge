@@ -40,7 +40,7 @@ console.log('\n── 必须遮蔽：JSON 配置写法（2026-10-11 接入 Sauce
 {
   // 项目 config.json 里的字段名是驼峰 apiKey，而旧词表只有 api[_-]?key，匹配不到；
   // 且 JSON 里关键词后紧跟引号再冒号，旧的分隔符判定只允许空白 → 整条漏网。
-  const FAKE = 'd4aaaaaaaaaaaaaaaaaaaaaaaaaaaa00';
+  const FAKE = 'd4f77df44d0415ff6cb158590a035d35ce290c00';
   check('"apiKey": "<值>"（带引号 JSON）', hits(`"apiKey": "${FAKE}"`));
   check('apiKey: <值>（无引号）', hits(`apiKey: ${FAKE}`));
   check('"api_key": "<值>"', hits(`"api_key": "${FAKE}"`));

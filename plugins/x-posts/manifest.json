@@ -6,7 +6,8 @@
   "enabledByDefault": false,
   "configPath": "xMonitor",
   "configSchema": "config.schema.js",
-  "permissions": ["network", "state", "console:route"],
+  "permissions": ["network", "state", "console:route", "secrets"],
+  "secrets": ["x-auth.json"],
   "hooks": ["onStart", "onStop"],
   "mcpTools": ["qq_fetch_x_posts"],
   "console": { "cards": ["x-posts"], "routes": ["/api/plugins/x-posts/card"] }

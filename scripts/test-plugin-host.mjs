@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPluginHost, validatePluginManifest } from '../src/plugins/host.js';
+import { createPluginContext } from '../src/plugins/context.js';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -13,6 +14,7 @@ const check = (name, cond, extra = '') => {
 };
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qqb-plugin-host-'));
+const bridgeSrc = fs.readFileSync(path.join(rootDir, 'src', 'bridge.js'), 'utf8');
 
 function writePlugin(dir, id, { manifest = {}, code = '' } = {}) {
   const pluginDir = path.join(dir, id);
@@ -45,6 +47,12 @@ try {
     check('版本范围不满足被拒绝', !validatePluginManifest({
       id: 'demo2', version: '1.0.0', configSchema: 'x.js', permissions: [], engines: { qqBridge: '>=9.0.0' }
     }, { currentVersion: '0.4.0' }).ok);
+    check('secrets 文件越界被拒绝', !validatePluginManifest({
+      id: 'demo3', version: '1.0.0', configSchema: 'x.js', permissions: ['secrets'], secrets: ['../x.json']
+    }, { currentVersion: '0.4.0' }).ok);
+    check('声明 secrets 文件必须带 secrets 权限', !validatePluginManifest({
+      id: 'demo4', version: '1.0.0', configSchema: 'x.js', permissions: [], secrets: ['x.json']
+    }, { currentVersion: '0.4.0' }).ok);
   }
 
   console.log('\n── 2. 生命周期 ──');
@@ -71,6 +79,16 @@ try {
     await host.stop();
     check('stop 调用插件清理并更新状态', plugin?.stopped === true
       && host.list().find((p) => p.id === 'demo')?.status === 'stopped');
+  }
+  {
+    const dir = path.join(tmp, 'disabled');
+    writePlugin(dir, 'off', {});
+    const host = createPluginHost({ root: rootDir, dirs: [dir], getConfig: () => ({ plugins: { disabled: ['off'] } }), log: () => {} });
+    await host.load();
+    check('plugins.disabled 中的插件不加载', host.get('off') === null
+      && host.list().find((p) => p.id === 'off')?.status === 'disabled');
+    check('loadConfig 保留 plugins.disabled（重启后开关不丢）',
+      /plugins:\s*\{[\s\S]{0,260}?disabled:[\s\S]{0,160}?file\.plugins\?\.disabled/.test(bridgeSrc));
   }
 
   console.log('\n── 3. 权限与状态路径 ──');
@@ -102,6 +120,45 @@ try {
     try { plugin.stateFile('../escape.json'); } catch { traversal = true; }
     check('状态路径越界被拒绝', traversal);
     check('合法状态文件在插件目录内', plugin.stateFile('state.json').includes(path.join('state', 'plugins', 'denied')));
+  }
+
+  console.log('\n── 3b. 插件配置注册契约 ──');
+  {
+    const writes = [];
+    const ctx = createPluginContext({
+      manifest: {
+        id: 'confdemo',
+        configPath: 'plugins.confdemo',
+        permissions: ['console:route', 'secrets'],
+        secrets: ['confdemo-auth.json']
+      },
+      root: tmp,
+      getConfig: () => ({ plugins: { confdemo: { token: 'abc' } } }),
+      setConfig: (dotted, value) => { writes.push([dotted, value]); return true; },
+      log: () => {}
+    });
+    let token = 'abc';
+    const items = ctx.console.registerConfigItems([{
+      key: 'token', label: '令牌', group: '凭据', kind: 'secret',
+      get: () => token,
+      set: (value) => { token = value; }
+    }]);
+    check('插件可注册配置项', items.length === 1 && ctx.console.configItems.length === 1);
+    check('配置项缺 get/set 被拒绝', (() => {
+      try { ctx.console.registerConfigItems([{ key: 'bad', label: 'bad' }]); return false; } catch { return true; }
+    })());
+    check('插件配置写入限定在插件命名空间', (() => {
+      ctx.config.set('nested.value', 7);
+      return writes.length === 1 && writes[0][0] === 'plugins.confdemo.nested.value' && writes[0][1] === 7;
+    })());
+    check('配置路径越界被拒绝', (() => {
+      try { ctx.config.set('../token', 'x'); return false; } catch { return true; }
+    })());
+    ctx.secrets.writeJson('confdemo-auth.json', { token: 'secret' });
+    check('凭据文件可读写', ctx.secrets.readJson('confdemo-auth.json')?.token === 'secret');
+    check('未声明凭据文件被拒绝', (() => {
+      try { ctx.secrets.readJson('other.json'); return false; } catch { return true; }
+    })());
   }
 
   console.log('\n── 4. TTS 试点 ──');

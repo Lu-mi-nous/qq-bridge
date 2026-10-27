@@ -49,6 +49,10 @@ check('工具默认关闭（写操作，需显式开启）', (bridgeSrc.match(/d
 check('删除前用 findSticker 校验存在性', /async function remove\(stickerId\)[\s\S]{0,500}findSticker\(/.test(stickerService));
 check('校验失败即拒绝（不让未校验值进上游）', /找不到表情 \$\{stickerId\}，请先用 qq_list_stickers/.test(stickerService));
 check('删前写备份文件', /stickers-deleted-\$\{stamp\}\.json/.test(stickerService));
+// 2026-10-27 事故：qq-send 调 findSticker(entries, ref)，bridge 曾只接受 (ref)，
+// 数组被当成 ref → 所有表情发送都报“找不到”。签名必须透传两个参数。
+check('表情发送 findSticker 透传 entries + ref（防参数被吞）',
+  /findSticker:\s*\(entries,\s*ref\)\s*=>\s*findSticker\(entries,\s*ref\)/.test(bridge));
 check('备份在调用上游之前', (() => {
     const i = stickerService.indexOf('async function remove(stickerId)');
     const seg = stickerService.slice(i, i + 3000);

@@ -12,7 +12,7 @@
 //
 // 数据来源实测（SnowLuma 的 sender 里带 role 字段，messages.db 三值分布：
 // member 23395 / admin 21937 / owner 9414）；群成员 API 复核：
-// 群 100002004 有 owner×1 + admin×5；群 100002007 有 owner×1 + admin×10。
+// 群 1000000001 有 owner×1 + admin×5；群 1000000007 有 owner×1 + admin×10。
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

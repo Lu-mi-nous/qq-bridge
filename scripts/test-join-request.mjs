@@ -14,7 +14,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseJoinCommand, describeJoinRequest, createJoinQueue, DEFAULT_TTL_MS } from '../src/join-request.js';
 import { isAdminCommand } from '../src/admin-commands.js';
+import { CORE_CARDS } from '../src/console/core-cards.js';
 import { readConsoleSource } from './lib/console-src.mjs';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -186,7 +188,7 @@ console.log('\n── 5. 桥接接线 ──');
   const adminCommands = fs.readFileSync(path.join(root, 'src', 'admin-commands.js'), 'utf8');
   const consoleServer = readConsoleSource();
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
-  const consoleHtml = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+  const consoleHtml = readConsoleUiSource();
 
   
   
@@ -219,11 +221,13 @@ console.log('\n── 5. 桥接接线 ──');
   // 代码里的默认值也必须是 fail-closed（配置缺失时不能意外放行）
   
 
-  // 控制台
-  check('控制台有卡片', /id="joinRequestCard"/.test(consoleHtml));
-  check('控制台显示待决列表', /id="joinReqList"/.test(consoleHtml));
-  check('控制台说明默认不自动同意', /默认<b>不自动同意<\/b>/.test(consoleHtml));
-  check('控制台挂进轮询', /refreshJoinRequests\(\)/.test(consoleHtml));
+  // 控制台（C1：13 卡已迁为声明式，描述在 src/console/core-cards.js）
+  const joinCard = CORE_CARDS.find((card) => card.id === '13');
+  check('控制台有卡片', joinCard?.render === 'declarative');
+  check('控制台显示待决列表', joinCard?.sections?.some((s) => s.type === 'list' && s.template === 'joinRequest')
+    && /joinRequestHtml/.test(consoleHtml));
+  check('控制台说明默认不自动同意', joinCard?.sections?.some((s) => s.type === 'custom-note' && /默认不自动同意/.test(s.text)));
+  check('控制台挂进轮询', Number(joinCard?.poll?.ms) > 0);
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

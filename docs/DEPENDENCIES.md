@@ -79,7 +79,7 @@ node scripts/setup-tts.mjs            # 克隆 GPT-SoVITS、下载权重、装 P
 ```bash
 python -m pip install faster-whisper
 # 指定本地模型目录（可选）
-set FASTER_WHISPER_MODEL=D:\models\faster-whisper-large-v3
+set FASTER_WHISPER_MODEL=C:\models\faster-whisper-large-v3
 ```
 
 用途：群友发语音时的转写、B 站视频没有字幕时的音轨转写。

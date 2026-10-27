@@ -1,8 +1,6 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = 'C:/qq-bridge';
 const p = spawn(process.execPath, [path.join(ROOT, 'src', 'mcp-snowluma-safe.js')], { stdio: ['pipe','pipe','pipe'] });
 let buf = '';
 const send = (o) => p.stdin.write(JSON.stringify(o) + '\n');

@@ -6,9 +6,9 @@
 //
 // ── 实测根因 ────────────────────────────────────────────────────────
 //
-//   日志：`05:56:35 [sticker] 拒绝删除表情：请求者不是管理员（group:100002005）`
+//   日志：`05:56:35 [sticker] 拒绝删除表情：请求者不是管理员（group:1000000005）`
 //   时间线（同一会话）：
-//     13:55:48 管理员(100002000) 引用表情说「把这个表情包删了」
+//     13:55:48 管理员(1000000000) 引用表情说「把这个表情包删了」
 //     13:56:06 群友群友F 发了条拍一拍 → lastRequesterId 被覆盖成群友
 //     13:56:35 模型这才调用 qq_delete_sticker → 判成"非管理员"，403
 //   即：**管理员的请求被后续闲聊消息冲掉了**。群越热闹越容易出现。
@@ -38,7 +38,7 @@ const consoleServerSrc = readConsoleSource();
 console.log('── 1. 判定逻辑 ──');
 {
 
-  const OWNER = '100002000';
+  const OWNER = '1000000000';
   const state = { lastRequesterId: '', lastRequesterRole: '', ownerSpokeAt: 0 };
   const now = Date.now();
   const fn = () => isOwnerTurn({ ownerQQ: OWNER, state, windowMs: 5 * 60 * 1000, now });

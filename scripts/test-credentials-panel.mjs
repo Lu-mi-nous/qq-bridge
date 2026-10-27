@@ -13,50 +13,71 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { CREDENTIAL_ITEMS, credentialByKey, groupedCredentials, maskValue } from '../src/credentials-doc.js';
+import { createConfigItems as createImagesConfigItems } from '../plugins/images/config-items.js';
+import { createConfigItems as createBiliConfigItems } from '../plugins/bili/config-items.js';
+import { createConfigItems as createXConfigItems } from '../plugins/x-posts/config-items.js';
+import { createConfigItems as createWebSearchConfigItems } from '../plugins/web-search/config-items.js';
+import { createConfigItems as createMediaToolsConfigItems } from '../plugins/media-tools/config-items.js';
 import { readConsoleSource } from './lib/console-src.mjs';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
 
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
+const fakeCtx = {
+  root,
+  config: { get: () => ({}), set: () => true },
+  secrets: { readJson: () => ({}), writeJson: () => true }
+};
+const pluginItems = [
+  ...createImagesConfigItems(fakeCtx),
+  ...createBiliConfigItems(fakeCtx),
+  ...createXConfigItems(fakeCtx),
+  ...createWebSearchConfigItems(fakeCtx),
+  ...createMediaToolsConfigItems(fakeCtx)
+];
+const allItems = [...CREDENTIAL_ITEMS, ...pluginItems];
 
 console.log('── 1. 配置项定义 ──');
 {
-  check('有配置项', CREDENTIAL_ITEMS.length >= 8, String(CREDENTIAL_ITEMS.length));
+  check('核心配置项保留 SnowLuma/控制台令牌', CREDENTIAL_ITEMS.length === 2, String(CREDENTIAL_ITEMS.length));
+  check('插件配置项全部由插件注册', pluginItems.length === 11, String(pluginItems.length));
+  check('配置项总数 13', allItems.length === 13, String(allItems.length));
 
-  const keys = CREDENTIAL_ITEMS.map((x) => x.key);
+  const keys = allItems.map((x) => x.key);
   check('key 唯一', new Set(keys).size === keys.length);
 
-  // 每一项都必须可追溯：要么写 config.json 的路径，要么写 state 下某个文件
-  check('每项都有写入位置', CREDENTIAL_ITEMS.every((x) => x.where === 'config' || (x.where === 'file' && x.file)));
-  check('每项都有路径/字段名', CREDENTIAL_ITEMS.every((x) => !!x.path));
-  check('每项都有标签', CREDENTIAL_ITEMS.every((x) => !!x.label));
-  check('每项都有分组', CREDENTIAL_ITEMS.every((x) => !!x.group));
+  // 核心项写 config.json；插件项通过插件自己的 get/set 管理
+  check('核心项都有写入位置', CREDENTIAL_ITEMS.every((x) => x.where === 'config' || (x.where === 'file' && x.file)));
+  check('核心项都有路径/字段名', CREDENTIAL_ITEMS.every((x) => !!x.path));
+  check('每项都有标签', allItems.every((x) => !!x.label));
+  check('每项都有分组', allItems.every((x) => !!x.group));
 
   // ① 文档：不能缺
-  const noDoc = CREDENTIAL_ITEMS.filter((x) => !x.doc || x.doc.trim().length < 40);
+  const noDoc = allItems.filter((x) => !x.doc || x.doc.trim().length < 40);
   check('每项都有说明文档（≥40 字）', noDoc.length === 0, noDoc.map((x) => x.key).join(','));
 
   // 文档要包含"怎么取"与"生效方式"这类可操作信息
-  const docs = CREDENTIAL_ITEMS.every((x) => /怎么取|怎么拿|格式|怎么用/.test(x.doc));
+  const docs = allItems.every((x) => /怎么取|怎么拿|格式|怎么用/.test(x.doc));
   check('文档都写了"怎么取/格式"', docs);
-  const effect = CREDENTIAL_ITEMS.every((x) => /生效方式|立即生效|需要重启/.test(x.doc));
+  const effect = allItems.every((x) => /生效方式|立即生效|需要重启/.test(x.doc));
   check('文档都写了"生效方式"', effect);
 
   // ③ restart 标注与文档一致
-  const mismatch = CREDENTIAL_ITEMS.filter((x) =>
+  const mismatch = allItems.filter((x) =>
     (x.restart && !/需要重启|需重启/.test(x.doc)) || (!x.restart && !/立即生效/.test(x.doc)));
   check('restart 标注与文档一致', mismatch.length === 0, mismatch.map((x) => x.key).join(','));
 
   // 凭据类必须打码，连接类可以是明文
-  const secrets = CREDENTIAL_ITEMS.filter((x) => x.kind === 'secret');
+  const secrets = allItems.filter((x) => x.kind === 'secret');
   check('有 secret 类型项', secrets.length > 0);
-  check('kind 只能是 secret/text', CREDENTIAL_ITEMS.every((x) => x.kind === 'secret' || x.kind === 'text'));
+  check('kind 只能是 secret/text', allItems.every((x) => x.kind === 'secret' || x.kind === 'text'));
 
-  check('按 key 查找', credentialByKey('biliSessdata')?.label?.includes('SESSDATA'));
+  check('按 key 查找', credentialByKey('snowlumaAccessToken')?.label?.includes('SnowLuma'));
   check('未知 key 返回 null', credentialByKey('nope') === null);
   const grouped = groupedCredentials();
-  check('分组正确（凭据/连接）', grouped.length >= 2 && grouped.every((g) => g.items.length > 0),
+  check('核心项按凭据分组', grouped.length === 1 && grouped[0].group === '凭据' && grouped[0].items.length === 2,
     grouped.map((g) => `${g.group}:${g.items.length}`).join(' '));
 }
 
@@ -65,11 +86,11 @@ console.log('\n── 2. 脱敏 ──');
   check('空值返回空串', maskValue('') === '');
   check('短值全打码', maskValue('abc') === '•••', maskValue('abc'));
   check('8 位以内全打码', maskValue('12345678') === '••••••••');
-  const m = maskValue('d4aaaaaaaaaaaaaaaaaaaaaaaaaaaa00');
+  const m = maskValue('d4f77df44d0415ff6cb158590a035d35ce290c00');
   check('长值露前 2 后 2', m.startsWith('d4') && m.endsWith('00'), m);
   check('中间是圆点', /•/.test(m));
   // 关键：脱敏结果不能包含原值的可识别中段
-  const raw = 'd4aaaaaaaaaaaaaaaaaaaaaaaaaaaa00';
+  const raw = 'd4f77df44d0415ff6cb158590a035d35ce290c00';
   check('不泄露中段', !m.includes(raw.slice(8, 20)));
   check('长度被限制（不会把原文长度暴露得太清楚）', m.length <= raw.length, `${m.length} vs ${raw.length}`);
   check('null 不崩', maskValue(null) === '');
@@ -123,17 +144,17 @@ console.log('\n── 3. 桥接接线 ──');
 
 console.log('\n── 4. 控制台 UI ──');
 {
-  const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
-  check('有凭据卡片', /id="credCard"/.test(html));
-  check('有列表容器', /id="credBody"/.test(html));
-  check('有保存按钮', /id="credSaveAll"/.test(html));
-  check('有重启按钮', /id="credRestart"/.test(html));
-  check('有状态行', /id="credStatusLine"/.test(html));
+  const html = readConsoleUiSource();
+  check('有通用配置卡模块', /export async function mount\(container, ctx/.test(html) && /configEndpoint/.test(html));
+  check('有列表容器', /class="cred-body"/.test(html));
+  check('有保存按钮', /class="small cred-save"/.test(html));
+  check('有重启按钮', /class="small cred-restart"/.test(html));
+  check('有状态行', /class="meta cred-status"/.test(html));
 
   // 密码框 + 眼睛
   // 隐藏态用**真 input**（不是 div、不是 type=password），靠 CSS 渲染成圆点——
   // 用户要求「圆点也是可选元素，全选复制能拿到明文」。
-  check('隐藏态是真正的 input（可选/可复制）', /data-cred="\$\{esc\(it\.key\)\}"/.test(html));
+  check('隐藏态是真正的 input（可选/可复制）', /data-cred="\$\{esc\(item\.key\)\}"/.test(html));
   check('用 CSS 把明文渲染成圆点（-webkit-text-security）', /-webkit-text-security: disc/.test(html));
   check('有眼睛按钮', /data-eye=/.test(html) && /👁/.test(html));
   // 回归（2026-10-22）：说明文字里也有一个内联 👁，曾与按钮共用 .cred-eye 的绝对定位，
@@ -146,7 +167,7 @@ console.log('\n── 4. 控制台 UI ──');
   check('.cred-eye 基类不含绝对定位',
     !!baseEye && !/position\s*:\s*absolute/.test(baseEye), baseEye.slice(0, 60));
   check('说明里的眼睛用内联样式类', /class="cred-eye-inline"/.test(html));
-  check('眼睛按需取明文（reveal=1&key=）', /credentials\?reveal=1&key=/.test(html));
+  check('眼睛按需取明文（reveal=1&key=）', /reveal=1&key=/.test(html));
   check('收起时填回脱敏串（不把明文留在 DOM）',
     /input\.value = input\.dataset\.preview \|\| ''/.test(html) && /classList\.add\('masked'\)/.test(html));
   check('输入时自动去掉遮罩（否则自己输入也看不见）', /classList\.remove\('masked'\)/.test(html));
@@ -160,7 +181,7 @@ console.log('\n── 4. 控制台 UI ──');
   check('复用既有 markdown 渲染器（不重复实现）', !/function renderMarkdown/.test(html));
 
   // 弹窗 + 动画
-  check('有文档弹窗', /id="credDocOverlay"/.test(html));
+  check('有文档弹窗', /credDocOverlay/.test(html));
   check('弹窗带过渡动画', /\.doc-overlay[\s\S]{0,300}transition: opacity/.test(html));
   check('弹窗内容也有位移动画', /\.doc-modal[\s\S]{0,400}transform: translateY/.test(html));
   check('打开时加 open 类', /classList\.add\('open'\)/.test(html));
@@ -173,18 +194,17 @@ console.log('\n── 4. 控制台 UI ──');
   check('渲染前转义 HTML', /const inline = \(t\) => \{\s*let s = esc\(t\)/.test(html));
 
   // 保存只提交改过的项
-  check('只保存改过的项', /CRED_EDITED/.test(html));
+  check('只保存改过的项', /const edited = new Map\(\)/.test(html));
   // 关键安全点：隐藏态输入框里是脱敏串，绝不能当新值写盘（会把密钥覆盖成圆点）
   // 待提交值存在内存 Map 里，DOM 重建不丢（"只保存最早一项"的根因修复）
-  check('待提交值存 Map（DOM 重建不丢）', /const CRED_EDITED = new Map\(\)/.test(html));
-  check('输入时写入 Map', /CRED_EDITED\.set\(input\.dataset\.cred, input\.value\)/.test(html));
-  check('渲染时回填未保存的编辑', /const pending = CRED_EDITED\.get\(input\.dataset\.cred\)/.test(html));
-  // 刷新（loadCredentialItems）里不能再无条件清空待提交表
-  check('刷新不无条件清空待提交表', !/CRED_EDITED\.clear\(\);\s*\/\/ 按 group/.test(html)
-    && !/CRED_EDITED\.clear\(\);\n\n/.test(html));
-  check('只在保存成功后移除成功项', /for \(const key of okKeys\) CRED_EDITED\.delete\(key\)/.test(html));
-  check('保存后重新拉取', /await loadCredentialItems\(\)/.test(html));
-  check('首屏加载', /refreshJoinRequests\(\); loadCredentialItems\(\);/.test(html));
+  check('待提交值存 Map（DOM 重建不丢）', /const edited = new Map\(\)/.test(html));
+  check('输入时写入 Map', /edited\.set\(input\.dataset\.cred, read\(\)\)/.test(html));
+  check('渲染时回填未保存的编辑', /const pending = edited\.get\(input\.dataset\.cred\)/.test(html));
+  // 刷新（load）里不能再无条件清空待提交表
+  check('刷新不无条件清空待提交表', !/edited\.clear\(\);/.test(html));
+  check('只在保存成功后移除成功项', /for \(const key of okKeys\) edited\.delete\(key\)/.test(html));
+  check('保存后重新拉取', /await load\(\)/.test(html));
+  check('首屏加载', /await load\(\);/.test(html));
 
   // 重启按钮：确认为破坏性操作 + 等待恢复
   check('重启前有确认', /confirm\('确定重启桥接/.test(html));

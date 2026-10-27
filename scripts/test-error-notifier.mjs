@@ -45,7 +45,7 @@ check('no_healthy_account 归类', classifyUpstreamError(realSamples[0][1]).code
 check('rate_limit 归类', classifyUpstreamError(realSamples[1][1]).code === 'rate_limit');
 check('RATE_LIMIT 归为 rate_limit', classifyUpstreamError(realSamples[2][1]).code === 'rate_limit');
 
-// ── 2b. 上游 WAF 拦截（2026-10-13 群 100002004 首次遇到）──
+// ── 2b. 上游 WAF 拦截（2026-10-13 群 1000000001 首次遇到）──
 // 网关出口 IP 被腾讯云 WAF 临时拦，网关把整个 403 HTML 页当 message 回传。
 // 性质与限流同类：上游不可用、临时、非桥接可控。必须识别，否则：
 //   ① 群里会看到一坨英文 HTML（虽然群内提示默认已关）；
@@ -155,7 +155,7 @@ console.log('\n── 文案 ──');
 console.log('\n── 管理员私聊字段 ──');
 {
   const rep = buildOwnerReport({
-    key: 'group:100002005',
+    key: 'group:1000000010',
     code: 'no_healthy_account',
     rawError: '503: {"code":"no_healthy_account"}',
     at: new Date('2026-09-25T01:20:00+08:00').getTime(),
@@ -163,16 +163,16 @@ console.log('\n── 管理员私聊字段 ──');
     sessionId: 'session-abc'
   });
   check('含标题', rep.includes('上游报错通知'));
-  check('含**群号字段**', /群号：100002005/.test(rep), rep.split('\n')[3]);
-  check('含会话 key', rep.includes('group:100002005'));
+  check('含**群号字段**', /群号：1000000010/.test(rep), rep.split('\n')[3]);
+  check('含会话 key', rep.includes('group:1000000010'));
   check('含错误码', rep.includes('no_healthy_account'));
   check('含原始 JSON', rep.includes('{"code":"no_healthy_account"}'));
   check('含 sessionId', rep.includes('session-abc'));
   check('含群内已回复文案', rep.includes('没额度'));
 
   // 私聊场景字段应为 QQ 号而非群号
-  const rep2 = buildOwnerReport({ key: 'private:100002000', code: 'rate_limit', rawError: 'x' });
-  check('私聊用 QQ号 字段', /QQ号：100002000/.test(rep2), rep2.split('\n')[3]);
+  const rep2 = buildOwnerReport({ key: 'private:1000000000', code: 'rate_limit', rawError: 'x' });
+  check('私聊用 QQ号 字段', /QQ号：1000000000/.test(rep2), rep2.split('\n')[3]);
   check('私聊不出现"群号："', !rep2.includes('群号：'));
 
   // 超长原始错误要截断，避免私聊被刷屏

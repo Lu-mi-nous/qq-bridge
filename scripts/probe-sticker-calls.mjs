@@ -3,12 +3,9 @@
 // 统计 DSH 会话里的真实工具调用（type=tool/call），按工具名聚合。
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import zlib from 'node:zlib';
 
-const dir = process.argv[2]
-  || process.env.DSH_SESSIONS_DIR
-  || path.join(os.homedir(), '.dsh', 'sessions');
+const dir = 'C:/Users/you/.dsh/sessions/--qq-bridge-state-agents--';
 const MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 
 function lines(file) {

@@ -1,0 +1,15 @@
+{
+  "id": "tts",
+  "kind": "plugin",
+  "pluginId": "tts",
+  "title": "语音合成（GPT-SoVITS）",
+  "description": "按概率把单条文字回复改发语音；未启用或合成失败时自动退回文字。",
+  "order": 120,
+  "data": [{ "source": "/api/plugins/tts/card", "as": "st" }],
+  "sections": [
+    { "type": "text", "label": "启用", "bind": "st.enabled", "map": { "true": "已启用", "false": "未启用" }, "fallback": "—" },
+    { "type": "text", "label": "引擎", "bind": "st.engineReady", "map": { "true": "就绪", "false": "未就绪" } },
+    { "type": "text", "label": "音色", "bind": "st.voiceName", "fallback": "—" },
+    { "type": "text", "label": "原因", "bind": "st.reason", "fallback": "" }
+  ]
+}

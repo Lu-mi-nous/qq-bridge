@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A522.13-339933?logo=node.js&logoColor=white&style=flat-square">
   <img alt="Platform" src="https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows&logoColor=white&style=flat-square">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-106%20scripts-2ea44f?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-152%20scripts-2ea44f?style=flat-square">
   <img alt="DSH" src="https://img.shields.io/badge/DSH-0.1.1--rc.2-6f42c1?style=flat-square">
   <img alt="License" src="https://img.shields.io/badge/License-MIT-blue?style=flat-square">
 </p>

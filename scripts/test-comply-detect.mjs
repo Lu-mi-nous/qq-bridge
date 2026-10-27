@@ -18,7 +18,7 @@ const cases = [
   ['写个 python 脚本', none, false, true],    // 祈使句起手
   ['帮我改改这段', none, false, true],
   // 不该命中的
-  ['@群友V 帮我写个文案', atOther, false, false], // 明确冲着别人
+  ['@张三 帮我写个文案', atOther, false, false], // 明确冲着别人
   ['哈哈哈哈', atSelf, false, false],
   ['今天天气不错', atSelf, false, false],
   ['这个个别产品挺特别', atSelf, false, false],  // 裸「别」不误伤

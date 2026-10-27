@@ -1,7 +1,7 @@
 import { createEventHarness, sessionEvent, assistantMessage, turnEnd } from './helpers/dsh-event-harness.mjs';
 // qq_wait_for_messages 防卡死回归测试。
 //
-// 背景（2026-10-23 group:100002007 实测）：
+// 背景（2026-10-23 group:1000000007 实测）：
 //   - 单回合连续 6 次 wait，单次 107~245s，累计 20m56s，整个 turn 跑了 24 分钟；
 //   - 期间所有新消息都记成「会话繁忙」，群友的 @ 和 B 站卡片全排队；
 //   - 只保留 seq 的 pendingWakeReasons 触发消息正文随后被 30 条未读挤出，模型无法补答。

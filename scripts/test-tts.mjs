@@ -19,6 +19,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { readConsoleSource } from './lib/console-src.mjs';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0, skip = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -33,7 +34,7 @@ const ttsPluginSrc = fs.readFileSync(path.join(root, 'plugins', 'tts', 'index.js
 const qqSendSrc = fs.readFileSync(path.join(root, 'src', 'pipeline', 'qq-send.js'), 'utf8');
 const wakeSrc = fs.readFileSync(path.join(root, 'src', 'pipeline', 'wake.js'), 'utf8');
 const consoleServerSrc = readConsoleSource();
-const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+const html = readConsoleUiSource({ unescape: true });
 const pySrc = fs.readFileSync(path.join(root, 'scripts', 'sovits-server.py'), 'utf8');
 
 const { probeSovits, createTtsEngine, DEFAULT_SOVITS_DIR, DEFAULT_VOICE, normalizeTtsText, DEFAULT_SPEECH_PARAMS } = await import('../src/tts.js');
@@ -162,9 +163,9 @@ console.log('\n── 5. 发送链路 ──');
 // ── 6. 控制台 ──
 console.log('\n── 6. 控制台 ──');
 {
-  check('有语音合成卡片（18 号）', /data-sec="18"/.test(html) && /id="ttsCard"/.test(html));
+  check('有语音合成卡片', /ttsStatusLine/.test(html) && /ttsTest/.test(html));
   // 目录已删除（2026-10-22 用户要求）；改为断言摘要卡会展示语音状态
-  check('摘要卡有语音状态', /setSummary\('18'/.test(html));
+  check('卡片有状态行', /ttsStatusLine/.test(html));
   check('显示三种状态', /未启用|不可用/.test(html) && /pill g">可用/.test(html));
   check('说明可插拔语义', /未启用时不加载任何模型、不占显存/.test(html));
   check('有试听按钮', /id="ttsTest"/.test(html));
@@ -368,7 +369,7 @@ console.log('\n── 6b. 韵律参数与标点规范化 ──');
   check('关闭标点规范化时原样返回', normalizeTtsText('今天也要开心', { punctuate: false }) === '今天也要开心');
 
   const bridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
-  const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+  const html = readConsoleUiSource({ unescape: true });
   const py = fs.readFileSync(path.join(root, 'scripts', 'sovits-server.py'), 'utf8');
   check('请求里带韵律参数',
     /fragment_interval: num\(p\.fragmentInterval/.test(ttsSrc)

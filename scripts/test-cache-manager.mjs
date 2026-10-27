@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readConsoleSource } from './lib/console-src.mjs';
+import { readConsoleUiSource } from './lib/console-ui-src.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -18,7 +19,7 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
 const src = fs.readFileSync(path.join(root, 'src', 'cache-manager.js'), 'utf8');
 const bridgeSrc = readConsoleSource();
-const html = fs.readFileSync(path.join(root, 'public', 'console.html'), 'utf8');
+const html = readConsoleUiSource({ unescape: true });
 
 const { collectCacheItems, summarizeCache, purgeCache, humanBytes, sizeOf, CACHE_GROUPS } =
   await import('../src/cache-manager.js');
@@ -156,11 +157,11 @@ console.log('\n── 6. 接线（API + 控制台）──');
   check('端点传 ttsDir 用于展示模型占用', /ttsDir: cfg\.socialV2\?\.tts\?\.enabled === true/.test(bridgeSrc));
   check('端点把分组下发给界面', /groups: CACHE_GROUPS/.test(bridgeSrc));
 
-  check('控制台有磁盘缓存卡片（19 号）', /data-sec="19"/.test(html) && /id="cacheCard"/.test(html));
+  check('控制台有磁盘缓存卡片（15 号）', /19 磁盘缓存卡片/.test(html) && /const refreshBtn = document\.createElement\('button'\)/.test(html));
   // 目录已删除（2026-10-22 用户要求）；改为断言摘要卡会展示缓存占用
-  check('摘要卡有缓存状态', /setSummary\('19'/.test(html));
-  check('有盘点按钮', /id="cacheRefresh"/.test(html));
-  check('有清理按钮', /id="cachePurge"/.test(html));
+  check('摘要卡有缓存状态', /__CONSOLE_CARD_STATE__\['15'\]/.test(html));
+  check('有盘点按钮', /重新盘点/.test(html));
+  check('有清理按钮', /清理可删项/.test(html));
   // 确认框必须按**当前清单**生成（写死的文案会与后端漂移，这正是二次重写的原因）
   check('确认框动态列出将删项', /会删：\\n\$\{willDelete\}/.test(html));
   check('确认框动态列出保留项', /不会动：\$\{wontTouch\}/.test(html));
