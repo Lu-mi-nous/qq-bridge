@@ -32,13 +32,13 @@ export function register(router, ctx) {
     } catch {}
     sendJson({
       ok: true,
-      name: 'WhaleBridge',
+      name: 'WhaleTalk',
       version,
       snowlumaVersion,
       node: process.version,
       platform: process.platform,
       arch: process.arch,
-      repo: 'https://github.com/Lu-mi-nous/qq-bridge'
+      repo: 'https://github.com/Lu-mi-nous/whale-talk'
     });
   });
 

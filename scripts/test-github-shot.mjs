@@ -28,13 +28,13 @@ const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:
 console.log('── 1. 链接解析 ──');
 {
   const ok = [
-    ['https://github.com/Lu-mi-nous/qq-bridge', 'https://github.com/Lu-mi-nous/qq-bridge', '完整链接'],
+    ['https://github.com/Lu-mi-nous/whale-talk', 'https://github.com/Lu-mi-nous/whale-talk', '完整链接'],
     ['http://github.com/owner/repo', 'https://github.com/owner/repo', 'http 也认'],
     ['github.com/owner/repo', 'https://github.com/owner/repo', '无协议'],
     ['www.github.com/owner/repo', 'https://github.com/owner/repo', 'www 前缀'],
     ['owner/repo', 'https://github.com/owner/repo', 'owner/repo 简写'],
     ['owner/repo.git', 'https://github.com/owner/repo', 'git 后缀去掉'],
-    ['https://github.com/Lu-mi-nous/qq-bridge/', 'https://github.com/Lu-mi-nous/qq-bridge', '尾斜杠'],
+    ['https://github.com/Lu-mi-nous/whale-talk/', 'https://github.com/Lu-mi-nous/whale-talk', '尾斜杠'],
     ['https://github.com/owner/repo/issues/12', 'https://github.com/owner/repo', 'issues 归到首页'],
     ['https://github.com/owner/repo/tree/main/src', 'https://github.com/owner/repo', 'tree 归到首页'],
     ['https://github.com/owner/repo/blob/main/a.js', 'https://github.com/owner/repo', 'blob 归到首页'],
@@ -128,7 +128,7 @@ console.log('\n── 3. 真实截图 ──');
     else if (!proxy) { skipped('真实截图', '未配置代理，GitHub 在本机直连不通'); }
     else {
       const { screenshotGitHubRepo } = await import('../plugins/media-tools/lib/github-shot.js');
-      const shot = await screenshotGitHubRepo('https://github.com/Lu-mi-nous/qq-bridge', {
+      const shot = await screenshotGitHubRepo('https://github.com/Lu-mi-nous/whale-talk', {
         proxy, width: 1400, sliceHeight: 2400, maxHeight: 12000, waitMs: 2500, timeoutMs: 120000
       });
       check('截图成功', shot.buffer.length > 0, `${Math.round(shot.buffer.length / 1024)}KB`);

@@ -78,7 +78,7 @@ export function mountLayout(registry, { api = defaultApi } = {}) {
     try {
       const r = await api('/api/about');
       if (!r?.ok) return;
-      const version = r.version ? ('v' + r.version) : 'v0.7.0';
+      const version = r.version ? ('v' + r.version) : 'v0.7.1';
       set('aboutVersion', version);
       set('aboutVersion2', version);
       set('aboutNode', r.node || '—');

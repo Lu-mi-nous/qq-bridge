@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/icon.png" alt="whale-bridge" width="120">
+  <img src="assets/icon.png" alt="whale-talk" width="120">
 </p>
 
-<h1 align="center">鲸桥 WhaleBridge · QQ ↔ DeepSeek Harness 桥接</h1>
+<h1 align="center">鲸语 WhaleTalk · QQ ↔ DeepSeek Harness 桥接</h1>
 
 <p align="center">
   <b>让 DSH agent 住进 QQ 群</b> · 群友的消息变成提示词，回复、提问、工具审批回到 QQ<br>

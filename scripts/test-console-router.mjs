@@ -114,7 +114,7 @@ const request = (method, p, { payload, contentType = 'application/json', headers
 try {
   {
     const r = await request('GET', '/api/about');
-    check('概览路由 /api/about 可命中', r.status === 200 && r.body.ok === true && r.body.name === 'WhaleBridge', String(r.status));
+    check('概览路由 /api/about 可命中', r.status === 200 && r.body.ok === true && r.body.name === 'WhaleTalk', String(r.status));
   }
   {
     const r = await request('GET', '/api/plugins');

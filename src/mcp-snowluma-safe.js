@@ -171,7 +171,7 @@ async function authorizeRead(key, token) {
   await agentApi('/api/authorize/read', { method: 'POST', body: JSON.stringify({ key, token: token || undefined }) });
 }
 
-const server = new McpServer({ name: 'snowluma-safe', version: '0.7.0' });
+const server = new McpServer({ name: 'snowluma-safe', version: '0.7.1' });
 // T4：工具结果按工具预算裁剪（先包 handler，再交给可见性绑定）。
 bindToolResultBudget(server, { log: message => console.error(message) });
 const pluginToolAvailability = bindPluginToolAvailability(server, {

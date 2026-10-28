@@ -35,7 +35,11 @@ const MIRRORS = [
   },
   {
     file: 'public/console/app/about-view.js',
-    pairs: (v) => [[`<span class="about-badge" id="aboutVersion">v${v}</span>`, `<span class="about-badge" id="aboutVersion">v${target}</span>`]]
+    // 该文件是内嵌 HTML 的 JS 字符串，引号带反斜杠；两种写法都要匹配（2026-10-28 修）。
+    pairs: (v) => [
+      [`<span class="about-badge" id="aboutVersion">v${v}</span>`, `<span class="about-badge" id="aboutVersion">v${target}</span>`],
+      [`<span class=\\"about-badge\\" id=\\"aboutVersion\\">v${v}</span>`, `<span class=\\"about-badge\\" id=\\"aboutVersion\\">v${target}</span>`]
+    ]
   },
   {
     file: 'public/console/app/layout.js',
@@ -59,12 +63,16 @@ let fail = 0;
 for (const { file, pairs } of MIRRORS) {
   const p = path.join(ROOT, file);
   let s = fs.readFileSync(p, 'utf8');
+  let matched = 0;
+  // 同一文件可能有多种版本号写法（如 about-view.js 的转义引号），命中任意一种即可。
   for (const [from, to] of pairs(current)) {
     const n = s.split(from).length - 1;
-    if (n === 0) { console.error(`MISS ${file}: ${from}`); fail++; continue; }
+    if (n === 0) continue;
     s = s.replaceAll(from, to);
-    console.log(`OK   ${file}  ×${n}`);
+    matched += n;
   }
+  if (matched === 0) { console.error(`MISS ${file}: 未匹配任何版本号写法`); fail++; }
+  else console.log(`OK   ${file}  ×${matched}`);
   fs.writeFileSync(p, s);
 }
 

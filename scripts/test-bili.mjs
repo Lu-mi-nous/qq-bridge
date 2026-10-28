@@ -496,7 +496,7 @@ console.log('\n── 6. 提示词 ──');
 
   // 简介必须传给模型（2026-10-19 反馈「问他相关信息回答不出来」：
   // 群里追问"啥视频啊"，它只能答"那种动漫解说"——因为手里没有简介）
-  const descInfo = { ...info, desc: '女主偷她爸三百万炒外汇加群友E倍杠杆，五分钟从赚两千万到爆仓。' };
+  const descInfo = { ...info, desc: '女主偷她爸三百万炒外汇加群友E九倍杠杆，五分钟从赚两千万到爆仓。' };
   const descHint = videoFramesHint(descInfo, grid);
   check('提示词包含简介', descHint.includes('简介：') && descHint.includes('女主偷她爸'), descHint.slice(0, 60));
   const longDesc = descInfo.desc.repeat(30);

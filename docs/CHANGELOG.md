@@ -2,6 +2,10 @@
 
 > 按时间倒序记录「做了什么 + 为什么」。修 bug 优先写清真因，因为下次可能再遇到。
 
+## 0.7.1（2026-10-28）
+
+- **项目更名：鲸语 WhaleTalk**（原 WhaleBridge）：包名 `whale-talk`，GitHub 仓库更名为 `群友H/whale-talk`（旧链接自动跳转）；`~/.qq-bridge` 插件目录、`state/`、MCP server 名等功能标识保持兼容。
+
 ## 0.7.0（2026-10-28）
 
 - **项目更名：鲸桥 WhaleBridge**（包名 `whale-bridge`）：README/控制台/关于页统一新品牌；仓库地址、`~/.qq-bridge` 插件目录与 state 路径保持不变，兼容旧部署。

@@ -407,7 +407,7 @@ async function safeFetchViaProxy(urlString, proxy) {
   };
 }
 
-const server = new McpServer({ name: 'web-search-safe', version: '0.7.0' });
+const server = new McpServer({ name: 'web-search-safe', version: '0.7.1' });
 
 for (const tool of searchRuntime.mcpTools()) {
   server.tool(tool.name, tool.description, tool.inputSchema, tool.handler);

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/icon.png" alt="whale-bridge" width="120">
+  <img src="assets/icon.png" alt="whale-talk" width="120">
 </p>
 
-<h1 align="center">WhaleBridge (whale-bridge) · QQ ↔ DeepSeek Harness Bridge</h1>
+<h1 align="center">WhaleTalk (whale-talk) · QQ ↔ DeepSeek Harness Bridge</h1>
 
 <p align="center">
   <b>Give DSH agents a life in QQ groups</b> · group messages become prompts; replies, questions and tool approvals go back to QQ<br>
