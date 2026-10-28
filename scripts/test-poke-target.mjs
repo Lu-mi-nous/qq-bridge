@@ -1,10 +1,10 @@
 // 回归测试：拍一拍的目标解析（「总是戳同一个人」）。
 //
-// 事故（2026-10-22，group:1000000005）：机器人反复拍 群友C，群里问「怎么一直戳我」。
+// 事故（2026-10-22，group:100002004）：机器人反复拍 群友C，群里问「怎么一直戳我」。
 // 链路：
 //   ① qq_send_poke 必须传数字 QQ 号；
 //   ② 唤醒提示只说「有人戳了你（群友G）」——只有名字，没有号；
-//   ③ 上下文里唯一的号来自很早以前某次 qq_get_recent_messages（群友C 的 1000000012），
+//   ③ 上下文里唯一的号来自很早以前某次 qq_get_recent_messages（群友C 的 1000000003），
 //      以及它自己拍完后返回的 targetUserId；
 //   ④ 模型拿旧号顶上，一拍十几次。
 //
@@ -36,13 +36,13 @@ console.log('── 1. latest = 最近戳你的人（不是最近说话的人）
 {
   // 事故回放：群友G在最新戳它，群友C 只是更早戳过、且还在上下文里留有旧号
   const unread = [
-    poke('群友C', '1000000012', 900),
+    poke('群友C', '1000000003', 900),
     poke('群友G', '2604175579', 2000),
     msg('Iris Tsui', '3251759205', '我家最爱吃鱼了', 2100) // 更近的说话者，但不是戳它的人
   ];
   const r = resolvePokeTarget({ ref: 'latest', unread, recentMessages: [] });
   check('latest 指向群友G（最近戳它的）', r.ok && r.userId === '2604175579', JSON.stringify(r));
-  check('不会选到上下文里的旧号 群友C', !(r.ok && r.userId === '1000000012'));
+  check('不会选到上下文里的旧号 群友C', !(r.ok && r.userId === '1000000003'));
   check('不会选到更近的普通说话者', !(r.ok && r.userId === '3251759205'));
 
   // 各种符号写法都认
@@ -54,7 +54,7 @@ console.log('── 1. latest = 最近戳你的人（不是最近说话的人）
 console.log('\n── 2. 拍别人的事件不算"戳你" ──');
 {
   const unread = [
-    { sender: '群友C', userId: '1000000012', isSelf: false, poke: { targetIsSelf: false }, time: 3000 },
+    { sender: '群友C', userId: '1000000003', isSelf: false, poke: { targetIsSelf: false }, time: 3000 },
     poke('群友G', '2604175579', 1000)
   ];
   const r = resolvePokeTarget({ ref: 'latest', unread, recentMessages: [] });
@@ -69,11 +69,11 @@ console.log('\n── 3. 没有戳它的人时，latest 必须拒绝 ──');
 
 console.log('\n── 4. 昵称解析 ──');
 {
-  const unread = [msg('群友C', '1000000012', '怎么一直戳我', 100)];
+  const unread = [msg('群友C', '1000000003', '怎么一直戳我', 100)];
   const r1 = resolvePokeTarget({ ref: '群友C', unread, recentMessages: [] });
-  check('昵称唯一命中', r1.ok && r1.userId === '1000000012' && r1.reason === 'name', JSON.stringify(r1));
-  const r2 = resolvePokeTarget({ ref: 'memberc', unread: [msg('MemberC', '1000000012', '怎么一直戳我', 100)], recentMessages: [] });
-  check('大小写不敏感', r2.ok && r2.userId === '1000000012', JSON.stringify(r2));
+  check('昵称唯一命中', r1.ok && r1.userId === '1000000003' && r1.reason === 'name', JSON.stringify(r1));
+  const r2 = resolvePokeTarget({ ref: 'memberc', unread: [msg('MemberC', '1000000003', '怎么一直戳我', 100)], recentMessages: [] });
+  check('大小写不敏感', r2.ok && r2.userId === '1000000003', JSON.stringify(r2));
 
   // 同名两人 → 必须拒绝并列候选
   const dup = [
@@ -94,8 +94,8 @@ console.log('\n── 4. 昵称解析 ──');
 
 console.log('\n── 5. 数字与空值 ──');
 {
-  const r = resolvePokeTarget({ ref: '1000000012', unread: [], recentMessages: [] });
-  check('数字原样放行', r.ok && r.userId === '1000000012' && r.reason === 'numeric', JSON.stringify(r));
+  const r = resolvePokeTarget({ ref: '1000000003', unread: [], recentMessages: [] });
+  check('数字原样放行', r.ok && r.userId === '1000000003' && r.reason === 'numeric', JSON.stringify(r));
   check('空值返回 empty', !resolvePokeTarget({ ref: '   ' }).ok);
   check('undefined 安全', !resolvePokeTarget({}).ok);
 }

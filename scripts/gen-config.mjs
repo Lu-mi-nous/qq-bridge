@@ -16,8 +16,8 @@ cfg.allow.groups = [];
 cfg.snowluma.wsUrl = 'ws://127.0.0.1:3001';
 cfg.snowluma.httpUrl = 'http://127.0.0.1:3000';
 cfg.snowluma.accessToken = '';
-cfg.snowluma.launcherPath = 'C:\\qq-bridge\\SnowLuma\\launcher.bat';
-cfg.snowluma.homeDir = 'C:\\qq-bridge\\SnowLuma';
+cfg.snowluma.launcherPath = 'E:\\Downloads\\SnowLuma\\launcher.bat';
+cfg.snowluma.homeDir = 'E:\\Downloads\\SnowLuma';
 cfg.snowluma.allowProcessControl = false;
 
 fs.writeFileSync(dest, `${JSON.stringify(cfg, null, 2)}\n`, 'utf8');

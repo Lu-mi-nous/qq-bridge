@@ -1,3 +1,4 @@
+import { registerBiliTools } from './mcp-tools.js';
 // B 站插件（R4.5-4）。
 //
 // 边界：B 站 API / 搜索 / 观看（抽帧、字幕、ASR）/ 自刷候选与提示词 / 观看记忆的**实现**
@@ -16,6 +17,7 @@ import * as browse from './lib/bili-browse.js';
 import { createConfigItems } from './config-items.js';
 
 export function create(ctx) {
+  registerBiliTools(ctx);
   ctx.console?.registerCard?.({
     id: 'bili',
     title: 'B 站（搜索 / 观看 / 自刷）',

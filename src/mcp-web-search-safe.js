@@ -1,3 +1,6 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createProcessPluginRuntime } from './plugins/process-runtime.js';
 // 安全版 Web Search / Fetch MCP server（stdio）。由 DSH 的 MCP 客户端 spawn。
 //
 // 安全设计：
@@ -23,17 +26,10 @@ import { z } from 'zod';
 // 开关与顺序在 config.json 的 webSearch.engines（mtime 热加载，改配置不用重启）。
 // 首个返回非空结果的引擎胜出。插件目录缺失时下面拿不到实现 → 不注册 web_search，
 // 但 web_fetch / web_view_image 不受影响（它们不依赖引擎链）。
-let searchWeb = null;
-let describeEngines = async () => '';
-let sanitizeQuery = (query) => String(query ?? '');
-try {
-  const lib = await import('../plugins/web-search/lib/index.mjs');
-  searchWeb = lib.searchWeb;
-  describeEngines = lib.describeEngines;
-  sanitizeQuery = lib.sanitizeQuery;
-} catch (error) {
-  console.error(`[web-search] 搜索插件未加载，web_search 不注册：${error?.message ?? error}`);
-}
+const searchRuntime = await createProcessPluginRuntime({
+  root: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+  only: ['web-search'], log: message => console.error(message)
+});
 // 微信公众号文章解析（纯函数）。见 weixin-article.js 顶部说明：UA 残缺会被风控拦，
 // 且正文在 50KB 之后，必须读全量再解析。
 import { parseWeixinArticle, isWeixinArticleUrl, WEIXIN_READ_CHARS } from './weixin-article.js';
@@ -411,65 +407,10 @@ async function safeFetchViaProxy(urlString, proxy) {
   };
 }
 
-const server = new McpServer({ name: 'web-search-safe', version: '0.6.0' });
+const server = new McpServer({ name: 'web-search-safe', version: '0.7.0' });
 
-if (searchWeb) {
-server.tool(
-  'web_search',
-  '联网搜索（只读）：当群友问时事/新闻/事实/价格/天气/梗的含义，或任何你不确定、需要依据的信息时调用。多引擎自动回退（天气→百度→必应→DuckDuckGo），天气类查询直接返回实时天气数据；其它查询返回标题/URL/摘要。回答时请注明信息来自搜索。仅搜索，不执行任何本地操作。',
-  { query: z.string().describe('搜索关键词（群友想查什么就搜什么，可中英文）') },
-  async ({ query }) => {
-    const clean = sanitizeQuery(query);
-    if (!clean) {
-      return { content: [{ type: 'text', text: '查询词为空，已拒绝。' }], isError: true };
-    }
-    try {
-      const result = await searchWeb(clean);
-      if (result.results.length) {
-        // retriedWith：上游把多词查询降级了（只匹配第一个词），引擎改用更窄的词重搜才拿到结果。
-        // 必须明确告诉模型"这条是搜 X 得到的"，否则它会把这个答案算到原查询头上。
-        const notes = [];
-        if (result.retriedWith) {
-          notes.push(`注意：原查询「${clean}」在上游被降级为只匹配首个关键词，本次结果来自检索「${result.retriedWith}」。若与问题不符，请换更具体的关键词重搜，不要把这些结果当成原查询的直接答案。`);
-        }
-        if (result.engine === 'weather') {
-          notes.push('本次结果是 Open-Meteo 的实时观测/预报数据（含当前温度、体感、湿度、降水和未来几天预报），可直接引用；回答时说明观测时间。');
-        }
-        const note = notes.length ? notes.join('\n') : null;
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify(
-              {
-                query: result.query,
-                engine: result.engine,
-                count: result.results.length,
-                results: result.results,
-                tried: result.tried,
-                ...(result.retriedWith ? { retriedWith: result.retriedWith, note } : note ? { note } : {})
-              },
-              null,
-              2
-            ),
-          }],
-        };
-      }
-      const engineStatus = await describeEngines();
-      return {
-        content: [{
-          type: 'text',
-          text: `搜索未得到结果：${result.error}\n尝试记录：${JSON.stringify(result.tried)}\n引擎状态：\n${engineStatus}\n提示：DuckDuckGo 需要代理；引擎开关与顺序在 config.json 的 webSearch.engines（改完即生效）。`,
-        }],
-        isError: true,
-      };
-    } catch (error) {
-      return {
-        content: [{ type: 'text', text: `搜索失败：${error?.message ?? error}` }],
-        isError: true,
-      };
-    }
-  }
-);
+for (const tool of searchRuntime.mcpTools()) {
+  server.tool(tool.name, tool.description, tool.inputSchema, tool.handler);
 }
 
 server.tool(
@@ -599,4 +540,5 @@ server.tool(
   }
 );
 
+server.server.onclose = () => { void searchRuntime.stop(); };
 await server.connect(new StdioServerTransport());

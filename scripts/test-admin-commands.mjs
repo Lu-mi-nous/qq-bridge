@@ -125,7 +125,7 @@ console.log('── 1. 命令识别 ──');
   }
   const yes = ['/status', '/reset', '/new', '/silent', '/quiet', '/active', '/speak',
     '/role', '/role 阿盐', '/role off', '/recall', '/recall 3', '/撤回', '/撤回 2',
-    '/wl', '/wl add 1000000001', '/wl del 1000000001', '/白名单',
+    '/wl', '/wl add 100002013', '/wl del 100002013', '/白名单',
     '/yes', '/yes 1', '/no 2', '/pending', '/tf', '/tf off group:1'];
   const no = ['/model', '/help', '/compact', '普通消息', '', '/roleplay', '/recallx', '/status extra',
     'status', '/wlsomething', '/白名单列表'];

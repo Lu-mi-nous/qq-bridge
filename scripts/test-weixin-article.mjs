@@ -58,10 +58,10 @@ console.log('\n── 2. 阅读上限必须覆盖正文位置（防静默失败�
 console.log('\n── 3. 微信文章 URL 判定 ──');
 {
   const yes = [
-    'https://mp.weixin.qq.com/s/PLACEHOLDERARTICLEID',
+    'https://mp.weixin.qq.com/s/rhShvlYK-IeGG3YqwTsf2w',
     'http://mp.weixin.qq.com/s/abc',
     'https://mp.weixin.qq.com/s?__biz=MzA5&mid=123',
-    'https://mp.weixin.qq.com/s/PLACEHOLDERARTICLEID?scene=1',
+    'https://mp.weixin.qq.com/s/rhShvlYK-IeGG3YqwTsf2w?scene=1',
   ];
   const no = [
     'https://mp.weixin.qq.com/mp/profile_ext?action=home',
@@ -89,15 +89,16 @@ try {
 
 if (realHtml) {
   // 夹具完整性：必须含正文元信息（否则测试没意义）
-  check('夹具含 content_noencode（图片帖字段）', realHtml.includes('content_noencode'));
+  check('夹具含 content_noencode（真实文章页）', realHtml.includes('content_noencode'));
   check('夹具含 msg_title', realHtml.includes('msg_title'));
+  check('夹具长度 ≈2.5MB', realHtml.length > 2_000_000, String(realHtml.length));
 
-  const r = parseWeixinArticle(realHtml, 'https://mp.weixin.qq.com/s/PLACEHOLDERARTICLEID');
+  const r = parseWeixinArticle(realHtml, 'https://mp.weixin.qq.com/s/rhShvlYK-IeGG3YqwTsf2w');
   check('ok=true（读到了）', r.ok === true);
-  check('标题正确', r.title === '示例图片帖标题', r.title);
-  check('公众号名正确', r.account === '示例公众号', r.account);
-  check('发布时间正确', r.publishedAt === '2026-01-01 12:00', r.publishedAt);
-  check('摘要正确', r.description === '这是配图的文字说明', r.description);
+  check('标题正确', r.title === '科软中游偏上平均水平', r.title);
+  check('公众号名正确', r.account === '全全考研抄底', r.account);
+  check('发布时间正确', r.publishedAt === '2026-10-12 16:39', r.publishedAt);
+  check('摘要正确', r.description === '图为1-8月薪资总额', r.description);
   check('识别为图片帖类型 10002', r.appmsgType === '10002', r.appmsgType);
   check('收集到配图直链', r.images.length >= 1, `${r.images.length} 张`);
   check('配图全部是 https', r.images.every((u) => u.startsWith('https://')));

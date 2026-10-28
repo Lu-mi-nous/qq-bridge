@@ -24,7 +24,8 @@ const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
 
 const root = path.dirname(fileURLToPath(import.meta.url)) + '/..';
 const src = fs.readFileSync(path.join(root, 'scripts/delete-sticker.mjs'), 'utf8');
-const mcpSrc = fs.readFileSync(path.join(root, 'src/mcp-snowluma-safe.js'), 'utf8');
+// R4.6-5e：表情工具描述/handler 已迁入插件；删除仍只经桥接端点。
+const mcpSrc = fs.readFileSync(path.join(root, 'plugins/stickers/mcp-tools.js'), 'utf8');
 
 const consoleServerSrc = readConsoleSource();
 const roleSrc = fs.existsSync(path.join(root, 'roles/大肥鱼.md')) ? fs.readFileSync(path.join(root, 'roles/大肥鱼.md'), 'utf8') : '';

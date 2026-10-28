@@ -114,8 +114,8 @@ console.log('\n── 5. 聚合：扫描范围与增量缓存（问题②）─�
     ]);
     return f;
   };
-  mk('--qq-bridge-state-agents--', 'keep-A', 100);
-  mk('--qq-bridge-state-probe-bili--', 'skip-probe', 999);
+  mk('--E-Downloads-qq-bridge-main-state-agents--', 'keep-A', 100);
+  mk('--E-Downloads-qq-bridge-main-state-probe-bili--', 'skip-probe', 999);
   mk('--C-Users-someone-other-project--', 'skip-other', 999);
 
   const r = aggregateTokenUsage([base]);
@@ -129,9 +129,9 @@ console.log('\n── 5. 聚合：扫描范围与增量缓存（问题②）─�
   check('复用后结果一致', r2.days['2026-10-20']?.input === r.days['2026-10-20']?.input);
 
   // 改一个文件 → 只重解那一个
-  const f1 = path.join(base, '--qq-bridge-state-agents--', 'session-x', 'session.jsonl.zstd');
+  const f1 = path.join(base, '--E-Downloads-qq-bridge-main-state-agents--', 'session-x', 'session.jsonl.zstd');
   const st = fs.statSync(f1);
-  mk('--qq-bridge-state-agents--', 'keep-A', 100);
+  mk('--E-Downloads-qq-bridge-main-state-agents--', 'keep-A', 100);
   fs.utimesSync(f1, new Date(st.atimeMs + 5000), new Date(st.mtimeMs + 5000));
   const r3 = aggregateTokenUsage([base], { cache: r2.cache });
   check('只有变化的文件被重解', r3.scanned === 1 && r3.reused === 2, `scanned=${r3.scanned} reused=${r3.reused}`);

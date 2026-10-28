@@ -1,3 +1,5 @@
+import * as browseApi from '../plugins/bili/lib/bili-browse.js';
+import * as authApi from '../plugins/bili/lib/bili-auth.js';
 import { createBiliRuntime } from '../src/pipeline/bili-runtime.js';
 import { checks } from './helpers/pipeline-harness.mjs';
 const { check, finish } = checks();
@@ -5,6 +7,7 @@ function harness(overrides = {}) {
   const calls = [], usage = [];
   const info = { bvid: 'BV17x411w7KC', title: '夹具视频', owner: '作者', category: '游戏', duration: 120 };
   const deps = {
+    biliApi: { ...browseApi, ...authApi, available: () => true },
     cfg: { socialV2: { bili: { enabled: true, selfBrowsing: { enabled: true, dailyBudgetSec: 600, scanSeconds: 6, likedSeconds: 120, search: { enabled: false } } } } },
     socialV2: { conversations: new Map() },
     live: { biliMem: { todayUsage: () => ({ seconds: 0 }), taste: () => ({}), get: () => null, addUsage: s => usage.push(s) }, biliBrowsing: false, lastBiliBrowseAt: 0, biliAuth: {}, asrEngine: null },

@@ -27,7 +27,7 @@
 // ── 模型来源 ───────────────────────────────────────────────────────────
 //
 // 优先复用本机已存在的 faster-whisper 模型目录（用户 2026-10-21 指定：
-// `C:\Program Files\FasterWhisperGUI\models\faster-whisper-large-v3`），
+// `E:\Program Files\FasterWhisperGUI\models\faster-whisper-large-v3`），
 // 避免重复下载 3GB。找不到时按配置的模型名让 faster-whisper 自己下载。
 //
 // 实测质量（同一段音频）：
@@ -44,10 +44,10 @@ const ROOT = path.resolve(__dirname, '..');
 
 /** 本机已知的 faster-whisper 模型目录（用户指定，优先复用，免下载 3GB）。 */
 export const KNOWN_MODEL_DIRS = [
-  'C:\\Program Files\\FasterWhisperGUI\\models\\faster-whisper-large-v3',
-  'C:\\Program Files\\FasterWhisperGUI\\models\\faster-whisper-large-v2',
-  'C:\\Program Files\\FasterWhisperGUI\\models\\faster-whisper-medium',
-  'C:\\Program Files\\FasterWhisperGUI\\models\\faster-whisper-small'
+  'E:\\Program Files\\FasterWhisperGUI\\models\\faster-whisper-large-v3',
+  'E:\\Program Files\\FasterWhisperGUI\\models\\faster-whisper-large-v2',
+  'E:\\Program Files\\FasterWhisperGUI\\models\\faster-whisper-medium',
+  'E:\\Program Files\\FasterWhisperGUI\\models\\faster-whisper-small'
 ];
 
 /** 判断参数是"本地模型目录"（含 model.bin）还是 huggingface 的模型名。 */

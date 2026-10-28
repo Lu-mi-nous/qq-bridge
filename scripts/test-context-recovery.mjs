@@ -9,7 +9,7 @@ import { createEventHarness, sessionEvent, assistantMessage, turnEnd } from './h
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createContextRecovery, isContextOverflowError, rotateContextSession } from '../src/context-recovery.js';
+import { createContextRecovery, isContextOverflowError, rotateContextSession, shouldRotateProactive } from '../src/context-recovery.js';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -75,6 +75,43 @@ console.log('\n── 2. 恢复编排（轮换 + 单次重试 + 冷却）──'
   const r3 = await rec.recover({ key: 'group:1', sessionId: 'old-3', error: 'prompt_too_long', mode: 'reserved2' });
   await new Promise((r) => setTimeout(r, 20));
   check('冷却结束后可再次恢复', r3.retried === true && count('rotate') === 2 && count('deliver') === 2);
+}
+
+console.log('\n── 2b. 主动轮换（T4）──');
+{
+  let now = 1000000;
+  const calls = [];
+  const rec = createContextRecovery({
+    rotateSession: (key, sid) => calls.push(['rotate', key, sid]),
+    buildWakePrompt: () => 'P',
+    deliverPrompt: async () => { calls.push(['deliver']); return { ok: true }; },
+    notifyOwnerOfError: (...a) => calls.push(['notify', ...a]),
+    appendActivity: (line) => calls.push(['activity', line]),
+    log: () => {},
+    cooldownMs: 60000,
+    retryDelayMs: 1,
+    now: () => now
+  });
+  const r1 = await rec.rotateProactive({ key: 'group:9', sessionId: 'sid-9', estimatedTokens: 700000 });
+  check('主动轮换摘除会话且不重投/不通知', r1.rotated === true
+    && calls.some((c) => c[0] === 'rotate' && c[2] === 'sid-9')
+    && !calls.some((c) => c[0] === 'deliver' || c[0] === 'notify'));
+  check('主动轮换写活动流（预估 k tokens）', calls.some((c) => c[0] === 'activity' && /700k/.test(c[1])));
+  const r2 = await rec.rotateProactive({ key: 'group:9', sessionId: 'sid-10', estimatedTokens: 800000 });
+  check('主动轮换受冷却限制', r2.rotated === false && r2.reason === 'cooldown');
+  now += 60001;
+  const r3 = await rec.rotateProactive({ key: 'group:9', sessionId: 'sid-11', estimatedTokens: 900000 });
+  check('冷却后可再轮换', r3.rotated === true);
+}
+
+console.log('\n── 2c. 主动轮换阈值（T4）──');
+{
+  check('70% 默认阈值（1M 上限 ≈ 734003）：734002 不轮换、734004 轮换',
+    shouldRotateProactive(734002) === false && shouldRotateProactive(734004) === true);
+  check('自定义比例与上限', shouldRotateProactive(500000, { rotateAtRatio: 0.5, modelLimitTokens: 1000000 }) === true
+    && shouldRotateProactive(499999, { rotateAtRatio: 0.5, modelLimitTokens: 1000000 }) === false);
+  check('0/负数按默认处理且不轮换 0', shouldRotateProactive(0) === false
+    && shouldRotateProactive(734004, { rotateAtRatio: 0, modelLimitTokens: 0 }) === true);
 }
 
 console.log('\n── 3. 不重试的分支 ──');

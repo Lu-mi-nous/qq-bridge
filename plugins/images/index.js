@@ -17,8 +17,10 @@ import * as pixiv from './lib/pixiv-auth.js';
 import * as quality from './lib/image-quality.js';
 import * as store from './lib/image-store.js';
 import { createConfigItems } from './config-items.js';
+import { registerImagesTools } from './mcp-tools.js';
 
 export function create(ctx) {
+  registerImagesTools(ctx);
   ctx.console?.registerCard?.({
     id: 'images',
     title: '图片（图源 / 图库 / 反查）',

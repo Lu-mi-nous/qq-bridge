@@ -1,3 +1,5 @@
+import { looksLikeImageBuffer } from './plugin-api/media.js';
+export { looksLikeImageBuffer } from './plugin-api/media.js';
 // 只读 HTTP(S) 安全抓取工具：供 qq-bridge / MCP 共用。
 // 设计目标与 mcp-web-search-safe 一致：
 // - 仅 http/https
@@ -285,16 +287,6 @@ export async function safeFetch(urlString, maxChars = 50000) {
     };
   }
   throw new Error('重定向次数过多，已停止');
-}
-
-/** 仅接受 DSH 支持的四种图片格式：PNG/JPEG/GIF/WebP。 */
-export function looksLikeImageBuffer(buf) {
-  if (!buf || buf.length < 12) return false;
-  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true;
-  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true;
-  if (buf.toString('ascii', 0, 6) === 'GIF87a' || buf.toString('ascii', 0, 6) === 'GIF89a') return true;
-  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return true;
-  return false;
 }
 
 /** 抓取图片字节并返回 Buffer（带 SSRF 防护，且校验确实为图片）。 */

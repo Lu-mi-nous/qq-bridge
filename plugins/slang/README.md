@@ -9,7 +9,7 @@
 | `manifest.json` | 插件声明：id / 配置路径 `slang` / 权限 / 控制台卡片 |
 | `index.js` | 暴露 learner 能力 + 启动日志 + 控制台卡片 |
 | `lib/slang-learner.js` | 库读写、候选条目、抽取/研究提示词、JSON 解析、注入片段 |
-| `config.schema.js` | 配置字段清单（可读版） |
+| `config.reference.js` | 配置字段清单（可读版） |
 
 ## 谁在用它
 

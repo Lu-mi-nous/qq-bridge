@@ -1,3 +1,4 @@
+import { imageApi } from './helpers/image-api-fixture.mjs';
 // R3-5 图库门面：补货、冷却、去重、画风分与清理定时器。
 import fs from 'node:fs';
 import os from 'node:os';
@@ -32,6 +33,7 @@ function makeFacade(overrides = {}) {
     }
   };
   const facade = createImageFacade({
+    imageApi,
     cfg,
     imageLibDir: cfg.socialV2.images.libDir,
     imageFetchStateFile: path.join(tmp, 'fetch-state.json'),

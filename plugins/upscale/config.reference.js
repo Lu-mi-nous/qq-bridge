@@ -1,5 +1,6 @@
+// 参考文档：宿主不导入此文件，也不据此校验配置。
 // 超分插件配置说明（与 config-schema.js 的 socialV2.upscale 保持同形）。
-export const configSchema = {
+export const configReference = {
   enabled: 'boolean',
   model: 'string',
   binDir: 'string',
@@ -12,4 +13,4 @@ export const configSchema = {
   'cache.sweepEveryHours': 'number(1..168)'
 };
 
-export default configSchema;
+export default configReference;

@@ -1,11 +1,5 @@
 // 本地控制台与 MCP 回调 HTTP 服务。依赖由 bridge.js 显式注入，动态状态经 live 访问。
-import {
-  normalizeSharedMemoryConfig,
-  sharedMemoryStats,
-  listSharedPeople,
-  forgetSharedPerson,
-  clearSharedMemory
-} from './shared-memory-api.js';
+import { createSharedMemoryApi } from './shared-memory-api.js';
 import { normalizeTokenFuseConfig, normalizeTokenFuseOverride, effectiveTokenFuseThresholds } from './token-fuse.js';
 import { normalizeGapNoticeConfig } from './session-gap.js';
 import { createConsoleRouter } from './console/router.js';
@@ -242,7 +236,7 @@ export function sanitizeDevLogText(text, { names = [], ids = [] } = {}) {
   s = s.replace(/\b(group|private):\d+\b/gi, '$1:…');
   s = s.replace(/((?:QQ|qq)\s*[:：]?\s*)\d{5,12}/g, '$1***');
   s = s.replace(/(群号?\s*[:：]?\s*)\d{5,12}/g, '$1***');
-  // 已知会话/管理员 QQ 的裸数字也要处理（日志里常有“例如 1000000005”这种写法）。
+  // 已知会话/管理员 QQ 的裸数字也要处理（日志里常有“例如 100002004”这种写法）。
   const knownIds = [...new Set((ids || []).map(String).filter((x) => /^\d{5,12}$/.test(x)))]
     .sort((a, b) => b.length - a.length);
   for (const id of knownIds) s = s.split(id).join('***');
@@ -301,6 +295,7 @@ export function parseChangelogMarkdown(markdown, { maxSections = 80, maxEntries 
 }
 
 export function createConsoleServer(deps) {
+  const { normalizeSharedMemoryConfig, sharedMemoryStats, listSharedPeople, forgetSharedPerson, clearSharedMemory } = createSharedMemoryApi({ getCapability: name => deps.pluginHost?.capabilities?.get(name) });
   const {
     ROOT,
     TOOL_FLAGS,
@@ -364,20 +359,33 @@ export function createConsoleServer(deps) {
     const routeStaticCtx = { deps, cfg, root: ROOT, TOOL_FLAGS, groupedToolFlags, toolNamesOf };
     overviewRoutes.register(consoleRouter, routeStaticCtx);
     // 其余按域模块：模块自带 routes 清单 + handle，内部保留原来的 if 链。
-    for (const routeModule of DOMAIN_ROUTES) consoleRouter.use(routeModule);
+    for (const routeModule of DOMAIN_ROUTES) {
+      const owner = { '02-slang': 'slang', '10-images': 'images', '11-stickers': 'stickers', '14-bili': 'bili' }[routeModule.id];
+      consoleRouter.use({ ...routeModule, handle: (req, res, url, ctx) => {
+        if (owner && deps.pluginHost && !deps.pluginHost.capabilities?.get(`${owner}.instance`)) {
+          ctx.sendJson({ ok: false, error: '插件能力不可用' }, 503); return;
+        }
+        return routeModule.handle(req, res, url, ctx);
+      } });
+    }
 
     // 插件控制台路由（R4-5）：插件用 ctx.console.registerRoute 声明，核心只转发。
     // 路径必须以 /api/plugins/<id>/ 开头（context.js 已校验），没有注册就没有入口。
     for (const plugin of deps.pluginHost?.list?.() ?? []) {
       const pctx = deps.pluginHost?.getContext?.(plugin.id);
       for (const route of pctx?.console?.routes ?? []) {
-        const handler = (req, res, url, rctx) => route.handler(req, res, url, {
+        const handler = (req, res, url, rctx) => {
+          const current = deps.pluginHost?.getContext?.(plugin.id);
+          const active = current?.console?.routes?.find(r => r.path === route.path && r.method === route.method);
+          if (!active) return rctx.sendJson({ ok: false, error: '插件能力不可用' }, 404);
+          return active.handler(req, res, url, {
           sendJson: rctx.sendJson,
           readBody: rctx.readBody,
-          config: pctx.config,
-          state: pctx.state,
-          log: pctx.log
+          config: current.config,
+          state: current.state,
+          log: current.log
         });
+        };
         if (String(route.method).toUpperCase() === 'POST') consoleRouter.post(route.path, handler);
         else consoleRouter.get(route.path, handler);
       }

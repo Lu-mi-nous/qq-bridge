@@ -1,3 +1,6 @@
+import { mediaMcpHarness } from './helpers/media-mcp-harness.mjs';
+const mediaToolConfig = { tools: {} };
+const mediaTools = mediaMcpHarness(mediaToolConfig);
 // 回归测试：GitHub 仓库首页整页截图（src/github-shot.js + 桥接接线）。
 //
 // 背景（2026-10-20 用户要求）：「加一个功能能够解析 GitHub 链接并且把仓库首页整个截图并发送」。
@@ -95,10 +98,10 @@ console.log('\n── 2. 桥接接线 ──');
     /ECONNRESET\|ECONNREFUSED\|ETIMEDOUT/.test(bridge) && /配置代理/.test(bridge));
 
   // MCP
-  check('MCP 有工具', /'qq_github_shot'/.test(mcp));
-  check('工具说明会分多张', /切成若干张|分多张|4~6 张/.test(mcp));
-  check('工具说明不要说"打不开链接"', /不要说「我打不开链接」/.test(mcp));
-  check('工具说明失败不许编造', /不要编造仓库内容/.test(mcp));
+  check('MCP 有工具', mediaTools.has('qq_github_shot'));
+  check('工具说明会分多张', /切成若干张|分多张|4~6 张/.test(mediaTools.get('qq_github_shot').description));
+  check('工具说明不要说"打不开链接"', /不要说「我打不开链接」/.test(mediaTools.get('qq_github_shot').description));
+  check('工具说明失败不许编造', /不要编造仓库内容/.test(mediaTools.get('qq_github_shot').description.replaceAll('*', '')));
 
   // preset
   check('preset 工具速查里有它', /qq_github_shot：把 GitHub 仓库首页\*\*整页截图\*\*/.test(preset));

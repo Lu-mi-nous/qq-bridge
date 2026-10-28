@@ -1,11 +1,10 @@
+import { createBiliApi } from './bili-api.js';
 // B 站启动装配（R3-14）：记忆、凭据、字幕/ASR 与自主刷调度。
 import path from 'node:path';
-import { createVideoMemory } from './bili-api.js';
-import { loadBiliAuth } from './bili-api.js';
-import { setBiliCookie } from './bili-api.js';
 import { createAsrEngine } from './asr.js';
 
 export function createBiliBootstrap({
+  biliApi = createBiliApi(),
   cfg,
   root,
   log = () => {},
@@ -14,6 +13,7 @@ export function createBiliBootstrap({
   setBiliAuth = () => {},
   setAsrEngine = () => {}
 } = {}) {
+  const { createVideoMemory, loadBiliAuth, setBiliCookie } = biliApi;
   if (!cfg) throw new Error('createBiliBootstrap: cfg 不能为空');
 
   function start() {

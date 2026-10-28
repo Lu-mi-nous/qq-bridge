@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/icon.png" alt="qq-bridge" width="120">
+  <img src="assets/icon.png" alt="whale-bridge" width="120">
 </p>
 
-<h1 align="center">QQ ↔ DeepSeek Harness 桥接</h1>
+<h1 align="center">鲸桥 WhaleBridge · QQ ↔ DeepSeek Harness 桥接</h1>
 
 <p align="center">
   <b>让 DSH agent 住进 QQ 群</b> · 群友的消息变成提示词，回复、提问、工具审批回到 QQ<br>
@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A522.13-339933?logo=node.js&logoColor=white&style=flat-square">
   <img alt="Platform" src="https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows&logoColor=white&style=flat-square">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-152%20scripts-2ea44f?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-183%20scripts-2ea44f?style=flat-square">
   <img alt="DSH" src="https://img.shields.io/badge/DSH-0.1.1--rc.2-6f42c1?style=flat-square">
   <img alt="License" src="https://img.shields.io/badge/License-MIT-blue?style=flat-square">
 </p>

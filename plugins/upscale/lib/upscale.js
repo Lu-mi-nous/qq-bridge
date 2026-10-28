@@ -27,13 +27,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { imageSizeOf } from '../../../src/image-downscale.js';
+import { imageSizeOf } from '../../../src/plugin-api/media.js';
 // ffmpeg 定位复用 gif-frames.js（同一套 PATH + 常见安装位置探测，带缓存）。
 // 注意：gif-frames.js 不 import 本模块，所以这条依赖不会形成循环。
-import { findFfmpeg } from '../../../src/gif-frames.js';
+import { findFfmpeg } from '../../../src/plugin-api/process.js';
 
 // bin 探针在核心（feature-menu 要同步用）；模型目录仍归插件。
-import { DEFAULT_BIN_DIR, resolveBin, findUpscaylBin } from '../../../src/upscale-bin.js';
+import { DEFAULT_BIN_DIR, resolveBin, findUpscaylBin } from '../../../src/plugin-api/process.js';
 
 export { findUpscaylBin };
 

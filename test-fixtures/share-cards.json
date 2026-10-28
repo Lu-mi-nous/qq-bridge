@@ -1,137 +1,137 @@
 {
-  "com.tencent.tuwen.lua|news": {
-    "app": "com.tencent.tuwen.lua",
-    "bizsrc": "qqconnect.sdkshare",
-    "config": {
-      "ctime": 1791095380,
-      "forward": 1,
-      "token": "00000000000000000000000000000000",
-      "type": "normal"
-    },
-    "extra": {
-      "app_type": 1,
-      "appid": 100000000,
-      "msg_seq": 7000000000000000000,
-      "uin": 100000007
-    },
-    "meta": {
-      "news": {
-        "app_type": 1,
-        "appid": 100000000,
-        "ctime": 1791095380,
-        "desc": "#示例标签 #演示数据 #脱敏夹具 …",
-        "jumpUrl": "https://www.xiaohongshu.com/discovery/item/000000000000000000000000",
-        "preview": "https://qq.ugcimg.cn/v1/placeholder-preview-id",
-        "tag": "小红书",
-        "tagIcon": "https://open.gtimg.cn/open/app_icon/00/00/00/00/100000000_100_m.png?t=1700000000",
-        "title": "示例漫画标题",
-        "uin": 100000007
-      }
-    },
-    "prompt": "[分享]读心术 vs 腹黑女",
-    "ver": "0.0.0.1",
-    "view": "view_00000000000000000000000000000000"
+ "com.tencent.tuwen.lua|news": {
+  "app": "com.tencent.tuwen.lua",
+  "bizsrc": "qqconnect.sdkshare",
+  "config": {
+   "ctime": 1791095380,
+   "forward": 1,
+   "token": "REDACTED_SHARE_TOKEN_1",
+   "type": "normal"
   },
-  "com.tencent.miniapp_01|detail_1": {
-    "ver": "1.0.0.19",
-    "prompt": "[QQ小程序]根本就没有这样的唱歌小妹",
-    "config": {
-      "type": "normal",
-      "width": 0,
-      "height": 0,
-      "forward": 1,
-      "autoSize": 0,
-      "ctime": 1791211171,
-      "token": "00000000000000000000000000000000"
-    },
-    "needShareCallBack": false,
-    "app": "com.tencent.miniapp_01",
-    "view": "view_00000000000000000000000000000000",
-    "meta": {
-      "detail_1": {
-        "appid": 100000000,
-        "appType": 0,
-        "title": "哔哩哔哩",
-        "desc": "示例视频标题",
-        "icon": "https://miniapp.gtimg.cn/public/appicon/00000000000000000000000000000000_200.jpg",
-        "preview": "https://qq.ugcimg.cn/v1/placeholder-preview-id",
-        "url": "m.q.qq.com/a/s/00000000000000000000000000000000",
-        "scene": 1036,
-        "host": {
-          "uin": 100000007,
-          "nick": "示例昵称"
-        },
-        "shareTemplateId": "00000000000000000000000000000000",
-        "shareTemplateData": {},
-        "qqdocurl": "https://b23.tv/xxxxxxx",
-        "showLittleTail": "",
-        "gamePoints": "",
-        "gamePointsUrl": "",
-        "shareOrigin": 0
-      }
-    }
+  "extra": {
+   "app_type": 1,
+   "appid": 100507190,
+   "msg_seq": 7692696082320662000,
+   "uin": 1000000008
   },
-  "com.tencent.feed.lua|feed": {
-    "app": "com.tencent.feed.lua",
-    "prompt": "群相册《示例相册》",
-    "bizsrc": "group_album.upload",
-    "meta": {
-      "feed": {
-        "cover": "https://qungz.photo.store.qq.com/qun-qungz/PLACEHOLDERALBUM/PLACEHOLDERBATCH/800?w5=1080",
-        "title": "群相册《示例相册》",
-        "tagIcon": "https://qzonestyle.gtimg.cn/qzone/client/mqq/photo-album/group_image_samll.png",
-        "tagName": "群相册",
-        "forwardMessage": "上传1张图片",
-        "imageInfo": {
-          "width": 1080,
-          "height": 1932
-        },
-        "jumpUrl": "mqzone://arouse/groupalbum/feeddetail?groupid=100000002&albumid=PLACEHOLDER&batchid=1700000000",
-        "legacyUrl": "https://h5.qzone.qq.com/groupphoto/inqq/detail/placeholder",
-        "legacyVersion": "9.0.8",
-        "pcJumpUrl": "https://h5.qzone.qq.com/groupphoto/inqq/detail/placeholder",
-        "picNum": 1
-      }
-    },
-    "config": {
-      "autosize": 0,
-      "collect": 0,
-      "ctime": 1790228018,
-      "forward": 0,
-      "reply": 1,
-      "round": 1,
-      "token": "00000000000000000000000000000000",
-      "type": "normal"
-    },
-    "view": "view_00000000000000000000000000000000",
-    "ver": "0.0.0.1"
+  "meta": {
+   "news": {
+    "app_type": 1,
+    "appid": 100507190,
+    "ctime": 1791095380,
+    "desc": "#vomic漫画  #短篇漫画  #好看的漫画推荐  #漫画推荐  #漫画解读 …",
+    "jumpUrl": "https://www.xiaohongshu.com/discovery/item/6ac1d9bc0000000015010fe4?app_platform=android&ignoreEngage=true&app_version=9.49.0&share_from_user_hidden=true&xsec_source=app_share&type=normal&xsec_token=TOKEN123&author_share=1&xhsshare=&shareRedId=ODg3OTg1Rz82NzUyOTgwNjczOTc4SEs6&apptime=1791095375&share_id=ba2c0782ce67492c81ed6b12ea0fc17d&share_channel=qq",
+    "preview": "https://qq.ugcimg.cn/v1/kgij0dgogojudbgdrb7hf10ajku1gisvaoug5e46bm2uujcs9vkdhm03p2d2vf5bf1h6vp58gjsc6eq755ovt317nluidu50cg66vtibghd34cu79eo9b5945cl8421uju38le6pmq088iida36phia859337ufl14v8ggnlf4ofq0j3koncef5o6pm2r51giqrfkeokv4kqu/te5k2p74u2hv0c0l2tib2udfasgknu0qbdn406t038rgj7je4vlg",
+    "tag": "小红书",
+    "tagIcon": "https://open.gtimg.cn/open/app_icon/00/50/71/90/100507190_100_m.png?t=1790992780",
+    "title": "读心术 vs 腹黑女",
+    "uin": 1000000008
+   }
   },
-  "com.tencent.map|Location.Search": {
-    "app": "com.tencent.map",
-    "config": {
-      "autosize": false,
-      "ctime": 1790937468,
-      "forward": true,
-      "token": "00000000000000000000000000000000",
-      "type": "normal"
+  "prompt": "[分享]读心术 vs 腹黑女",
+  "ver": "0.0.0.1",
+  "view": "news"
+ },
+ "com.tencent.miniapp_01|detail_1": {
+  "ver": "1.0.0.19",
+  "prompt": "[QQ小程序]根本就没有这样的唱歌小妹",
+  "config": {
+   "type": "normal",
+   "width": 0,
+   "height": 0,
+   "forward": 1,
+   "autoSize": 0,
+   "ctime": 1791211171,
+   "token": "REDACTED_SHARE_TOKEN_2"
+  },
+  "needShareCallBack": false,
+  "app": "com.tencent.miniapp_01",
+  "view": "view_8C8E89B49BE609866298ADDFF2DBABA4",
+  "meta": {
+   "detail_1": {
+    "appid": "1109937557",
+    "appType": 0,
+    "title": "哔哩哔哩",
+    "desc": "根本就没有这样的唱歌小妹",
+    "icon": "http://miniapp.gtimg.cn/public/appicon/432b76be3a548fc128acaa6c1ec90131_200.jpg",
+    "preview": "https://qq.ugcimg.cn/v1/vd9mc16v4u4fdiu18nu79url5pafpkd8vu2m49p6957forc9huhmdbdqa6ikiitb19ntsu0bcg3rgguic23go0ktqckn97jlgmco3u6ak4regs9md3geee219a476klf4tgguc7v0nmbgmatmq0jb81rtk/e9vf2tsqr6j29hl2kodb3vahlc",
+    "url": "m.q.qq.com/a/s/317018883516f820da0376ec24197c2b",
+    "scene": 1036,
+    "host": {
+     "uin": 1000000004,
+     "nick": "强国有我"
     },
-    "desc": "",
-    "from": 1,
-    "meta": {
-      "Location.Search": {
-        "address": "安徽省芜湖市湾沚区",
-        "enum_relation_type": 1,
-        "from": "plusPanel",
-        "from_account": 100000007,
-        "id": "",
-        "lat": "31.23967",
-        "lng": "118.498925",
-        "name": "示例地点",
-        "uint64_peer_account": 100000001
-      }
-    },
-    "prompt": "[位置]示例地点",
-    "ver": "1.1.2.21",
-    "view": "view_00000000000000000000000000000000"
+    "shareTemplateId": "8C8E89B49BE609866298ADDFF2DBABA4",
+    "shareTemplateData": {},
+    "qqdocurl": "https://b23.tv/zElGb1y",
+    "showLittleTail": "",
+    "gamePoints": "",
+    "gamePointsUrl": "",
+    "shareOrigin": 0
+   }
   }
+ },
+ "com.tencent.feed.lua|feed": {
+  "app": "com.tencent.feed.lua",
+  "prompt": "群相册《哥伦比娅》",
+  "bizsrc": "group_album.upload",
+  "meta": {
+   "feed": {
+    "cover": "http://qungz.photo.store.qq.com/qun-qungz/V61EhoPA3K9MIU4PMq1W2DgmvG1E4wQp/V5bCgAxMTA3NjQ4OTc3Lba0ag9u*AA!/800?w5=1080&h5=1932",
+    "title": "群相册《哥伦比娅》",
+    "tagIcon": "https://qzonestyle.gtimg.cn/qzone/client/mqq/photo-album/group_image_samll.png",
+    "tagName": "群相册",
+    "forwardMessage": "上传1张图片",
+    "imageInfo": {
+     "width": 1080,
+     "height": 1932
+    },
+    "jumpUrl": "mqzone://arouse/groupalbum/feeddetail?groupid=100002007&albumid=V61EhoPA3K9MIU4PMq1W2DgmvG1E4wQp&batchid=1790228013&groupCode=100002007&albumId=V61EhoPA3K9MIU4PMq1W2DgmvG1E4wQp&batchId=1790228013&llocid=&fromark=1&from=1001",
+    "legacyUrl": "https://h5.qzone.qq.com/groupphoto/inqq/detail/https%3A%2F%2Fmobile.qzone.qq.com%2Fphoto%2Fgroup%2Fbatch%3Fi%3DV61EhoPA3K9MIU4PMq1W2DgmvG1E4wQp%26u%3D100002007%26p%3D1790228013%26a%3D422%26v%3D2%26cmd%3D2/groupphoto?_wv=3&_proxy=1",
+    "legacyVersion": "9.0.8",
+    "pcJumpUrl": "https://h5.qzone.qq.com/groupphoto/inqq/detail/https%3A%2F%2Fmobile.qzone.qq.com%2Fphoto%2Fgroup%2Fbatch%3Fi%3DV61EhoPA3K9MIU4PMq1W2DgmvG1E4wQp%26u%3D100002007%26p%3D1790228013%26a%3D422%26v%3D2%26cmd%3D2/groupphoto?_wv=3&_proxy=1",
+    "picNum": 1
+   }
+  },
+  "config": {
+   "autosize": 0,
+   "collect": 0,
+   "ctime": 1790228018,
+   "forward": 0,
+   "reply": 1,
+   "round": 1,
+   "token": "REDACTED_SHARE_TOKEN_3",
+   "type": "normal"
+  },
+  "view": "feed",
+  "ver": "0.0.0.1"
+ },
+ "com.tencent.map|Location.Search": {
+  "app": "com.tencent.map",
+  "config": {
+   "autosize": false,
+   "ctime": 1790937468,
+   "forward": true,
+   "token": "REDACTED_SHARE_TOKEN_4",
+   "type": "normal"
+  },
+  "desc": "",
+  "from": 1,
+  "meta": {
+   "Location.Search": {
+    "address": "安徽省芜湖市湾沚区",
+    "enum_relation_type": 1,
+    "from": "plusPanel",
+    "from_account": 3137386121,
+    "id": "",
+    "lat": "31.23967",
+    "lng": "118.498925",
+    "name": "湾沚区六郎镇头窑",
+    "uint64_peer_account": 100002013
+   }
+  },
+  "prompt": "[位置]湾沚区六郎镇头窑",
+  "ver": "1.1.2.21",
+  "view": "LocationShare"
+ }
 }

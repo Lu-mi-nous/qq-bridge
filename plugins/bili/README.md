@@ -11,7 +11,7 @@
 | `lib/bili.js` | B 站 API：取视频信息、字幕、热门/排行、取流、抽帧、观看记忆 |
 | `lib/bili-auth.js` | 登录态加载、搜索（`-412` 的根因是没带 Cookie） |
 | `lib/bili-browse.js` | 自主刷候选打分、观看深度、提示词、扫尾判定 |
-| `config.schema.js` | 配置字段清单（可读版） |
+| `config.reference.js` | 配置字段清单（可读版） |
 
 ## 谁在用它
 

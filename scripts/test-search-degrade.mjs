@@ -178,7 +178,15 @@ console.log('\n── 6. 源码接线（防漏接）──');
   const html = fs.readFileSync(path.join(root, 'plugins/web-search/lib/engines/bing-html.mjs'), 'utf8');
   const rss = fs.readFileSync(path.join(root, 'plugins/web-search/lib/engines/bing-rss.mjs'), 'utf8');
   const idx = fs.readFileSync(path.join(root, 'plugins/web-search/lib/index.mjs'), 'utf8');
-  const mcp = fs.readFileSync(path.join(root, 'src/mcp-web-search-safe.js'), 'utf8');
+  const { registerSearchTool } = await import('../plugins/web-search/mcp-tools.js');
+  let handler;
+  let searchResult = { query: '长查询', engine: 'fixture', results: [{ title: '实体词' }], tried: [], retriedWith: '实体词' };
+  registerSearchTool({ config: { get: () => ({}) }, mcp: { registerTool: (name, description, schema, fn) => { handler = fn; } } }, {
+    searchWeb: async () => searchResult, sanitizeQuery: q => q, describeEngines: () => ''
+  });
+  const retried = JSON.parse((await handler({ query: '长查询' })).content[0].text);
+  searchResult = { ...searchResult, engine: 'weather', retriedWith: undefined };
+  const weatherResult = JSON.parse((await handler({ query: '天气' })).content[0].text);
   const plan = fs.readFileSync(path.join(root, 'plugins/web-search/lib/query-plan.mjs'), 'utf8');
   const weather = fs.readFileSync(path.join(root, 'plugins/web-search/lib/engines/weather.mjs'), 'utf8');
 
@@ -187,9 +195,9 @@ console.log('\n── 6. 源码接线（防漏接）──');
   check('判定函数集中在 query-plan 并导出', /export function looksOffTopic/.test(plan) && /export function entityChunk/.test(plan) && /looksOffTopic/.test(html));
   check('bing-rss 复用同一判定', /from '\.\/bing-html\.mjs'/.test(rss) && /looksOffTopic/.test(rss) && /retryQueryFor/.test(rss));
   check('searchWeb 把 retriedWith 透传给调用方', /if \(res\?\.retriedWith\) extra\.retriedWith/.test(idx));
-  check('MCP 工具把 retriedWith 告知模型', /retriedWith: result\.retriedWith, note/.test(mcp));
-  check('MCP 提示模型不要把窄查询结果当成原查询答案', /不要把这些结果当成原查询的直接答案/.test(mcp));
-  check('MCP 告知模型天气数据可直接引用', /Open-Meteo 的实时观测/.test(mcp));
+  check('MCP 工具把 retriedWith 告知模型', retried.retriedWith === '实体词');
+  check('MCP 提示模型不要把窄查询结果当成原查询答案', /不要把这些结果当成原查询的直接答案/.test(retried.note));
+  check('MCP 告知模型天气数据可直接引用', /Open-Meteo 的实时观测/.test(weatherResult.note));
   check('降级时返回空结果而不是无关条目', /results: \[\], degraded: true/.test(html));
   check('默认引擎链包含 weather', /DEFAULT_ENGINES = \['weather'/.test(idx));
   check('天气引擎调用 Open-Meteo geocoding + forecast',

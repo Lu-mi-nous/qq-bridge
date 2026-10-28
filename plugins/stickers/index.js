@@ -11,8 +11,10 @@
 // 插件缺席：网关降级（读取给空值、写缓存抛明确错误），桥接照常启动，表情功能等同关闭。
 import * as lib from './lib/sticker-lib.js';
 import * as pick from './lib/sticker-pick.js';
+import { registerStickersTools } from './mcp-tools.js';
 
 export function create(ctx) {
+  registerStickersTools(ctx);
   ctx.console?.registerCard?.({
     id: 'stickers',
     title: '表情包（图库 / 挑选 / 收藏）',

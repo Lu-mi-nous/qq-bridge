@@ -38,6 +38,9 @@ export const DEFAULT_CONTEXT_MEMORY = {
   memoryPackChars: 1500,         // 注入 wake prompt 的记忆包字符上限
   promptBudgetChars: 20000,      // 唤醒提示超过这个字符数就在日志里告警
   promptMaxChars: 6000,          // 摘要请求里聊天记录的最大字符数
+  // T4：主动轮换阈值——最后一次请求的输入（含缓存）达到模型的这个比例就提前换会话。
+  rotateAtRatio: 0.7,
+  modelLimitTokens: 1048576,
   // Phase 3 P1：积压阈值/历史、召回审计。积压不是硬丢弃，而是控制台告警与追赶依据。
   backlogWarnMessages: 200,
   backlogCriticalMessages: 800,

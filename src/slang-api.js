@@ -1,41 +1,32 @@
-// 黑话能力网关（R4.5-7）。
-//
-// 黑话库读写、候选抽取/研究提示词、解析与注入片段都在 `plugins/slang/lib/`；
-// 核心通过本网关使用。插件缺席时：读取类返回空值、写入类安全跳过，
-// 桥接照常启动（黑话学习/注入等同关闭）。
-let impl = {};
-let loadError = '';
-try {
-  impl = await import('../plugins/slang/lib/slang-learner.js');
-} catch (error) {
-  loadError = String(error?.message ?? error);
-}
-
-export const slangPluginLoaded = Object.keys(impl).length > 0;
-export const slangPluginError = loadError;
-
-export const SLANG_STATUS = impl.SLANG_STATUS ?? Object.freeze({
+// 逐调用查询宿主，不直接加载插件实现。
+export function createSlangApi({ getCapability = () => null } = {}) {
+const getImpl = () => getCapability('slang.instance')?.learner ?? {};
+const available = () => !!getCapability('slang.instance')?.learner;
+const SLANG_STATUS = getImpl().SLANG_STATUS ?? Object.freeze({
   CANDIDATE: 'candidate',
   CONFIRMED: 'confirmed',
   REJECTED: 'rejected'
 });
 
-export const nowIso = () => (impl.nowIso ? impl.nowIso() : new Date().toISOString());
-export const createId = () => (impl.createId ? impl.createId()
+const nowIso = () => (getImpl().nowIso ? getImpl().nowIso() : new Date().toISOString());
+const createId = () => (getImpl().createId ? getImpl().createId()
   : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8));
-export const normalizeSlangEntry = (raw) => (impl.normalizeSlangEntry ? impl.normalizeSlangEntry(raw) : raw);
-export const loadSlang = (file) => (impl.loadSlang ? impl.loadSlang(file) : []);
-export const saveSlang = (...a) => impl.saveSlang?.(...a);
-export const createSlangEntry = (input = {}) => (impl.createSlangEntry ? impl.createSlangEntry(input) : {
+const normalizeSlangEntry = (raw) => (getImpl().normalizeSlangEntry ? getImpl().normalizeSlangEntry(raw) : raw);
+const loadSlang = (file) => (getImpl().loadSlang ? getImpl().loadSlang(file) : []);
+const saveSlang = (...a) => getImpl().saveSlang?.(...a);
+const createSlangEntry = (input = {}) => (getImpl().createSlangEntry ? getImpl().createSlangEntry(input) : {
   content: String(input.content ?? '').trim(), meaning: '', usage: '', example: '', risk: '',
   sources: [], status: 'candidate', source: 'ai', evidence: []
 });
-export const upsertSlangEntry = (entries, content, patch) => (impl.upsertSlangEntry
-  ? impl.upsertSlangEntry(entries, content, patch)
+const upsertSlangEntry = (entries, content, patch) => (getImpl().upsertSlangEntry
+  ? getImpl().upsertSlangEntry(entries, content, patch)
   : entries);
-export const mergeEvidence = (current, incoming) => (impl.mergeEvidence ? impl.mergeEvidence(current, incoming) : current);
-export const buildSlangContext = (...a) => (impl.buildSlangContext ? impl.buildSlangContext(...a) : '');
-export const buildExtractionPrompt = (...a) => (impl.buildExtractionPrompt ? impl.buildExtractionPrompt(...a) : '');
-export const buildResearchPrompt = (...a) => (impl.buildResearchPrompt ? impl.buildResearchPrompt(...a) : '');
-export const parseExtractionJson = (...a) => (impl.parseExtractionJson ? impl.parseExtractionJson(...a) : []);
-export const parseResearchJson = (...a) => (impl.parseResearchJson ? impl.parseResearchJson(...a) : []);
+const mergeEvidence = (current, incoming) => (getImpl().mergeEvidence ? getImpl().mergeEvidence(current, incoming) : current);
+const buildSlangContext = (...a) => (getImpl().buildSlangContext ? getImpl().buildSlangContext(...a) : '');
+const buildExtractionPrompt = (...a) => (getImpl().buildExtractionPrompt ? getImpl().buildExtractionPrompt(...a) : '');
+const buildResearchPrompt = (...a) => (getImpl().buildResearchPrompt ? getImpl().buildResearchPrompt(...a) : '');
+const parseExtractionJson = (...a) => (getImpl().parseExtractionJson ? getImpl().parseExtractionJson(...a) : []);
+const parseResearchJson = (...a) => (getImpl().parseResearchJson ? getImpl().parseResearchJson(...a) : []);
+
+return { available, SLANG_STATUS, nowIso, createId, normalizeSlangEntry, loadSlang, saveSlang, createSlangEntry, upsertSlangEntry, mergeEvidence, buildSlangContext, buildExtractionPrompt, buildResearchPrompt, parseExtractionJson, parseResearchJson };
+}

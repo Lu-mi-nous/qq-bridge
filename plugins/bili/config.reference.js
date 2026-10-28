@@ -1,5 +1,6 @@
+// 参考文档：宿主不导入此文件，也不据此校验配置。
 // B 站插件配置说明（与 config-schema.js 的 socialV2.bili 保持同形）。
-export const configSchema = {
+export const configReference = {
   enabled: 'boolean',
   authFile: 'string',
   'memory.file': 'string',
@@ -23,4 +24,4 @@ export const configSchema = {
   'selfBrowsing.shareProbability': 'number(0..1)'
 };
 
-export default configSchema;
+export default configReference;

@@ -17,7 +17,7 @@
 | `lib/github-shot.js` | GitHub 截图：URL 解析、分段、代理、超时 |
 | `lib/feature-menu*.js` | 功能菜单：数据、HTML/CSS、渲染与缓存 |
 | `lib/token-report*.js` | Token 报表：数据、HTML、渲染与缓存 |
-| `config.schema.js` | 相关配置字段（`githubShot.*`、`tools.*`） |
+| `config.reference.js` | 相关配置字段（`githubShot.*`、`tools.*`） |
 
 ## 谁在用它
 

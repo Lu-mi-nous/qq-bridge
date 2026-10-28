@@ -60,11 +60,11 @@ const deps = {
 };
 const wake = createWakePromptBuilder(deps);
 
-console.log('── 1. 唤醒提示注入角色卡正文（行为断言）──');
+console.log('── 1. 唤醒提示注入角色（T3：默认摘要，全卡走 bootstrap/detail=full）──');
 {
   const prompt = wake.buildWakePrompt('group:123', 'bootstrap');
   check('角色段包含角色名', prompt.includes('【当前角色】大肥鱼'));
-  check('角色卡正文进入唤醒提示（角色卡独有句子）', prompt.includes('接得自然比接得多重要'));
+  check('降级路径：缺 roleTextFor 时回退注入整卡（角色卡独有句子）', prompt.includes('接得自然比接得多重要'));
   check('不再退回「完整角色卡请调用 qq_get_prompt 查看」',
     !prompt.includes('（完整角色卡请调用 qq_get_prompt 查看）'));
   check('bootstrap 引导仍要求先看 prompt / 设置唤醒',
@@ -77,6 +77,20 @@ console.log('── 1. 唤醒提示注入角色卡正文（行为断言）──
   check('记录断层注入字数', deps.contextMetrics.get('group:123')?.lastGapChars > 0);
   const poke = wake.buildWakePrompt('group:123', 'pokeSelf');
   check('pokeSelf 唤醒仍带角色卡', poke.includes('接得自然比接得多重要') && poke.includes('有人拍了你'));
+}
+{
+  // T3：桥接提供 roleTextFor 时，默认注入摘要而不是整卡。
+  const layered = createWakePromptBuilder({ ...deps, roleTextFor: () => '【摘要】测试鱼的核心设定' });
+  const prompt = layered.buildWakePrompt('group:123', 'question');
+  check('普通唤醒注入角色摘要', prompt.includes('【摘要】测试鱼的核心设定'));
+  check('普通唤醒不含整卡正文', !prompt.includes('接得自然比接得多重要'));
+}
+{
+  // T3：分项字符指标可读。
+  const prompt = wake.buildWakePrompt('group:123', 'question');
+  const chars = deps.contextMetrics.get('group:123')?.lastPromptSections;
+  check('记录唤醒提示分项字符（total/role/sticker）',
+    chars?.total === prompt.length && chars.role > 0 && Number.isFinite(chars.sticker));
 }
 
 console.log('\n── 2. bridge / pipeline 接线 ──');

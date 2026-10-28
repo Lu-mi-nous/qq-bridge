@@ -86,8 +86,9 @@
     - id: tool-result-pruner
       name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
       config:
-        thresholdChars: 50000
-        headChars: 45000
+        # 约束：headChars + 截断标记 + tailChars ≤ thresholdChars（DSH 挂载时校验）
+        thresholdChars: 12000
+        headChars: 9000
         tailChars: 2000
 
 

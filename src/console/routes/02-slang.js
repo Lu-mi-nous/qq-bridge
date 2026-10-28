@@ -25,6 +25,9 @@ export const routes = [
 
 export async function handle(req, res, url, ctx) {
   const { sendJson, readBody, deps } = ctx;
+  const unavailable = () => !deps.pluginHost?.capabilities?.get('slang.instance');
+  const rejectUnavailable = () => { sendJson({ ok: false, error: '黑话插件不可用' }, 503); };
+  if (unavailable()) { rejectUnavailable(); return; }
   const {
     ROOT,
     SLANG_STATUS,
@@ -54,6 +57,7 @@ export async function handle(req, res, url, ctx) {
   }
   if (req.method === 'POST' && url.pathname === '/api/slang') {
     const body = await readBody();
+    if (unavailable()) { rejectUnavailable(); return; }
     const content = String(body.content ?? '').trim();
     if (!content) { sendJson({ ok: false, error: '黑话内容不能为空' }, 400); return; }
     if (deps.live.slangEntries.some((e) => e.content === content)) { sendJson({ ok: false, error: `黑话「${content}」已存在` }, 400); return; }
@@ -76,6 +80,7 @@ export async function handle(req, res, url, ctx) {
   }
   if (req.method === 'POST' && url.pathname === '/api/slang/clear') {
     const body = await readBody();
+    if (unavailable()) { rejectUnavailable(); return; }
     const status = String(body.status ?? '').trim();
     if (status && ![SLANG_STATUS.CANDIDATE, SLANG_STATUS.CONFIRMED, SLANG_STATUS.REJECTED].includes(status)) {
       sendJson({ ok: false, error: `无效的 status：${status}，仅支持 candidate/confirmed/rejected 或留空全部删除` }, 400);
@@ -101,6 +106,7 @@ export async function handle(req, res, url, ctx) {
   }
   if (req.method === 'POST' && url.pathname === '/api/slang/batch-delete') {
     const body = await readBody();
+    if (unavailable()) { rejectUnavailable(); return; }
     const ids = Array.isArray(body.ids) ? body.ids.map(String).filter(Boolean) : [];
     const status = String(body.status ?? '').trim();
     if (ids.length) {
@@ -128,6 +134,7 @@ export async function handle(req, res, url, ctx) {
   }
   if (req.method === 'POST' && url.pathname === '/api/slang/batch-confirm') {
     const body = await readBody();
+    if (unavailable()) { rejectUnavailable(); return; }
     const ids = Array.isArray(body.ids) ? body.ids.map(String).filter(Boolean) : [];
     if (!ids.length) { sendJson({ ok: false, error: '请选择要确认的黑话' }, 400); return; }
     let confirmedCount = 0;
@@ -150,6 +157,7 @@ export async function handle(req, res, url, ctx) {
   }
   if (req.method === 'POST' && url.pathname === '/api/slang/batch-reject') {
     const body = await readBody();
+    if (unavailable()) { rejectUnavailable(); return; }
     const ids = Array.isArray(body.ids) ? body.ids.map(String).filter(Boolean) : [];
     if (!ids.length) { sendJson({ ok: false, error: '请选择要拒绝的黑话' }, 400); return; }
     let rejectedCount = 0;
@@ -173,6 +181,7 @@ export async function handle(req, res, url, ctx) {
     const idx = deps.live.slangEntries.findIndex((e) => e.id === id);
     if (idx < 0) { sendJson({ ok: false, error: '黑话不存在' }, 404); return; }
     const body = await readBody();
+    if (unavailable()) { rejectUnavailable(); return; }
     const entry = { ...deps.live.slangEntries[idx] };
     if (body.content !== undefined) entry.content = String(body.content ?? '').trim();
     if (body.content !== undefined && deps.live.slangEntries.some((e) => e.id !== id && e.content === entry.content)) {
@@ -198,6 +207,7 @@ export async function handle(req, res, url, ctx) {
     const idx = deps.live.slangEntries.findIndex((e) => e.id === id);
     if (idx < 0) { sendJson({ ok: false, error: '黑话不存在' }, 404); return; }
     const body = await readBody();
+    if (unavailable()) { rejectUnavailable(); return; }
     const entry = deps.live.slangEntries[idx];
     if (body.meaning !== undefined) entry.meaning = String(body.meaning ?? '').trim();
     if (body.usage !== undefined) entry.usage = String(body.usage ?? '').trim();
@@ -240,6 +250,7 @@ export async function handle(req, res, url, ctx) {
   if (req.method === 'POST' && url.pathname === '/api/slang/extract') {
     if (cfg.slang?.enabled === false) { sendJson({ ok: false, error: '黑话学习已关闭（slang.enabled=false）' }, 400); return; }
     const body = await readBody();
+    if (unavailable()) { rejectUnavailable(); return; }
     const key = String(body.key ?? '').trim();
     if (key && slangWindows.has(key)) {
       queueSlangTask(() => runSlangExtraction(key));
@@ -255,6 +266,7 @@ export async function handle(req, res, url, ctx) {
   if (req.method === 'POST' && url.pathname === '/api/slang/research') {
     if (cfg.slang?.enabled === false) { sendJson({ ok: false, error: '黑话学习已关闭（slang.enabled=false）' }, 400); return; }
     const body = await readBody();
+    if (unavailable()) { rejectUnavailable(); return; }
     const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
     const candidates = ids.length
       ? deps.live.slangEntries.filter((e) => ids.includes(e.id) && e.status === SLANG_STATUS.CANDIDATE)
@@ -266,6 +278,7 @@ export async function handle(req, res, url, ctx) {
   }
   if (req.method === 'POST' && url.pathname === '/api/slang/config') {
     const body = await readBody();
+    if (unavailable()) { rejectUnavailable(); return; }
     const oldPreset = cfg.slang?.learnerPreset;
     const oldWorkspaceTitle = cfg.slang?.workspaceTitle;
     const configFile = path.join(ROOT, 'config.json');

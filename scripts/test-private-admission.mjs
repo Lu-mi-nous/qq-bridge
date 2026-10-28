@@ -89,7 +89,7 @@ console.log('\n── 新加好友必须立刻能用（2026-10-13「私聊怎么
   //
   // 修法：私聊被拒时强制刷新一次好友列表（带全局限流）再定论。
   const cfg = cfgOf('friends', []);
-  const stale = new Set(['1000000000', '1000000009']);            // 旧缓存（缺新好友）
+  const stale = new Set(['1000000000', '1000000006']);            // 旧缓存（缺新好友）
   const fresh = new Set([...stale, '3344952470']);                 // 刷新后
   check('缓存过期时新好友被拒（复现 bug）', privateAllowed(3344952470, cfg, stale) === false);
   check('刷新后同一好友放行（修复生效）', privateAllowed(3344952470, cfg, fresh) === true);

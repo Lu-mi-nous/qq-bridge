@@ -1,47 +1,16 @@
-// 图片能力网关（R4.5-5a）。
-//
-// 实现（图源/画风/反查/归档/差评/来源提示/Pixiv 凭据）已迁到 `plugins/images/lib/`；
-// 图库存储（image-store）与门面/请求服务仍留核心，它们通过本网关使用插件实现。
-// 插件缺席时：同步函数返回安全空值、异步函数抛明确错误，桥接照常启动
-// （图片能力等同关闭，图库仍可读已有文件）。
-let src = {};
-let rev = {};
-let archive = {};
-let feedback = {};
-let hint = {};
-let style = {};
-let pixiv = {};
-let quality = {};
-let store = {};
-let loadError = '';
-try {
-  src = await import('../plugins/images/lib/image-sources.js');
-  rev = await import('../plugins/images/lib/image-reverse-search.mjs');
-  archive = await import('../plugins/images/lib/image-archive.js');
-  feedback = await import('../plugins/images/lib/image-feedback.js');
-  hint = await import('../plugins/images/lib/image-source-hint.js');
-  style = await import('../plugins/images/lib/image-style.js');
-  pixiv = await import('../plugins/images/lib/pixiv-auth.js');
-  quality = await import('../plugins/images/lib/image-quality.js');
-  store = await import('../plugins/images/lib/image-store.js');
-} catch (error) {
-  loadError = String(error?.message ?? error);
-}
-
-export const imagesPluginLoaded = Object.keys(src).length > 0;
-export const imagesPluginError = loadError;
-const notLoaded = () => { throw new Error(`图片插件未加载（plugins/images）：${loadError || 'unknown'}`); };
-
+export function createImagesApi({ getCapability = () => null } = {}) {
+const current = () => getCapability('images.instance');
+const available = () => !!current();
+const notLoaded = () => { throw new Error('图片插件不可用'); };
 // image-sources
-export const fetchFromSources = (...a) => (src.fetchFromSources ? src.fetchFromSources(...a) : notLoaded());
-export const resolveTagName = (...a) => (src.resolveTagName ? src.resolveTagName(...a) : Promise.resolve(String(a[0] ?? '')));
-export const sourcePageOf = (...a) => (src.sourcePageOf ? src.sourcePageOf(...a) : '');
-export const translateArtistTag = (...a) => (src.translateArtistTag ? src.translateArtistTag(...a) : Promise.resolve(''));
+const fetchFromSources = (...a) => (current()?.sources?.fetchFromSources ? current()?.sources?.fetchFromSources(...a) : notLoaded());
+const resolveTagName = (...a) => (current()?.sources?.resolveTagName ? current()?.sources?.resolveTagName(...a) : Promise.resolve(String(a[0] ?? '')));
+const sourcePageOf = (...a) => (current()?.sources?.sourcePageOf ? current()?.sources?.sourcePageOf(...a) : '');
+const translateArtistTag = (...a) => (current()?.sources?.translateArtistTag ? current()?.sources?.translateArtistTag(...a) : Promise.resolve(''));
 
 // image-reverse-search
-export const DB_INDEX = rev.DB_INDEX ?? {};
-export const createReverseSearcher = (opts) => (rev.createReverseSearcher
-  ? rev.createReverseSearcher(opts)
+const createReverseSearcherNow = (opts) => (current()?.reverse?.createReverseSearcher
+  ? current()?.reverse?.createReverseSearcher(opts)
   : {
       available: false,
       search: () => notLoaded(),
@@ -51,46 +20,46 @@ export const createReverseSearcher = (opts) => (rev.createReverseSearcher
     });
 
 // image-archive
-export const saveOriginalImage = (...a) => (archive.saveOriginalImage
-  ? archive.saveOriginalImage(...a)
+const saveOriginalImage = (...a) => (current()?.archive?.saveOriginalImage
+  ? current()?.archive?.saveOriginalImage(...a)
   : Promise.resolve({ ok: false, error: '图片插件未加载' }));
 
 // image-feedback
-export const classifyImageFeedback = (...a) => (feedback.classifyImageFeedback
-  ? feedback.classifyImageFeedback(...a)
+const classifyImageFeedback = (...a) => (current()?.feedback?.classifyImageFeedback
+  ? current()?.feedback?.classifyImageFeedback(...a)
   : { negative: false, matched: [], reason: '图片插件未加载' });
-export const createFeedbackGate = (opts) => (feedback.createFeedbackGate
-  ? feedback.createFeedbackGate(opts)
+const createFeedbackGateNow = (opts) => (current()?.feedback?.createFeedbackGate
+  ? current()?.feedback?.createFeedbackGate(opts)
   : { shouldSwap: () => false, record: () => {}, reset: () => {} });
 
 // image-source-hint
-export const detectSourceRequest = (...a) => (hint.detectSourceRequest
-  ? hint.detectSourceRequest(...a)
+const detectSourceRequest = (...a) => (current()?.hint?.detectSourceRequest
+  ? current()?.hint?.detectSourceRequest(...a)
   : { sources: [], matched: [], reason: '图片插件未加载' });
-export const createSourceHintStore = (opts) => (hint.createSourceHintStore
-  ? hint.createSourceHintStore(opts)
+const createSourceHintStoreNow = (opts) => (current()?.hint?.createSourceHintStore
+  ? current()?.hint?.createSourceHintStore(opts)
   : { get: () => null, remember: () => {}, clear: () => {} });
 
 // image-style
-export const extractStyleVectors = (...a) => (style.extractStyleVectors ? style.extractStyleVectors(...a) : Promise.resolve(null));
-export const cosine = (...a) => (style.cosine ? style.cosine(...a) : 0);
+const extractStyleVectors = (...a) => (current()?.style?.extractStyleVectors ? current()?.style?.extractStyleVectors(...a) : Promise.resolve(null));
+const cosine = (...a) => (current()?.style?.cosine ? current()?.style?.cosine(...a) : 0);
 
 // pixiv-auth
-export const loadPixivAuth = (file) => (pixiv.loadPixivAuth
-  ? pixiv.loadPixivAuth(file)
+const loadPixivAuth = (file) => (current()?.pixiv?.loadPixivAuth
+  ? current()?.pixiv?.loadPixivAuth(file)
   : { cookie: '', hasSession: false, loaded: false, reason: '图片插件未加载' });
-export const setPixivCookie = (...a) => pixiv.setPixivCookie?.(...a);
-export const hasPixivCookie = (...a) => (pixiv.hasPixivCookie ? pixiv.hasPixivCookie(...a) : false);
-export const withPixivAuth = (headers) => (pixiv.withPixivAuth ? pixiv.withPixivAuth(headers) : headers);
+const setPixivCookie = (...a) => current()?.pixiv?.setPixivCookie?.(...a);
+const hasPixivCookie = (...a) => (current()?.pixiv?.hasPixivCookie ? current()?.pixiv?.hasPixivCookie(...a) : false);
+const withPixivAuth = (headers) => (current()?.pixiv?.withPixivAuth ? current()?.pixiv?.withPixivAuth(headers) : headers);
 
 // image-quality
-export const isGroupLike = (...a) => (quality.isGroupLike ? quality.isGroupLike(...a) : false);
-export const checkQuality = (...a) => (quality.checkQuality ? quality.checkQuality(...a) : { ok: false, reason: '图片插件未加载' });
+const isGroupLike = (...a) => (current()?.quality?.isGroupLike ? current()?.quality?.isGroupLike(...a) : false);
+const checkQuality = (...a) => (current()?.quality?.checkQuality ? current()?.quality?.checkQuality(...a) : { ok: false, reason: '图片插件未加载' });
 
 // image-store（R4.5-5b）：插件缺席时给一个空 store，门面/控制台仍可构造与展示。
 const emptyStoreStats = () => ({ total: 0, totalBytes: 0, totalMB: 0, maxFiles: 0, maxTotalMB: 0, sent: 0, bySource: {} });
-export const createImageStore = (opts) => (store.createImageStore
-  ? store.createImageStore(opts)
+const createImageStoreNow = (opts) => (current()?.store?.createImageStore
+  ? current()?.store?.createImageStore(opts)
   : {
       libDir: '',
       indexPath: '',
@@ -114,3 +83,28 @@ export const createImageStore = (opts) => (store.createImageStore
       isRejected: () => false,
       rejectedStats: () => ({ total: 0 })
     });
+
+const createImageStore = (...args) => deferred(() => createImageStoreNow(...args));
+
+const createFeedbackGate = (...args) => deferred(() => createFeedbackGateNow(...args));
+
+const createSourceHintStore = (...args) => deferred(() => createSourceHintStoreNow(...args));
+
+const createReverseSearcher = (...args) => deferred(() => createReverseSearcherNow(...args));
+function deferred(create) {
+  let owner, value;
+  const resolve = () => {
+    const next = current();
+    if (next !== owner || !value) { owner = next; value = create(); }
+    return value;
+  };
+  return new Proxy({}, { get(_, key) {
+    const v = resolve()[key];
+    return typeof v === 'function' ? (...args) => {
+      const active = resolve();
+      return typeof active[key] === 'function' ? active[key](...args) : undefined;
+    } : v;
+  } });
+}
+return { available, fetchFromSources, resolveTagName, sourcePageOf, translateArtistTag, get DB_INDEX() { return current()?.reverse?.DB_INDEX ?? {}; }, createReverseSearcher, saveOriginalImage, classifyImageFeedback, createFeedbackGate, detectSourceRequest, createSourceHintStore, extractStyleVectors, cosine, loadPixivAuth, setPixivCookie, hasPixivCookie, withPixivAuth, isGroupLike, checkQuality, createImageStore };
+}

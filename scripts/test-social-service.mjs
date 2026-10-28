@@ -135,6 +135,38 @@ console.log('\n── 3. 回复检查 / 睡眠 / 清理 ──');
   t3.service.clearTimers('group:1');
   check('清理四类定时器与待唤醒原因', t3.cleared.length === 4 && st3.pendingWakeReason === null
     && st3.pendingWakeReasons.length === 0);
+
+  // T1：回复检查只在「确实有新消息」时唤醒，避免无人接话时白烧一次模型调用。
+  {
+    const t4 = makeService();
+    t4.state('group:1');
+    t4.service.scheduleReplyCheck('group:1');
+    t4.timers.at(-1).fn();
+    check('T1 回复检查：无新消息不唤醒', t4.wakes.length === 0 && t4.logs.some((l) => l.includes('无新消息')));
+
+    const t5 = makeService();
+    const st5 = t5.state('group:1');
+    t5.service.scheduleReplyCheck('group:1');
+    st5.unread = [{ seq: 1, time: 1_700_000_000_000 }];
+    t5.timers.at(-1).fn();
+    check('T1 回复检查：有新消息唤醒一次', t5.wakes.length === 1 && t5.wakes[0].reason === 'replyCheck');
+
+    const t6 = makeService();
+    const st6 = t6.state('group:1');
+    t6.service.scheduleReplyCheck('group:1');
+    st6.unread = [{ seq: 1, time: 1_699_999_999_000 }];
+    t6.timers.at(-1).fn();
+    check('T1 回复检查：排程前的旧未读不算新消息', t6.wakes.length === 0);
+
+    const t7 = makeService();
+    const st7 = t7.state('group:1');
+    t7.service.scheduleReplyCheck('group:1');
+    st7.unread = [{ seq: 1, time: 1_700_000_000_001 }];
+    st7.pendingWakeTimer = { unref() {} };
+    t7.timers.at(-1).fn();
+    check('T1 回复检查：已有待处理唤醒时跳过（不双重唤醒）',
+      t7.wakes.length === 0 && t7.logs.some((l) => l.includes('已有待处理唤醒')));
+  }
 }
 
 console.log('\n── 4. 主动检查开关 ──');

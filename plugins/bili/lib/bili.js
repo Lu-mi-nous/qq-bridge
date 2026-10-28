@@ -21,8 +21,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { findFfmpeg, findFfprobe } from '../../../src/gif-frames.js';
-import { createJsonStore } from '../../../src/state/store.js';
+import { findFfmpeg, findFfprobe } from '../../../src/plugin-api/process.js';
+import { createJsonStore } from '../../../src/plugin-api/storage.js';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 const REFERER = 'https://www.bilibili.com/';

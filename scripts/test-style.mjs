@@ -36,7 +36,7 @@ check('空输入返回 null', meanVector([]) === null);
 // ── 画风有效性：用户收藏内「同作品」应比「跨作品」更相似 ──
 // 这是"提取的是画风而非画质"的核心判据。
 {
-  const base = 'C:/pixiv';
+  const base = 'D:/图片/pixiv';
   if (!fs.existsSync(base)) {
     skipped('画风有效性（找不到收藏目录）');
   } else {

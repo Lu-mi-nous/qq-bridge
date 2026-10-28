@@ -19,7 +19,7 @@
 | `lib/render.mjs` | 卡片渲染（ffmpeg，无需浏览器） |
 | `lib/translate.mjs` | 翻译（走网关模型） |
 | `lib/media-cache.mjs` | 配图/视频缓存与定期清理（`state/x-monitor-media`） |
-| `config.schema.js` | 配置字段清单（可读版） |
+| `config.reference.js` | 配置字段清单（可读版） |
 
 ## 谁在用它
 

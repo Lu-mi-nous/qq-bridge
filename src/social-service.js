@@ -53,8 +53,23 @@ export function createSocialService({
     const askedQuestion = recentSelf.some((m) => /[?？吗呢怎么有没有能不能]/.test(String(m.text || m.plain || '')));
     if (askedQuestion) delay = Math.round(delay * 1.5);
     if (recentSelf.length >= 3) delay = Math.round(delay * 1.3);
+    // T1：记录排程时刻，到时只对「这之后到达的未读」唤醒。
+    const since = now();
     st.replyCheckTimer = setTimer(() => {
       st.replyCheckTimer = null;
+      // T1：没人接话时不再无条件叫醒模型（那是一次纯浪费的模型调用）。
+      // 已经有别的唤醒在排队/睡眠定时器时也跳过，避免一条消息两次唤醒。
+      const fresh = getState(key);
+      if (fresh.pendingWakeTimer || fresh.sleepTimer) {
+        log(`[reserved2] 回复检查 ${key}：已有待处理唤醒，跳过`);
+        return;
+      }
+      const unread = Array.isArray(fresh.unread) ? fresh.unread : [];
+      const hasNew = unread.some((m) => Number(m?.time || 0) >= since);
+      if (!hasNew) {
+        log(`[reserved2] 回复检查 ${key}：无新消息，跳过唤醒`);
+        return;
+      }
       void sendWakePrompt(key, 'replyCheck').catch((error) => log(`[reserved2] replyCheck 唤醒异常 ${key}:`, error?.message ?? error));
     }, delay);
     st.replyCheckTimer.unref?.();

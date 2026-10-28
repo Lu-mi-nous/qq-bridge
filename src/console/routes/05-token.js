@@ -49,7 +49,8 @@ export async function handle(req, res, url, ctx) {
     const data = deps.live.tokenUsage || loadTokenUsage();
     if (!data) {
       // 还没算过：返回空态 + 提示（前端会显示"正在统计"）
-      sendJson({ ok: true, ready: false, days: {}, models: {}, dayModels: {}, turns: 0, calls: 0 });
+      sendJson({ ok: true, ready: false, days: {}, models: {}, dayModels: {}, turns: 0, calls: 0,
+        turnMetrics: typeof deps.live.turnMetrics === 'function' ? deps.live.turnMetrics() : null });
       return;
     }
     // 口径：DSH 的 inputTokens = 未命中缓存的输入，cacheReadTokens = 命中缓存的输入；
@@ -130,7 +131,12 @@ export async function handle(req, res, url, ctx) {
       // 按模型：当前所选日期（或全时段）的明细，按输入量排序
       models: Object.entries(modelSource)
         .map(([model, v]) => ({ model, ...derive(v) }))
-        .sort((a, b) => b.input - a.input)
+        .sort((a, b) => b.input - a.input),
+      // T5：按回合的 Token 效率指标（KPI 见 docs/refactor-t5-acceptance.md）。
+      // 与上方 token-usage 口径分开：这里按「回合」统计，不做全量转录扫描。
+      turnMetrics: typeof deps.live.turnMetrics === 'function'
+        ? deps.live.turnMetrics({ day: wantAll ? undefined : wantDate })
+        : null
     });
     return;
   }

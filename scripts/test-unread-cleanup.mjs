@@ -86,7 +86,7 @@ console.log('\n── 真实状态快照复盘（若仍在则说明修复前数�
   const p = 'state/social-v2.json';
   if (fs.existsSync(p)) {
     const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-    const c = j.conversations?.['group:1000000010'];
+    const c = j.conversations?.['group:100002005'];
     if (c) {
       const un = (c.unread || []).length;
       const water = Number(c.wakeSeqAt) || 0;

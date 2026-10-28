@@ -1,5 +1,6 @@
+// 参考文档：宿主不导入此文件，也不据此校验配置。
 // 跨会话人物记忆配置说明（与 config-schema.js 的 socialV2.sharedMemory 保持同形）。
-export const configSchema = {
+export const configReference = {
   enabled: 'boolean',
   shareProfiles: 'boolean',
   includePrivate: 'boolean',
@@ -13,4 +14,4 @@ export const configSchema = {
   identityTtlDays: 'integer(1..3650)'
 };
 
-export default configSchema;
+export default configReference;

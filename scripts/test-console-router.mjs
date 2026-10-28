@@ -49,18 +49,20 @@ const pluginConfigItems = [{
   set: (value) => { testSecret = String(value || ''); }
 }];
 const pluginConfigMeta = pluginConfigItems.map(({ get, set, ...meta }) => meta);
+let pluginAvailable = true;
 const pluginHost = {
+  capabilities: { get: name => name === 'slang.instance' ? {} : null },
   list: () => [{
     id: 'tts', name: 'TTS', version: '1.0.0', status: 'started', error: '', dir: '',
     console: { cards: pluginCards, routes: [{ path: pluginRoutes[0].path, method: 'GET' }], configItems: pluginConfigMeta },
     consoleCard: pluginConsoleCard
   }],
-  getContext: () => ({
+  getContext: () => pluginAvailable ? ({
     console: { cards: pluginCards, routes: pluginRoutes, configItems: pluginConfigItems },
     config: { get: () => ({}) },
     state: {},
     log: () => {}
-  })
+  }) : null
 };
 
 const deps = {
@@ -112,7 +114,7 @@ const request = (method, p, { payload, contentType = 'application/json', headers
 try {
   {
     const r = await request('GET', '/api/about');
-    check('概览路由 /api/about 可命中', r.status === 200 && r.body.ok === true && r.body.name === 'QQ Bridge', String(r.status));
+    check('概览路由 /api/about 可命中', r.status === 200 && r.body.ok === true && r.body.name === 'WhaleBridge', String(r.status));
   }
   {
     const r = await request('GET', '/api/plugins');
@@ -180,6 +182,20 @@ try {
   {
     const r = await request('GET', '/api/plugins/tts/card');
     check('插件注册的控制台路由被转发', r.status === 200 && r.body.from === 'plugin');
+  }
+  {
+    pluginAvailable = false;
+    for (const [method, endpoint] of [['GET', 'card'], ['GET', 'config'], ['POST', 'config']]) {
+      const r = await request(method, `/api/plugins/tts/${endpoint}`, { payload: { key: 'testSecret', value: 'blocked' } });
+      check(`不可用插件拒绝 ${method} ${endpoint}`, r.status === 404);
+    }
+    check('被拒绝的配置写入无副作用', testSecret === '');
+    pluginAvailable = true;
+    const old = pluginRoutes[0];
+    pluginRoutes[0] = { ...old, handler: (req, res, url, helpers) => helpers.sendJson({ from: 'restarted' }) };
+    const r = await request('GET', '/api/plugins/tts/card');
+    check('恢复后取当前处理器', r.body.from === 'restarted');
+    pluginRoutes[0] = old;
   }
   {
     const r = await request('GET', '/api/plugins/tts/config');

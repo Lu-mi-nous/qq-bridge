@@ -1,5 +1,6 @@
+// 参考文档：宿主不导入此文件，也不据此校验配置。
 // 表情包插件配置说明（与 config-schema.js 的 socialV2.sticker 保持同形）。
-export const configSchema = {
+export const configReference = {
   enabled: 'boolean',
   syncTtlMs: 'integer(1000..3600000)',
   maxListCount: 'integer(1..1000)',
@@ -18,4 +19,4 @@ export const configSchema = {
   readLocalCache: 'boolean'
 };
 
-export default configSchema;
+export default configReference;

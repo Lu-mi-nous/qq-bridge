@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { proxyGet } from '../../../src/proxy-tunnel.js';
+import { proxyGet } from '../../../src/plugin-api/network.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENGINES_DIR = path.join(__dirname, 'engines');

@@ -1,3 +1,5 @@
+import { biliMcpHarness } from './helpers/bili-mcp-harness.mjs';
+const biliTools = biliMcpHarness();
 import { createEventHarness, sessionEvent, assistantMessage, turnEnd } from './helpers/dsh-event-harness.mjs';
 // 回归测试：B 站「自己刷」与全局观看记忆。
 //
@@ -494,7 +496,7 @@ console.log('\n── 6. 提示词 ──');
 
   // 简介必须传给模型（2026-10-19 反馈「问他相关信息回答不出来」：
   // 群里追问"啥视频啊"，它只能答"那种动漫解说"——因为手里没有简介）
-  const descInfo = { ...info, desc: '女主偷她爸三百万炒外汇加群友E九倍杠杆，五分钟从赚两千万到爆仓。' };
+  const descInfo = { ...info, desc: '女主偷她爸三百万炒外汇加群友E倍杠杆，五分钟从赚两千万到爆仓。' };
   const descHint = videoFramesHint(descInfo, grid);
   check('提示词包含简介', descHint.includes('简介：') && descHint.includes('女主偷她爸'), descHint.slice(0, 60));
   const longDesc = descInfo.desc.repeat(30);
@@ -667,11 +669,11 @@ console.log('\n── 8. 接线 ──');
   check('启动时初始化并调度', /scheduleBiliBrowse\(\)/.test(bridge));
   check('初始化失败不影响桥接', /\[B站\] 初始化失败（不影响桥接）/.test(biliBootstrap));
 
-  check('MCP 有记录工具', /'qq_bili_record'/.test(mcp));
-  check('MCP 有记忆查询工具', /'qq_bili_memory'/.test(mcp));
-  check('MCP 有观看工具', /'qq_watch_bili'/.test(mcp));
-  check('观看工具提示"不要只看标题"', /不要只看标题就回答/.test(mcp));
-  check('记录工具要求诚实（不喜欢也记）', /不喜欢的视频也记录/.test(mcp));
+  check('MCP 有记录工具', biliTools.has('qq_bili_record'));
+  check('MCP 有记忆查询工具', biliTools.has('qq_bili_memory'));
+  check('MCP 有观看工具', biliTools.has('qq_watch_bili'));
+  check('观看工具提示"不要只看标题"', /不要只看标题就回答/.test(biliTools.get('qq_watch_bili').description));
+  check('记录工具要求诚实（不喜欢也记）', /不喜欢的视频也记录/.test(biliTools.get('qq_bili_record').description));
 
   const b = cfg.socialV2?.bili ?? {};
   check("配置：每日额度 ≥2 小时", Number(b.selfBrowsing?.dailyBudgetSec) >= 7200, String(b.selfBrowsing?.dailyBudgetSec));
@@ -753,7 +755,8 @@ console.log('\n── 8. 接线 ──');
   check('初判也把每一张都发给模型',
     /scanimgs/.test(bridge) && /scan\.grid\.sheets/.test(bridge));
   check('观看端点返回全部分页', /images: sheets\.map/.test(consoleServer));
-  check('MCP 把全部分页交给模型', /Array\.isArray\(data\.images\)/.test(mcp));
+  const watchReply = await biliMcpHarness({}, () => ({ ok: true, info: { bvid: 'BVfixture' }, images: [{ data: 'page1' }, { data: 'page2' }] })).get('qq_watch_bili').handler({});
+  check('MCP 把全部分页交给模型', watchReply.content.filter(x => x.type === 'image').length === 2);
   check('追加只在 liked===true 时发生', /if \(verdict\.liked === true && likeSeconds > scanSeconds\)/.test(biliRuntime));
   check('初判是一次独立的 prompt（只回 JSON）', /buildScanPrompt/.test(bridge) && /buildScanPrompt/.test(
     fs.readFileSync(path.join(root, 'plugins', 'bili', 'lib', 'bili-browse.js'), 'utf8')));

@@ -12,8 +12,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { proxyGet } from '../../../src/proxy-tunnel.js';
-import { findFfprobe } from '../../../src/gif-frames.js';
+import { proxyGet } from '../../../src/plugin-api/network.js';
+import { findFfprobe } from '../../../src/plugin-api/process.js';
 import { spawn } from 'node:child_process';
 
 const DEFAULT_DIR = 'state/x-monitor-media';

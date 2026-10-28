@@ -14,8 +14,8 @@
 // 只接受 5~12 位纯数字 QQ 号；否则用本条 episode 的消息窗口按 sender→userId 反查，
 // 仍无法确定就跳过——宁可不共享，也不能把 A 的资料挂到 B 身上。
 import path from 'node:path';
-import { SENSITIVE_RE } from '../../../src/sensitive.js';
-import { createJsonStore } from '../../../src/state/store.js';
+import { SENSITIVE_RE } from '../../../src/plugin-api/logging.js';
+import { createJsonStore } from '../../../src/plugin-api/storage.js';
 
 const FILE_NAME = 'shared-memory.json';
 const NUMERIC_ID_RE = /^\d{5,12}$/;

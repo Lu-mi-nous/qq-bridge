@@ -1,3 +1,6 @@
+import { mediaMcpHarness } from './helpers/media-mcp-harness.mjs';
+const mediaToolConfig = { tools: {} };
+const mediaTools = mediaMcpHarness(mediaToolConfig);
 // 回归测试：群友功能菜单（HTML+CSS → Chrome 无头截图 → 发给群友）。
 //
 // 背景（2026-10-12 用户要求）：「写一个自身简要的功能菜单(HTML+CSS)，力求精致美观，
@@ -151,10 +154,10 @@ console.log('\n── 7. 桥接侧：直接发送而不是回传 base64 ──')
 
 console.log('\n── 8. MCP 工具契约 ──');
 {
-  check('工具名是 send 语义', /'qq_send_feature_menu'/.test(mcpSrc));
-  check('工具已按开关注册', /tools\?\.getFeatureMenu !== false[\s\S]{0,200}qq_send_feature_menu/.test(mcpSrc));
-  check('描述要求发完别复述菜单', /不要.{0,6}复述/.test(mcpSrc));
-  check('失败时要求如实说、不编清单', /不要改口编一份文字版功能清单/.test(mcpSrc));
+  check('工具名是 send 语义', mediaTools.has('qq_send_feature_menu'));
+  check('工具已按开关注册', (() => { mediaToolConfig.tools.getFeatureMenu = false; const off = !mediaTools.get('qq_send_feature_menu').isEnabled(); delete mediaToolConfig.tools.getFeatureMenu; return off && mediaTools.get('qq_send_feature_menu').isEnabled(); })());
+  check('描述要求发完别复述菜单', /不要.{0,6}复述/.test(mediaTools.get('qq_send_feature_menu').description));
+  check('失败时要求如实说、不编清单', /不要改口编一份文字版功能清单/.test(mediaTools.get('qq_send_feature_menu').description));
   // 工具开关清单已迁到 src/tool-flags.js（2026-10-20 重构：单一事实源，
   // 避免"加工具忘了加开关"）。这里改为检查那份清单，不再盯 bridge.js 里的数组字面量。
   //

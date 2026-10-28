@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { CONSOLE_CONTRACT_VERSION, CONSOLE_GROUPS, coreManifestCards, pluginOwnedManifestCards } from '../core-cards.js';
-import { PLUGIN_PERMISSIONS } from '../../plugins/host.js';
+import { PLUGIN_PERMISSIONS, PLUGIN_PERMISSION_MODES } from '../../plugins/host.js';
 import { maskValue } from '../../credentials-doc.js';
 
 export const id = 'overview';
@@ -32,7 +32,7 @@ export function register(router, ctx) {
     } catch {}
     sendJson({
       ok: true,
-      name: 'QQ Bridge',
+      name: 'WhaleBridge',
       version,
       snowlumaVersion,
       node: process.version,
@@ -112,6 +112,8 @@ export function register(router, ctx) {
       const { sendJson } = requestCtx;
       if (req.headers['x-agent-token']) { sendJson({ ok: false, error: '该接口仅控制台可用' }, 403); return; }
       const reveal = url.searchParams.get('reveal') === '1';
+      const items = deps.pluginHost?.getContext?.(plugin.id)?.console?.configItems;
+      if (!items) { sendJson({ ok: false, error: '插件能力不可用' }, 404); return; }
       const only = String(url.searchParams.get('key') ?? '').trim();
       if (reveal && !only) { sendJson({ ok: false, error: 'reveal 必须指定单条 key' }, 400); return; }
       const selected = only ? items.filter((item) => item.key === only) : items;
@@ -148,6 +150,8 @@ export function register(router, ctx) {
       if (req.headers['x-agent-token']) { sendJson({ ok: false, error: '该接口仅控制台可用' }, 403); return; }
       const body = await readBody();
       const key = String(body.key ?? '').trim();
+      const items = deps.pluginHost?.getContext?.(plugin.id)?.console?.configItems;
+      if (!items) { sendJson({ ok: false, error: '插件能力不可用' }, 404); return; }
       const item = items.find((x) => x.key === key);
       if (!item) { sendJson({ ok: false, error: `未知配置项：${key}` }, 400); return; }
       if (body.value === undefined) { sendJson({ ok: false, error: '缺少 value' }, 400); return; }
@@ -314,6 +318,7 @@ export function register(router, ctx) {
         ]
       },
       permissions: PLUGIN_PERMISSIONS,
+      permissionModes: PLUGIN_PERMISSION_MODES,
       example: {
         file: 'plugins/<id>/console.card.json',
         json: {

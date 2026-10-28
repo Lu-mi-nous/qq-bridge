@@ -131,6 +131,74 @@ for (const marker of ['wakeConfigUpdatedKeys', 'markReadCalledKeys']) {
   check(`${marker} 成功收尾不再提醒`, !h.deps.pendingWakeKeys.has(key) && !h.deps[marker].has(key)
     && !h.deps.wakeConfigMissCount.has(key) && h.get('deliver').length === 0 && h.get('ensureWakeable').length === 1);
 }
+// T1：本回合成功发过言 = 正常收尾。桥接自动标已读 + 保证唤醒，不再投递提醒（省一次模型调用）。
+{
+  const h = createEventHarness({ mode: 'reserved2' });
+  h.deps.pendingWakeKeys.add(key); h.deps.wakeConfigMissCount.set(key, 1);
+  await h.handle(sessionEvent('turn/start', 1));
+  await h.handle(toolCall(1));
+  await h.handle(toolResult(1));
+  await h.handle(turnEnd(1));
+  check('T1 发言回合自动收尾且不提醒', h.get('autoWrap').length === 1 && h.get('autoWrap')[0][1] === key
+    && h.get('deliver').length === 0
+    && !h.deps.pendingWakeKeys.has(key) && !h.deps.wakeConfigMissCount.has(key));
+}
+// 没发言的回合仍然要提醒（防止模型什么都没做就结束）。
+{
+  const h = createEventHarness({ mode: 'reserved2' });
+  h.deps.pendingWakeKeys.add(key);
+  await h.turn(1);
+  check('T1 未发言回合仍走提醒', h.get('autoWrap').length === 0
+    && h.get('deliver').length === 1 && h.get('deliver')[0][1] === key);
+}
+// 自动收尾抛错时回退到「保证可唤醒」，不阻断回合、也不额外提醒。
+{
+  const h = createEventHarness({ mode: 'reserved2', deps: { autoWrapAfterReply: () => { throw new Error('wrap failed'); } } });
+  h.deps.pendingWakeKeys.add(key);
+  await h.handle(sessionEvent('turn/start', 1));
+  await h.handle(toolCall(1));
+  await h.handle(toolResult(1));
+  await h.handle(turnEnd(1));
+  check('T1 自动收尾失败回退保证可唤醒', h.get('ensureWakeable').length >= 1 && h.get('deliver').length === 0);
+}
+// T4：上下文接近上限时主动轮换（usage 的 input+cacheRead ≈ 本次请求上下文）。
+{
+  const h = createEventHarness({ mode: 'reserved2' });
+  await h.handle(sessionEvent('turn/start', 1));
+  const frame = assistantMessage(1, 'hi');
+  frame.payload.event.data.usage = { inputTokens: 700000, cacheReadTokens: 100000 };
+  await h.handle(frame);
+  await h.handle(turnEnd(1));
+  check('T4 接近上限时主动轮换', h.get('rotateCtx').length === 1
+    && h.get('rotateCtx')[0][1] === key && h.get('rotateCtx')[0][3] === 800000);
+  check('T4 轮换判断后清空会话估算', !h.deps.sessionContextTokens.has(sid));
+}
+{
+  const h = createEventHarness({ mode: 'reserved2' });
+  await h.handle(sessionEvent('turn/start', 1));
+  const frame = assistantMessage(1, 'hi');
+  frame.payload.event.data.usage = { inputTokens: 1000, cacheReadTokens: 0 };
+  await h.handle(frame);
+  await h.handle(turnEnd(1));
+  check('T4 小上下文也交给桥接判定（阈值在桥接）', h.get('rotateCtx').length === 1 && h.get('rotateCtx')[0][3] === 1000);
+}
+// T5：回合指标接线（开始 / usage / 工具调用 / 工具结果 / 收尾）。
+{
+  const h = createEventHarness({ mode: 'reserved2' });
+  await h.handle(sessionEvent('turn/start', 1));
+  const frame = assistantMessage(1, 'hi');
+  frame.payload.event.data.usage = { inputTokens: 1000, cacheReadTokens: 4000, outputTokens: 200 };
+  await h.handle(frame);
+  await h.handle(toolCall(1));
+  await h.handle(toolResult(1));
+  await h.handle(turnEnd(1));
+  check('T5 回合指标接线（开始/usage/工具/结果/收尾）', h.get('tmBegin').length === 1
+    && h.get('tmBegin')[0][2] === key
+    && h.get('tmUsage').length === 1
+    && h.get('tmTool').length === 1 && h.get('tmTool')[0][2] === 'mcp__snowluma__qq_send_message'
+    && h.get('tmResult').length === 1
+    && h.get('tmFinish').length === 1);
+}
 for (const rejection of ['returned', 'thrown']) {
   const h = createEventHarness({ mode: 'reserved2', deps: { deliverPrompt: async () => {
     if (rejection === 'thrown') throw new Error('delivery failed');

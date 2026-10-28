@@ -35,7 +35,7 @@ export function createWakePromptBuilder(deps) {
     findCallers
   } = deps;
 
-  function buildWakePrompt(key, reason) {
+  function buildWakePromptImpl(key, reason) {
     const roleName = deps.roleFor(key);
     // 角色卡**正文**要直接进唤醒提示，不能只给一行「请调用 qq_get_prompt 查看」。
     //
@@ -47,23 +47,28 @@ export function createWakePromptBuilder(deps) {
     //   vs 通用策略「普通闲聊不用每条都配；大约每 3~5 轮来一张就够」
     // 没有角色卡的强命令时，模型只按通用策略行事，于是几乎不发（10/16 起连续 5 天 send_sticker=0）。
     //
-    // 体积可控：角色卡 6~7 KB，唤醒提示原本约 4 KB，加起来仍在模型上下文内；
-    // 且 deps.currentRoleHintV2() 已含「一代指令行过滤 + 示例节空格转换」，可直接复用。
-    const roleCard = roleName ? deps.currentRoleHintV2(key) : '';
+    // T3：常驻注入改为**角色摘要**（600–1200 字），完整卡只在角色切换 / bootstrap /
+    // 明确 detail=full 时注入。摘要由 deps.roleTextFor 决定（桥接实现），
+    // 缺失时退回旧的整卡注入，保证测试与降级路径可用。
+    const roleCard = roleName
+      ? (typeof deps.roleTextFor === 'function' ? deps.roleTextFor(key, reason) : deps.currentRoleHintV2(key))
+      : '';
+    // 能力可见性：profile 收窄时对应提示片段一起缺席（T3 闭环）。
+    const visible = typeof deps.capabilityVisible === 'function' ? deps.capabilityVisible : () => true;
     const roleLine = roleName
       ? `【当前角色】${roleName}\n\n${roleCard ? roleCard.trim() + '\n\n' : ''}`
       : '';
     const st = deps.getSocialV2State(key);
     const tokenLine = `【会话令牌】${st.agentToken}（调用二代状态工具时请在参数中带上此令牌）\n\n`;
     // 功能介绍与角色无关：换人格后仍可用菜单图，文案由同一份能力清单维护。
-    const menuLine = deps.cfg.socialV2?.tools?.getFeatureMenu !== false
+    const menuLine = deps.cfg.socialV2?.tools?.getFeatureMenu !== false && visible('qq_send_feature_menu')
       ? '【功能介绍】群友询问“你会什么 / 你会啥 / 能干嘛 / 有什么功能 / 功能声明 / 功能菜单 / 功能介绍”时，可用 qq_send_feature_menu(key, token) 直接发送本地缓存的功能图。该图按当前角色和已启用功能生成；发送成功后无需逐条复述或追加未列出的能力，失败时如实说明图片暂时发不了。\n\n'
       : '';
     // Token 用量图：与功能菜单同一条路（桥接渲染并直接发送）。
     // 写进唤醒提示的理由：群友问"用了多少 token"时，模型若不知道有这个工具，
     // 会自己去翻日志或凭印象编数字——那是最糟的结果。
     //
-    // ⚠️ 触发词必须写全。实测（2026-10-21 group:1000000001）：
+    // ⚠️ 触发词必须写全。实测（2026-10-21 group:100002013）：
     //   问「你用了多少token」→ 调用了工具（6 次成功）；
     //   问「看看你吃了多少token」「你怎么这么能吃白饭」→ **没调用**，
     //   反而编出「35.27B里prompt占35.25B」这种数，下一条又改口
@@ -74,7 +79,7 @@ export function createWakePromptBuilder(deps) {
     // 另外两件事一起写明：
     //   ① **绝不允许自己估算或凭印象报数**——错的数字比"我查一下"糟糕得多；
     //   ② 报错时要说"统计图暂时发不了"，不能顺势说"我没有这个能力"（那是谎话）。
-    const tokenReportLine = deps.cfg.socialV2?.tools?.tokenReport !== false
+    const tokenReportLine = deps.cfg.socialV2?.tools?.tokenReport !== false && visible('qq_token_report')
       ? '【Token 用量】群友只要在问「机器人自己消耗了多少 token」，**一律调 qq_token_report(key, token)** 生成统计图并发到当前会话。触发说法很多，别只认固定词：'
         + '「用了/耗了/花了/吃了多少 token」「token 用多少了」「今天消耗多少」「这个月烧了多少」「花了多少算力」「吃了多少白饭」「你这么能吃？」「看看你的用量/统计/账单」「今天跑了多少」等，'
         + '只要语义是在问**用量/消耗/花了多少**，都用这个工具。\n'
@@ -93,7 +98,7 @@ export function createWakePromptBuilder(deps) {
     // （bridge.js 约 2766 行），本函数在另一处作用域，直接调会抛
     // `v2ToolEnabled is not defined` 并让**整个唤醒中断**——
     // 实测后果就是"发私聊完全不理人"。同语义直接读 deps.cfg 即可。
-    const voiceLine = (deps.getTtsEngine() && deps.getTtsEngine().available() && deps.cfg.socialV2?.tools?.sendVoice !== false)
+    const voiceLine = (deps.getTtsEngine() && deps.getTtsEngine().available() && deps.cfg.socialV2?.tools?.sendVoice !== false && visible('qq_send_voice'))
       ? '【语音】你能发语音（qq_send_voice）。群友明确要听声音时（「发个语音」「说句听听」「用语音回我」）就调它，'
         + '念一句自己组织的口语（≤140 字）。日常聊天不要主动发——语音比文字吵。'
         + '发完不要再复述同一句话。发不出来（比如正在加载）就如实说，改发文字。\n\n'
@@ -163,7 +168,7 @@ export function createWakePromptBuilder(deps) {
       // 记一行：出问题时能立刻区分"没掷中"和"掷中了但模型没发"
       deps.log(`[表情] ${key} 本轮要求发一张（语气=${stickerPlan.moodLabel}，候选 ${stickerPlan.picks.length} 个）`);
     }
-    const stickerLine = stickerCfg.enabled !== false && stickerCfg.includeInPrompt !== false
+    const stickerLine = stickerCfg.enabled !== false && stickerCfg.includeInPrompt !== false && visible('qq_send_sticker')
       ? (stickerPlan
         ? `${deps.buildStickerNudge(stickerPlan)}\n\n`
         : `${deps.buildStickerStrategyHint()}\n${deps.buildStickerContext(deps.getStickerEntries(), stickerCfg.promptMaxStickers ?? 8, deps.stickerCacheOpts())}\n\n`)
@@ -172,8 +177,10 @@ export function createWakePromptBuilder(deps) {
     const proactiveLine = '【积极性】不要习惯性潜水：群里有你能接的话题就主动参与，偶尔插一句别人的话题也很正常；只有确实没话可说、对方已明确结束、或长时间没人说话时才潜水。\n\n';
     const preSleepLine = `【沉睡前强制等待】除非对方明确说“不聊了/晚安/下了/拜拜”等结束语，否则每次设置潜水/下一次唤醒前，必须先调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察；短等待（30秒/60秒/180秒）不能代替这次完整观察。若 ${Math.round(preSleepMs / 60000)} 分钟内没人说话，返回 preSleepWaitSatisfied=true，可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看返回的 newMessages——判断不需要你参与就可以直接沉睡，若你选择参与回复，则下次想睡时需要重新等待观察窗口。如果返回里带 preSleepWaitRemainingMs，就按剩余时间继续等待。\n\n`;
     // 关键防循环：活跃群里“等 60 秒安静”永远等不到。模型一旦已经发过言，
-    // 本回合的任务就完成了；回复检查会自动叫醒它，不需要它抱着 wait 守候。
-    const wrapLine = '【回合收尾】本回合已经发过言后，不要再调用 qq_wait_for_messages 守候后续消息；直接结束回合即可，桥接会在 30~45 秒后自动唤醒你做回复检查。只有还没发过言、准备直接潜水时，才需要用一次 qq_wait_for_messages 完成观察。同一个回合最多等 2 次、累计不超过 120 秒，超时桥接会强制收尾。\n\n';
+    // 本回合的任务就完成了；回复检查只在**确实有新消息**时才叫醒它（T1），
+    // 不需要它抱着 wait 守候，也不需要它特意补 mark_read / set_wake_config
+    // ——桥接会在回合结束时自动标已读并保证下一次可唤醒。
+    const wrapLine = '【回合收尾】本回合已经发过言后，不要再调用 qq_wait_for_messages 守候后续消息，也不用特意补 qq_mark_read / qq_set_wake_config——直接结束回合即可：桥接会自动标记已读并保证下一次唤醒，只在有人回复或出现新消息时才再叫醒你。只有还没发过言、准备直接潜水时，才需要用一次 qq_wait_for_messages 完成观察后再收尾。同一个回合最多等 2 次、累计不超过 120 秒，超时桥接会强制收尾。\n\n';
 
     // 点单判定：桥接掷骰的权威结果，放在最前面（优先级高于自主性规则）。
     const complyLine = deps.buildComplyLine(key, st);
@@ -237,7 +244,7 @@ export function createWakePromptBuilder(deps) {
       // 摘要**不能只截开头**：引用类消息的结构是
       //   "[引用 某人：[图片]]（被引用的这条消息含 1 个图片/表情。要看到它请调用 …）@大肥鱼 超分一下"
       // 真正对你说的话在**末尾**。只取前 30 字，模型看到的是"引用…请调用工具…"，
-      // 完全看不到「@大肥鱼 超分一下」→ 实测它输出"没点我"就收尾了（2026-10-21 group:1000000004）。
+      // 完全看不到「@大肥鱼 超分一下」→ 实测它输出"没点我"就收尾了（2026-10-21 group:100002015）。
       // 现在：短消息原样给；长消息保留开头 + 末尾（末尾更重要，因为指令通常在那儿）。
       const showText = (m) => {
         const t = String(m.text || m.plain || '').trim();
@@ -280,9 +287,9 @@ export function createWakePromptBuilder(deps) {
     if (pokeSelfs.length) {
       // 必须**带上 QQ 号**，否则模型手里没有任何可用目标。
       //
-      // 实测事故（2026-10-22 group:1000000005）：提示只说「有人戳了你（群友G）」，
+      // 实测事故（2026-10-22 group:100002004）：提示只说「有人戳了你（群友G）」，
       // 而 qq_send_poke 要的是数字号。模型没有群友G的号，就复用上下文里残留下来的
-      // 另一个号（群友C 的 1000000012），一路拍了十几次，群里被问「怎么一直戳我」。
+      // 另一个号（群友C 的 1000000003），一路拍了十几次，群里被问「怎么一直戳我」。
       // 现在直接把号摆出来，模型不需要记忆、也不需要猜。
       const who = pokeSelfs
         .map((m) => {
@@ -314,6 +321,28 @@ export function createWakePromptBuilder(deps) {
     // complyLine 紧随令牌行、排在 antiAiLine **之前**：点单判定要压过「拒绝有求必应」的默认倾向。
     // metaLine 放在最前（角色行之后）：防泄漏约束要早于所有内部小节出现。
     const base = roleLine + metaLine + tokenLine + menuLine + tokenReportLine + voiceLine + complyLine + tokenAskLine + antiAiLine + proactiveLine + stickerLine + preSleepLine + wrapLine + statusLine + wakeLine + memoryLine + participationLine;
+    // T3：唤醒提示分项字符数（persona/role/plugin prompt 各占多少），供报表与回归对比。
+    try {
+      const m = deps.contextMetrics.get(key) || {};
+      m.lastPromptSections = {
+        total: 0, // 由外层包装补上（含 reason 分支的正文）
+        role: roleLine.length,
+        meta: metaLine.length,
+        token: tokenLine.length,
+        menu: menuLine.length,
+        tokenReport: tokenReportLine.length,
+        voice: voiceLine.length,
+        sticker: stickerLine.length,
+        preSleep: preSleepLine.length,
+        wrap: wrapLine.length,
+        status: statusLine.length,
+        wake: wakeLine.length,
+        memory: memoryLine.length,
+        participation: participationLine.length,
+        fixed: complyLine.length + tokenAskLine.length + antiAiLine.length + proactiveLine.length
+      };
+      deps.contextMetrics.set(key, m);
+    } catch { /* 指标失败不影响提示 */ }
     if (reason === 'bootstrap') {
       return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是二代仿真模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看你的角色、推荐值、可用工具和当前状态，然后用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }
@@ -322,8 +351,8 @@ export function createWakePromptBuilder(deps) {
     }
     if (reason === 'replyCheck') {
       return `${base}【回复检查】${key}
-原因：你刚刚发送过消息，现在回来检查是否有人回复。
-先查看未读消息：有人回了就正常接话；没人回你，不用硬补一句，也不要反复长等待——直接结束本回合即可，桥接会稍后再次检查。只有准备直接潜水、且本回合还没发过言时，才按上面的【沉睡前强制等待】完成一次观察。`;
+原因：你刚刚发送过消息；现在有人回复了、或群里出现了新消息，所以叫醒你看看。
+先查看未读消息：有人回了就正常接话；这些消息不需要你参与就直接收尾。不用守着等后续——有新消息时桥接会自动再唤醒你。只有准备直接潜水、且本回合还没发过言时，才按上面的【沉睡前强制等待】完成一次观察。`;
     }
     if (reason === 'proactiveCheck') {
       return `${base}【主动机会】${key}\n原因：群里已经安静了一段时间，这是一次你可以主动冒泡的机会。\n优先主动开个话题、追问上次没聊完的事、分享一个刚想到的想法；如果一时想不到，可以用 mcp__web-search-safe__web_search 搜一下当前热点/时事/网络热梗，再结合记忆里的群友兴趣挑一个自然角度。只要内容自然，就大胆开口；如果实在没话想说，再安静收尾（qq_mark_read 或 qq_set_wake_config）。`;
@@ -335,6 +364,16 @@ export function createWakePromptBuilder(deps) {
       return `${base}【唤醒】${key}\n原因：群里有人拍了别人（**不是拍你**）。\n看一眼就好：觉得有趣可以接个梗，但别把别人的互动抢过来，也不必每次都说话。没有想说的就安静收尾（qq_mark_read 或 qq_set_wake_config）。`;
     }
     return `${base}【唤醒】${key}\n原因：${reason}\n【行动前】先判断：群里在聊什么？热闹还是冷清？有没有人直接找你？对方说完了吗？你有没有真正想说的？\n如果群聊正热但没人叫你，可以插一句有趣的/相关的，插不上再看情况潜水；不要一上来就划走。\n【引用：只在必要时用】只有你这条消息指向的人或消息并非最新一条别人的消息，或者你连续的几句话中不同消息指代的是不同的消息或人时，才用 qq_reply 或 qq_send_message 的 replyToMessageId 指向具体那条；其他情况不要引用，别让对方猜。**要引用时优先传 messageId；只记得大概位置就传 seq；不确定目标到底哪条就传 latest**（= 最近一条别人的消息）——不要凭记忆猜编号，猜错的编号照样能解析到另一条真实消息，会静默引用错，只有群友看得出来。\n你可以调用工具查看未读消息、人设、状态，自行决定是否发言；决定潜水前必须按上面的【沉睡前强制等待】先等够观察窗口。`;
+  }
+  // T3：外层包装，补上含 reason 分支的总长度；分项长度在 buildWakePromptImpl 里记。
+  function buildWakePrompt(key, reason) {
+    const prompt = buildWakePromptImpl(key, reason);
+    try {
+      const m = deps.contextMetrics.get(key) || {};
+      m.lastPromptSections = { ...(m.lastPromptSections || {}), total: prompt.length };
+      deps.contextMetrics.set(key, m);
+    } catch { /* 指标失败不影响提示 */ }
+    return prompt;
   }
   return { buildWakePrompt };
 }
@@ -364,7 +403,7 @@ export function findPendingCallers(st, aliasInfo) {
   // 已答过 = 明确引用回复过的 seq（answeredSeqs）。不再按时间推断：
   // 同一批里回复了 A，不代表比 A 更早/更新的 B 也答过了。旧状态没有
   // answeredSeqs 时走一次时间兜底（仅兼容旧数据/测试），加载时会补种。
-  // 实测 2026-10-23 群 1000000005：机器人引用回复 seq7150 后，owner 的
+  // 实测 2026-10-23 群 100002004：机器人引用回复 seq7150 后，owner 的
   // seq7128「查下来源」仍是未答，但旧时间判据让它被 mark_read 一并标掉。
   const hasAnsweredTracking = Array.isArray(st?.answeredSeqs);
   const answeredSet = new Set(

@@ -66,13 +66,13 @@ check('开发日志解析：标题/正文/续行', (() => {
     && parsed.sections[0].entries[1].title === '标题B';
 })());
 check('开发日志展示脱敏/开发者措辞', (() => {
-  const out = sanitizeDevLogText('（2026-10-25 用户要求）示例群 group:1000000005 QQ 1000000000 1000000005 C:/qq-bridge/x 用户反馈 用户要求', {
-    names: [{ name: '示例群', replacement: '某群' }],
-    ids: ['1000000005', '1000000000']
+  const out = sanitizeDevLogText('（2026-10-25 用户要求）测试群 group:100002004 QQ 1000000000 100002004 E:/Downloads/x 用户反馈 用户要求', {
+    names: [{ name: '测试群', replacement: '某群' }],
+    ids: ['100002004', '1000000000']
   });
   return !out.includes('用户要求') && !out.includes('用户反馈')
-    && !out.includes('1000000005') && !out.includes('1000000000')
-    && !out.includes('C:/qq-bridge') && out.includes('某群') && out.includes('2026-10-25');
+    && !out.includes('100002004') && !out.includes('1000000000')
+    && !out.includes('E:/Downloads') && out.includes('某群') && out.includes('2026-10-25');
 })());
 
 check('跨会话记忆端点存在', /shared-memory/.test(domainRoutesSrc) && /shared-memory-config/.test(domainRoutesSrc)
@@ -80,11 +80,27 @@ check('跨会话记忆端点存在', /shared-memory/.test(domainRoutesSrc) && /s
 check('Token 熔断端点存在', /token-fuse/.test(domainRoutesSrc) && /token-fuse-config/.test(domainRoutesSrc)
   && /token-fuse-reset/.test(domainRoutesSrc) && /token-fuse-override/.test(domainRoutesSrc));
 
-const mcpPaths = [...mcp.matchAll(/agentApi\(\s*(['"`])([^'"`]+)\1/g)]
-  .map((match) => match[2].split('?')[0]);
-check('MCP 58 条实际路由全部在允许清单',
-  new Set(mcpPaths).size === 58
-  && mcpPaths.every((pathname) => isAgentRouteAllowed(pathname, 'POST') || isAgentRouteAllowed(pathname, 'GET')));
+// R4.6-5：插件工具的描述/handler 已迁入插件，桥接端点改由 mcp-bridge-services 的具名服务调用。
+// 只正则扫 MCP 源会漏掉这些路径，所以按「实际调用」收集：MCP 源里直接 agentApi 字面量 +
+// 各具名服务在假 agentApi 下发出的一次请求。断言只看「用到的都在允许清单」，不数条数。
+const mcpPaths = new Set([...mcp.matchAll(/agentApi\(\s*(['"`])([^'"`]+)\1/g)].map((match) => match[2].split('?')[0]));
+{
+  const services = await import('../src/plugins/mcp-bridge-services.js');
+  const factories = [
+    'createSlangMcpServices', 'createMediaMcpServices', 'createBiliMcpServices',
+    'createImagesMcpServices', 'createStickersMcpServices', 'createTtsMcpServices',
+    'createUpscaleMcpServices', 'createXPostsMcpServices'
+  ];
+  for (const name of factories) {
+    check(`具名服务工厂存在：${name}`, typeof services[name] === 'function');
+    if (typeof services[name] !== 'function') continue;
+    const scoped = services[name]((url) => { mcpPaths.add(String(url).split('?')[0]); return {}; });
+    for (const fn of Object.values(scoped)) { try { fn({}); } catch {} }
+  }
+}
+check('MCP 实际调用的桥接路由全部在允许清单',
+  mcpPaths.size > 0
+  && [...mcpPaths].every((pathname) => isAgentRouteAllowed(pathname, 'POST') || isAgentRouteAllowed(pathname, 'GET')));
 check('凭据、活动、配置默认拒绝 Agent', [
   '/api/socialV2/credentials',
   '/api/socialV2/activity-feed',

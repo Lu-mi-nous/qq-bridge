@@ -89,11 +89,37 @@ const cfgBase = { auditFile: 'audit.jsonl', maxChars: 200 };
 {
   const { default: fs2 } = await import('node:fs');
   const manifest = JSON.parse(fs2.readFileSync(new URL('../plugins/content-review/manifest.json', import.meta.url), 'utf8'));
-  check('manifest 默认关闭且 configPath 正确', manifest.enabledByDefault === false && manifest.configPath === 'xMonitor.review');
-  const gw = await import('../src/content-review-api.js');
-  check('网关加载插件', gw.contentReviewPluginLoaded === true);
+  const { CONFIG_DEFAULTS } = await import('../src/config-defaults.js');
+  check('审核业务默认关闭且 configPath 正确', CONFIG_DEFAULTS.xMonitor.review.enabled === false && manifest.configPath === 'xMonitor.review');
+  const { createPluginRuntime } = await import('../src/plugin-runtime.js');
+  const { fileURLToPath } = await import('node:url');
+  let disabled = [];
+  fs.writeFileSync(path.join(tmp, 'package.json'), '{"version":"0.6.0"}');
+  const runtime = createPluginRuntime({ root: tmp,
+    dirs: [fileURLToPath(new URL('../plugins/', import.meta.url))], only: ['content-review'],
+    getConfig: () => ({ plugins: { disabled } }) });
+  // 真实插件从项目目录发现，根目录与状态使用临时夹具。
+  const hostRuntime = createPluginRuntime({ root: tmp,
+    dirs: [fileURLToPath(new URL('../plugins/', import.meta.url))], only: ['content-review'],
+    getConfig: () => ({ plugins: { disabled } }) });
+  const gw = hostRuntime.contentReview;
+  check('启动前网关不可用', (await gw.reviewText('x')).decision === 'unavailable');
+  await hostRuntime.start();
+  check('宿主启动后网关可用', gw.available());
   const out = await gw.reviewText('含敏感词A', { cfg: { enabled: true, mode: 'warn', keywordsByCategory: { politics: ['敏感词A'] } } });
   check('网关可调用审核', out.decision === 'block' && out.action === 'warn');
+  disabled = ['content-review'];
+  check('禁用后同一网关立即不可用', !gw.available() && (await gw.reviewText('x')).action === 'unavailable');
+  let rejected = false;
+  try { gw.localRuleScan('x'); } catch { rejected = true; }
+  check('不可用扫描不伪装为干净结果', rejected);
+  disabled = [];
+  await hostRuntime.stop();
+  check('停止后拒绝审核', (await gw.reviewText('x')).decision === 'unavailable');
+  await hostRuntime.start();
+  check('重启后同一网关恢复', gw.available());
+  check('另一宿主不共享能力', !runtime.contentReview.available());
+  await hostRuntime.stop();
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

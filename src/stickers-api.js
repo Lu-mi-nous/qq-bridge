@@ -1,39 +1,27 @@
-// 表情能力网关（R4.5-6）。
-//
-// 表情库/挑选/语气/提示词实现已迁到 `plugins/stickers/lib/`；
-// 服务层 `src/sticker-service.js`（同步/列表/备注/删除/收藏）仍在核心，经本网关使用实现。
-// 插件缺席时：读取类返回安全空值、写入/缓存类抛明确错误，桥接照常启动（表情功能等同于关闭）。
-let lib = {};
-let pick = {};
-let loadError = '';
-try {
-  lib = await import('../plugins/stickers/lib/sticker-lib.js');
-  pick = await import('../plugins/stickers/lib/sticker-pick.js');
-} catch (error) {
-  loadError = String(error?.message ?? error);
-}
-
-export const stickersPluginLoaded = Object.keys(lib).length > 0;
-export const stickersPluginError = loadError;
-const notLoaded = () => { throw new Error(`表情插件未加载（plugins/stickers）：${loadError || 'unknown'}`); };
-
+export function createStickersApi({ getCapability = () => null } = {}) {
+const current = () => getCapability('stickers.instance');
+const available = () => !!current();
+const notLoaded = () => { throw new Error('表情插件不可用'); };
 // sticker-lib
-export const formatStickerList = (...a) => (lib.formatStickerList ? lib.formatStickerList(...a) : { total: 0, matched: 0, truncated: false, stickers: [] });
-export const buildStickerContext = (...a) => (lib.buildStickerContext ? lib.buildStickerContext(...a) : '');
-export const buildStickerStrategyHint = (...a) => (lib.buildStickerStrategyHint ? lib.buildStickerStrategyHint(...a) : '');
-export const markStickerUsed = (...a) => lib.markStickerUsed?.(...a);
-export const writeStickerCacheImage = (...a) => (lib.writeStickerCacheImage ? lib.writeStickerCacheImage(...a) : notLoaded());
+const formatStickerList = (...a) => (current()?.lib?.formatStickerList ? current()?.lib?.formatStickerList(...a) : { total: 0, matched: 0, truncated: false, stickers: [] });
+const buildStickerContext = (...a) => (current()?.lib?.buildStickerContext ? current()?.lib?.buildStickerContext(...a) : '');
+const buildStickerStrategyHint = (...a) => (current()?.lib?.buildStickerStrategyHint ? current()?.lib?.buildStickerStrategyHint(...a) : '');
+const markStickerUsed = (...a) => current()?.lib?.markStickerUsed?.(...a);
+const writeStickerCacheImage = (...a) => (current()?.lib?.writeStickerCacheImage ? current()?.lib?.writeStickerCacheImage(...a) : notLoaded());
 
 // sticker-pick
-export const pickStickerCandidates = (...a) => (pick.pickStickerCandidates ? pick.pickStickerCandidates(...a) : []);
-export const buildStickerNudge = (...a) => (pick.buildStickerNudge ? pick.buildStickerNudge(...a) : '');
-export const moodOfText = (...a) => (pick.moodOfText ? pick.moodOfText(...a) : 'neutral');
+const pickStickerCandidates = (...a) => (current()?.pick?.pickStickerCandidates ? current()?.pick?.pickStickerCandidates(...a) : []);
+const buildStickerNudge = (...a) => (current()?.pick?.buildStickerNudge ? current()?.pick?.buildStickerNudge(...a) : '');
+const moodOfText = (...a) => (current()?.pick?.moodOfText ? current()?.pick?.moodOfText(...a) : 'neutral');
 
 // sticker-service 额外需要的读写接口
-export const loadStickerStore = (file) => (lib.loadStickerStore ? lib.loadStickerStore(file) : []);
-export const saveStickerStore = (...a) => lib.saveStickerStore?.(...a);
-export const mergeStickerLibrary = (existing, fetched) => (lib.mergeStickerLibrary ? lib.mergeStickerLibrary(existing, fetched) : existing);
-export const findSticker = (...a) => (lib.findSticker ? lib.findSticker(...a) : null);
-export const applyStickerNote = (entries, id, patch) => (lib.applyStickerNote ? lib.applyStickerNote(entries, id, patch) : entries);
-export const syncStickerCache = (...a) => (lib.syncStickerCache ? lib.syncStickerCache(...a) : []);
-export const writeStickerCacheRecord = (...a) => lib.writeStickerCacheRecord?.(...a);
+const loadStickerStore = (file) => (current()?.lib?.loadStickerStore ? current()?.lib?.loadStickerStore(file) : []);
+const saveStickerStore = (...a) => current()?.lib?.saveStickerStore?.(...a);
+const mergeStickerLibrary = (existing, fetched) => (current()?.lib?.mergeStickerLibrary ? current()?.lib?.mergeStickerLibrary(existing, fetched) : existing);
+const findSticker = (...a) => (current()?.lib?.findSticker ? current()?.lib?.findSticker(...a) : null);
+const applyStickerNote = (entries, id, patch) => (current()?.lib?.applyStickerNote ? current()?.lib?.applyStickerNote(entries, id, patch) : entries);
+const syncStickerCache = (...a) => (current()?.lib?.syncStickerCache ? current()?.lib?.syncStickerCache(...a) : []);
+const writeStickerCacheRecord = (...a) => current()?.lib?.writeStickerCacheRecord?.(...a);
+
+return { available, formatStickerList, buildStickerContext, buildStickerStrategyHint, markStickerUsed, writeStickerCacheImage, pickStickerCandidates, buildStickerNudge, moodOfText, loadStickerStore, saveStickerStore, mergeStickerLibrary, findSticker, applyStickerNote, syncStickerCache, writeStickerCacheRecord };
+}

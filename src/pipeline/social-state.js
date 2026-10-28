@@ -128,7 +128,7 @@ export function createSocialStateStore(deps) {
     if (st.preSleepWaitObservedAt && (!st.lastIncomingAt || st.lastIncomingAt <= st.preSleepWaitObservedAt)) return false;
     // 活跃群死锁兜底：本回合已经发过言、且距最后一次发言已过 30 秒，就不再要求
     // 连续 60 秒静默。否则群里一直有人说话 → 观察窗口永远重置 → 模型只能反复 wait，
-    // 单个回合拖到几十分钟（2026-10-23 group:1000000007 实测 24 分钟）。
+    // 单个回合拖到几十分钟（2026-10-23 group:100002007 实测 24 分钟）。
     if (key) {
       const sid = state.sessions[key];
       const turnStart = sid ? (Number(v2TurnStartAt.get(sid)) || 0) : 0;

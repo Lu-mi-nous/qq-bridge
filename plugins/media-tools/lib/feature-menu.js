@@ -1,6 +1,6 @@
 // 群友功能声明：纯数据 + 自包含 HTML。只列群友可用的能力，运行时按开关筛选。
 // 浏览器渲染和本地缓存在 feature-menu-render.js；这里不读取配置或凭据。
-import { findUpscaylBin } from '../../../src/upscale-bin.js';
+import { findUpscaylBin } from '../../../src/plugin-api/process.js';
 import { MENU_RENDER_CSS } from './feature-menu-css.js';
 
 export const MENU_SECTIONS = [

@@ -2,21 +2,37 @@
   "id": "images",
   "name": "图片（图源 / 图库 / 反查 / 归档 / 画风）",
   "version": "1.0.0",
-  "engines": { "qqBridge": ">=0.4.0" },
-  "enabledByDefault": false,
+  "engines": {
+    "qqBridge": ">=0.4.0"
+  },
   "configPath": "socialV2.images",
-  "configSchema": "config.schema.js",
-  "permissions": ["network", "process", "state", "console:route", "secrets"],
-  "secrets": ["pixiv-auth.json"],
-  "hooks": ["onStart", "onStop"],
+  "permissions": [
+    "network",
+    "process",
+    "state",
+    "console:route",
+    "secrets",
+    "mcp:register"
+  ],
+  "secrets": [
+    "pixiv-auth.json"
+  ],
   "mcpTools": [
     "qq_send_image",
-    "qq_image_preflight",
+    "qq_check_image",
     "qq_reverse_search",
     "qq_archive_image",
     "qq_image_source",
     "qq_reject_image",
     "qq_refresh_image_lib"
   ],
-  "console": { "cards": ["images"], "routes": ["/api/plugins/images/card"] }
+  "console": {
+    "cards": [
+      "images"
+    ],
+    "routes": [
+      "/api/plugins/images/card"
+    ]
+  },
+  "configDocumentation": "config.reference.js"
 }

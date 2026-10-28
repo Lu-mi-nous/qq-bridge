@@ -3,7 +3,7 @@
 // 背景（2026-10-12 用户第三次反馈，截图原文「这两下 @ 我都应过了，管理员的「在的」、
 // 喊口号那个也拒了」）：
 // 这条是**被桥接逼出来的**，不是模型自己想总结自己。转录里的完整因果链
-// （群 1000000004，事件 17398~17410）：
+// （群 100002015，事件 17398~17410）：
 //   1. 模型 qq_wait_for_messages 完成观察窗口
 //   2. 模型 qq_set_wake_config 想潜水 → 被拒，报错原文：
 //      「未读里有人在叫你，不能先潜水走人：…。请先正面回应…；
@@ -12,7 +12,7 @@
 //
 // 根因：findCallersV2 把未读里的 @ 分成 answered（已答过）/ pending（还没答），
 // 但拦截判的是 **callerMsgs.length（总数）**，没看 pending。拿当时的真实状态复现：
-//   unread 中被判定为「在叫我」: 2 条（seq=1220 Lu-mi-nous、seq=1226 小莫姬）
+//   unread 中被判定为「在叫我」: 2 条（seq=1220 群友H、seq=1226 小莫姬）
 //   answered: 2    pending: 0
 //   => 旧判据 callerMsgs.length = 2 → 拦截（明明都答过了）
 // 那两条 @ 之所以还在未读里，是因为模型用 qq_send_message 回复时没带
@@ -68,7 +68,7 @@ const msg = (seq, text, time, extra = {}) => ({
   seq, text, plain: text, time, sender: '群友', isSelf: false, ...extra
 });
 
-console.log('\n── 真实故障现场（群 1000000004，unread 快照）──');
+console.log('\n── 真实故障现场（群 100002015，unread 快照）──');
 {
   // 复刻当时的两条 @：都在 lastAiReplyAt 之前 → 都算 answered
   const st = {
@@ -120,7 +120,7 @@ console.log('\n── 2026-10-22：本轮早先发过言，之后才来新 @（r
     wakeConfig: { lastWakeAt: wakeAt, triggers: { keywords: [] } },
     unread: [msg(8071, '@大肥鱼 从 aigengtu 找几张 DeepSeek 娘的表情包存起来', atTime, { atSelf: true })]
   };
-  const c = findCallersV2('group:1000000001', st);
+  const c = findCallersV2('group:100002013', st);
   check('新 @ 在 lastAiReplyAt 之后 → pending', c.pending.length === 1, `pending=${c.pending.length}`);
   const oldRepliedThisTurn = !!st.lastActionAt && st.lastActionAt >= (st.wakeConfig.lastWakeAt || 0);
   check('旧判据的 repliedThisTurn 为 true（复现放行）', oldRepliedThisTurn === true);
@@ -144,7 +144,7 @@ console.log('\n── 2026-10-23：引用回复了 A，不代表更新的 B 答�
       msg(7066, '@大肥鱼 继续学吗', replyAt + 10000)
     ]
   };
-  const c = findCallersV2('group:1000000005', st);
+  const c = findCallersV2('group:100002004', st);
   check('引用目标 7061 算 answered', c.answered.some((m) => m.seq === 7061));
   check('更新的 7064 仍算 pending（引用回复没答它）', c.pending.some((m) => m.seq === 7064));
   check('回复之后才到的 7066 也算 pending', c.pending.some((m) => m.seq === 7066));
@@ -152,7 +152,7 @@ console.log('\n── 2026-10-23：引用回复了 A，不代表更新的 B 答�
     (replyAt && (replyAt - 6000) <= replyAt + 5000) === true);
   check('新判据只认明确引用回复的 seq，7064 仍待答', c.pending.some((m) => m.seq === 7064));
   // 严格模式：answeredSeqs 存在（哪怕是空数组）时，不再用时间猜。
-  const strict = findCallersV2('group:1000000005', { ...st, answeredSeqs: [] });
+  const strict = findCallersV2('group:100002004', { ...st, answeredSeqs: [] });
   check('answeredSeqs 为空时所有未答 @ 都 pending', strict.pending.length === 3, `pending=${strict.pending.length}`);
 }
 

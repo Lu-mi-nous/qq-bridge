@@ -1,3 +1,5 @@
+import { biliMcpHarness } from './helpers/bili-mcp-harness.mjs';
+const biliTools = biliMcpHarness();
 // 回归测试：B 站凭据读取、搜索、推荐分享。
 //
 // 背景（2026-10-19 用户要求）：
@@ -166,9 +168,10 @@ console.log('\n── 4. 接线 ──');
   check('有现场搜索端点', /\/api\/socialV2\/bili-search/.test(consoleServer));
   check('搜索端点过滤已看过的（推荐"新的"）', /fresh = videos\.filter\(\(v\) => !deps\.live\.biliMem\?\.get\(v\.bvid\)\)/.test(consoleServer));
   check('全看过时明确告知（allSeen）', /allSeen: fresh\.length === 0/.test(consoleServer));
-  check('MCP 有 qq_bili_search 工具', /'qq_bili_search'/.test(mcp));
-  check('工具返回带真实 URL', /https:\/\/www\.bilibili\.com\/video\/\$\{v\.bvid\}/.test(mcp));
-  check('工具要求原样使用标题和链接', /标题和链接必须原样使用|不要自己编/.test(mcp));
+  check('MCP 有 qq_bili_search 工具', biliTools.has('qq_bili_search'));
+  const searchReply = await biliMcpHarness({}, () => ({ ok: true, videos: [{ bvid: 'BVfixture', title: 'fixture' }] })).get('qq_bili_search').handler({});
+  check('工具返回带真实 URL', searchReply.content[0].text.includes('https://www.bilibili.com/video/BVfixture'));
+  check('工具要求原样使用标题和链接', /标题和链接必须原样使用|不要自己编/.test(searchReply.content[0].text));
   check('preset 要求推荐时现场搜', /必须现场搜，不要翻旧账/.test(preset));
   check('preset 禁止编造 bvid/链接', /绝不要自己拼、改写或凭印象编/.test(preset));
   check('preset 提示 allSeen 时换关键词', /allSeen.*换个关键词/.test(preset));

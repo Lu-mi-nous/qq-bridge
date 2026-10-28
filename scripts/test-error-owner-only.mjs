@@ -60,13 +60,13 @@ console.log('── ① 上游 503：群里零消息，管理员收到详情 ─
 {
   let t = 1_700_000_000_000;
   const b = makeBridge({ now: () => t });
-  const handled = await b.handleUpstreamError('group:1000000010', REAL_503, { sessionId: 'session-xyz' });
+  const handled = await b.handleUpstreamError('group:100002005', REAL_503, { sessionId: 'session-xyz' });
   check('识别并接管', handled === true);
-  const group = b.sent.filter((s) => s.key === 'group:1000000010');
+  const group = b.sent.filter((s) => s.key === 'group:100002005');
   const priv = b.sent.filter((s) => s.key === 'private:1000000000');
   check('群里 0 条（关键）', group.length === 0, `${group.length} 条`);
   check('管理员私聊 1 条', priv.length === 1, `${priv.length} 条`);
-  check('私聊含群号', /群号：1000000010/.test(priv[0]?.text ?? ''));
+  check('私聊含群号', /群号：100002005/.test(priv[0]?.text ?? ''));
   check('私聊含错误码', /no_healthy_account/.test(priv[0]?.text ?? ''));
   check('私聊不含空的「群内已回复」', !/群内已回复/.test(priv[0]?.text ?? ''));
 }
@@ -164,7 +164,7 @@ console.log('\n── ⑥ 长详情截断 ──');
 console.log('\n── ⑦ Token 熔断通知口径 ──');
 {
   const n = buildOwnerNotice({
-    key: 'group:1000000010',
+    key: 'group:100002005',
     title: 'Token 超限熔断',
     header: '【Token 超限熔断】',
     sessionName: '奶龙生活群',
@@ -173,7 +173,7 @@ console.log('\n── ⑦ Token 熔断通知口径 ──');
   check('Token 熔断不再使用「桥接报错」标题', n.startsWith('【Token 超限熔断】') && !n.includes('【桥接报错】'), n.split('\n')[0]);
   check('Token 熔断通知带会话名称', /会话名称：奶龙生活群/.test(n));
   const r = buildOwnerReport({
-    key: 'group:1000000010',
+    key: 'group:100002005',
     code: 'quota',
     rawError: 'x',
     sessionName: '奶龙生活群'

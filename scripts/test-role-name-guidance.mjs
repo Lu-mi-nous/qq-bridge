@@ -30,7 +30,7 @@ import { createRoleHintReader, ROLE_HINT_MAX } from '../src/pipeline/role-hint.j
 const hintFor = createRoleHintReader({ ROOT: root, roleFor: key => key, roleHintCache: new Map(), log: () => {} });
 
 const cards = fs.readdirSync(roleDir)
-  .filter((f) => f.endsWith('.md') && f !== 'README.md')
+  .filter((f) => f.endsWith('.md') && !f.endsWith('.digest.md') && f !== 'README.md')
   .map((f) => ({ name: f.replace(/\.md$/, ''), file: f, text: fs.readFileSync(path.join(roleDir, f), 'utf8') }));
 
 console.log('── 1. 名字规则：不许追着纠正称呼 ──');

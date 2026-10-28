@@ -289,9 +289,15 @@ console.log('\n── 4. 接线检查 ──');
   const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
   const srcRoot = path.join(root, 'src');
   const downscale = fs.readFileSync(path.join(srcRoot, 'image-downscale.js'), 'utf8');
-  const mcp = fs.readFileSync(path.join(srcRoot, 'mcp-snowluma-safe.js'), 'utf8');
+  const mcp = fs.readFileSync(path.join(root, 'plugins', 'upscale', 'mcp-tools.js'), 'utf8');
 
-  check('prepareImageForModel 先试超分', /await import\('\.\.\/plugins\/upscale\/lib\/upscale\.js'\)/.test(downscale) && /upscaleImage/.test(downscale));
+  const { prepareImageForModel } = await import('../src/image-downscale.js');
+  let called = false;
+  const prepared = await prepareImageForModel(Buffer.from('fixture'), {
+    getUpscalePlugin: () => ({ probe: () => ({ ok: true }),
+      upscaleImage: async () => { called = true; return { upscaled: true, buffer: Buffer.from('upscaled'), mimeType: 'image/png' }; } })
+  });
+  check('prepareImageForModel 调用注入能力', called && prepared.notes.includes('super-resolved'));
   check('超分失败回退 lanczos（仍调用 upscaleIfSmall）', /const grown = await upscaleIfSmall/.test(downscale));
   check('超分可用配置关闭', /opts\.upscale.*enabled !== false/.test(downscale));
   check('超分异常被捕获（不让链路崩）', /\[超分\] 不可用/.test(downscale));
@@ -304,7 +310,7 @@ console.log('\n── 4. 接线检查 ──');
     /publish=false/.test(mcp) && /只看不发|别把放大图刷进群/.test(mcp));
   check('MCP 工具处理动图', /这是动图/.test(mcp));
   check('MCP 工具失败时说明原因', /超分未执行/.test(mcp));
-  check('MCP 工具受配置开关控制', /socialV2\?\.upscale\?\.enabled !== false/.test(mcp));
+  check('MCP 工具受配置开关控制', /config\.get\(\)\?\.enabled !== false/.test(mcp));
 
   // ── 超分结果要发回会话（2026-10-19 用户反馈「超分完没有把超分后的结果发回」）──
   const bridge = readConsoleSource();
@@ -480,7 +486,7 @@ console.log('\n── 6. 主动功能语义 ──');
 {
   const root = path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Z]:)/, '$1') + '/..';
   const srcRoot = path.join(root, 'src');
-  const mcp = fs.readFileSync(path.join(srcRoot, 'mcp-snowluma-safe.js'), 'utf8');
+  const mcp = fs.readFileSync(path.join(root, 'plugins', 'upscale', 'mcp-tools.js'), 'utf8');
   const preset = fs.readFileSync(path.join(root, 'dsh', 'agent-presets', 'qq-chat-v2', 'agent.cordis.yml'), 'utf8');
   const menuSrc = fs.readFileSync(path.join(root, 'plugins', 'media-tools', 'lib', 'feature-menu.js'), 'utf8');
 
@@ -536,7 +542,7 @@ console.log('\n── 6. 缓存接线 ──');
   const up = fs.readFileSync(path.join(root, 'plugins', 'upscale', 'lib', 'upscale.js'), 'utf8');
   const bridge = fs.readFileSync(path.join(srcRoot, 'bridge.js'), 'utf8');
   const upscalePlugin = fs.readFileSync(path.join(root, 'plugins', 'upscale', 'index.js'), 'utf8');
-  const mcp = fs.readFileSync(path.join(srcRoot, 'mcp-snowluma-safe.js'), 'utf8');
+  const mcp = fs.readFileSync(path.join(root, 'plugins', 'upscale', 'mcp-tools.js'), 'utf8');
 
   check('缓存键含原图哈希 + 模型 + 目标宽度', /cacheKey[\s\S]{0,300}sha256[\s\S]{0,200}model[\s\S]{0,80}targetWidth/.test(up));
   check('缓存写盘是原子写（先临时名再 rename）', /writeFileSync\(tmp, buf\)[\s\S]{0,120}renameSync\(tmp, file\)/.test(up));
@@ -547,9 +553,17 @@ console.log('\n── 6. 缓存接线 ──');
   check('插件启动时清理一次', /pruneUpscaleCache\(\{/.test(upscalePlugin));
   check('插件里有定时清理定时器', /setInterval\([\s\S]{0,400}pruneUpscaleCache/.test(upscalePlugin));
   check('定时器 unref（不阻止进程退出）', /timer\.unref\?\.\(\)/.test(upscalePlugin));
-  check('MCP 也配置缓存目录（独立进程）', /configureUpscaleCache/.test(mcp));
-  check('MCP 与插件用同一缓存目录', /path\.join\(ROOT, 'state', 'upscale-cache'\)/.test(mcp)
-    && /path\.join\(ctx\.root, 'state', 'upscale-cache'\)/.test(upscalePlugin));
+  const { createProcessPluginRuntime } = await import('../src/plugins/process-runtime.js');
+  const processRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'upscale-process-'));
+  fs.writeFileSync(path.join(processRoot, 'package.json'), '{"version":"0.6.0"}');
+  fs.writeFileSync(path.join(processRoot, 'config.json'), JSON.stringify({ socialV2: { upscale: { binDir: '__missing__' } } }));
+  const processRuntime = await createProcessPluginRuntime({ root: processRoot, only: ['upscale'], dirs: [path.join(root, 'plugins')] });
+  try {
+    check('独立进程通过宿主启动超分', !!processRuntime.upscale());
+    check('独立进程使用宿主默认缓存目录', fs.existsSync(path.join(processRoot, 'state', 'upscale-cache')));
+  } finally {
+    await processRuntime.stop(); fs.rmSync(processRoot, { recursive: true, force: true });
+  }
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
   const uc = cfg.socialV2?.upscale ?? {};
   check('配置里 maxAgeDays = 3', Number(uc.cache?.maxAgeDays) === 3, String(uc.cache?.maxAgeDays));

@@ -7,7 +7,7 @@
 //      ⚠️ 该接口必须带 `token` 查询参数，否则返回空对象 `{}`；token 值不校验（任意串即可）。
 //
 // 限制：主页 HTML 只给最近约 6~20 条；接口对单 IP 有软限频，故 ③ 步之间加间隔。
-import { proxyGet } from '../../../src/proxy-tunnel.js';
+import { proxyGet } from '../../../src/plugin-api/network.js';
 
 const X_HOST = 'https://x.com';
 const SYNDICATION = 'https://cdn.syndication.twimg.com/tweet-result';

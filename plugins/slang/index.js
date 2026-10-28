@@ -1,3 +1,4 @@
+import { registerSlangTools } from './mcp-tools.js';
 // 黑话插件（R4.5-7）。
 //
 // 边界：黑话库读写、候选抽取/研究提示词、JSON 解析、注入片段都在 `lib/`；
@@ -11,6 +12,7 @@
 import * as learner from './lib/slang-learner.js';
 
 export function create(ctx) {
+  registerSlangTools(ctx);
   ctx.console?.registerCard?.({
     id: 'slang',
     title: '黑话学习（候选 / 研究）',

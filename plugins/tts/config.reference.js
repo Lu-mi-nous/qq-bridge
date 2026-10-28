@@ -1,5 +1,6 @@
-// TTS 插件配置说明（R2.5 先作为可读清单；后续由宿主合并进 zod schema）。
-export const configSchema = {
+// 参考文档：宿主不导入此文件，也不据此校验配置。
+// TTS 插件配置说明（仅供阅读，不参与运行时校验）。
+export const configReference = {
   enabled: 'boolean',
   dir: 'string',
   device: 'string',
@@ -18,4 +19,4 @@ export const configSchema = {
   punctuate: 'boolean'
 };
 
-export default configSchema;
+export default configReference;

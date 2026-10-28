@@ -43,7 +43,7 @@ try {
     const bad = validatePluginManifest({
       id: 'Bad ID', version: '', configSchema: '', permissions: ['root']
     }, { currentVersion: '0.4.0' });
-    check('非法 id/版本/权限被拒绝', !bad.ok && bad.errors.length >= 4, bad.errors.join('；'));
+    check('非法 id/版本/权限被拒绝', !bad.ok && bad.errors.length >= 3, bad.errors.join('；'));
     check('版本范围不满足被拒绝', !validatePluginManifest({
       id: 'demo2', version: '1.0.0', configSchema: 'x.js', permissions: [], engines: { qqBridge: '>=9.0.0' }
     }, { currentVersion: '0.4.0' }).ok);
@@ -112,6 +112,7 @@ try {
       services: { send: { voiceFile: () => 'sent' } }
     });
     await host.load();
+    await host.start();
     const plugin = host.get('denied');
     let threw = false;
     try { plugin.callSend(); } catch { threw = true; }
@@ -133,7 +134,7 @@ try {
         secrets: ['confdemo-auth.json']
       },
       root: tmp,
-      getConfig: () => ({ plugins: { confdemo: { token: 'abc' } } }),
+      getConfig: () => ({ plugins: { confdemo: { token: 'abc' } }, socialV2: { tools: { sendImage: false } } }),
       setConfig: (dotted, value) => { writes.push([dotted, value]); return true; },
       log: () => {}
     });
@@ -153,6 +154,11 @@ try {
     })());
     check('配置路径越界被拒绝', (() => {
       try { ctx.config.set('../token', 'x'); return false; } catch { return true; }
+    })());
+    check('工具开关只读窄口可取（不暴露整份 config）', (() => {
+      return ctx.config.toolFlag('sendImage') === false
+        && ctx.config.toolFlag('unsetFlag') === undefined
+        && typeof ctx.config.get === 'function';
     })());
     ctx.secrets.writeJson('confdemo-auth.json', { token: 'secret' });
     check('凭据文件可读写', ctx.secrets.readJson('confdemo-auth.json')?.token === 'secret');

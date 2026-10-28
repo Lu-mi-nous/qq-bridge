@@ -1,0 +1,4 @@
+// MCP 传输层的插件工具归属；只用于定位插件，不授予工具可见性。
+// 工具必须同时出现在运行时从 manifest 返回的 tools 中。R4.6-5e 起描述/handler
+// 全部由插件经 ctx.mcp.registerTool 提供，此表只剩传输侧可见性同步的定位用途。
+export const PLUGIN_TOOL_OWNERS = Object.freeze({"qq_bili_memory":"bili","qq_refresh_image_lib":"images","qq_check_image":"images","qq_upscale_image":"upscale","qq_send_feature_menu":"media-tools","qq_archive_image":"images","qq_send_sticker":"stickers","qq_get_sticker_image":"stickers","qq_github_shot":"media-tools","qq_send_image":"images","qq_bili_record":"bili","qq_collect_sticker":"stickers","qq_image_source":"images","web_search":"web-search","qq_reverse_search":"images","qq_send_voice":"tts","qq_list_stickers":"stickers","qq_watch_bili":"bili","qq_set_sticker_remark":"stickers","qq_fetch_x_posts":"x-posts","qq_delete_sticker":"stickers","qq_bili_search":"bili","qq_slang_submit":"slang","qq_slang_query":"slang","qq_sticker_note":"stickers","qq_token_report":"media-tools","qq_reject_image":"images"});

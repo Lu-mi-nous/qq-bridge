@@ -9,7 +9,7 @@
 | `manifest.json` | 插件声明：id / 配置路径 `socialV2.sharedMemory` / 权限 / 控制台卡片 |
 | `index.js` | 启动日志（共享人数/偏好数）+ 控制台卡片；暴露 api |
 | `lib/shared-memory.js` | 存储、身份解析、合并脱敏、注入片段、统计与清除 |
-| `config.schema.js` | 配置字段清单（可读版） |
+| `config.reference.js` | 配置字段清单（可读版） |
 
 ## 隐私边界（改这块前先读）
 

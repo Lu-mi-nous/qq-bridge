@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { proxyGet, openTunnel } from '../../../src/proxy-tunnel.js';
+import { proxyGet, openTunnel } from '../../../src/plugin-api/network.js';
 
 const SEARCH_URL = 'https://saucenao.com/search.php';
 

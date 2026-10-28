@@ -302,6 +302,8 @@ export const CONFIG_DEFAULTS = {
       "memoryPackChars": 1500,
       "promptBudgetChars": 20000,
       "promptMaxChars": 6000,
+      "rotateAtRatio": 0.7,
+      "modelLimitTokens": 1048576,
       "backlogWarnMessages": 200,
       "backlogCriticalMessages": 800,
       "backlogHistoryKeep": 288,
@@ -344,7 +346,7 @@ export const CONFIG_DEFAULTS = {
       "feedbackSwap": true,
       "feedbackWindowMs": 120000,
       "feedbackCooldownMs": 90000,
-      "archiveDir": "C:\\tmp\\collected",
+      "archiveDir": "E:\\tmp\\collected",
       "archiveOverwrite": false,
       "sources": {
         "safebooru": {

@@ -40,7 +40,7 @@ const QUOTA_PATTERNS = [
   /503\b.*(unavailable|account)/i,
   /all accounts are temporarily unavailable/i,
   /RATE_LIMIT\b/,                 // DSH 侧归一化的 code
-  // 上游 WAF 拦截网关出口 IP（2026-10-13 首次遇到，群 1000000001 凌晨 01:37）。
+  // 上游 WAF 拦截网关出口 IP（2026-10-13 首次遇到，群 100002013 凌晨 01:37）。
   // 网关回 `"code":"waf_ip_blocked"` + 一大坨 WAF 的英文 HTML 403 页。
   // 性质与限流同类：上游不可用、**临时**（报错自带 "retry after the block window"）、
   // 非桥接可控（网关直连上游，桥接的抓图走代理，互不影响）。

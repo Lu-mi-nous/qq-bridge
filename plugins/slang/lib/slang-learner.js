@@ -8,7 +8,7 @@
 //
 // 按 qq-bridge 轻量化为 JSON 存储 + 控制台人工确认，不引入数据库。
 
-import { createJsonStore } from '../../../src/state/store.js';
+import { createJsonStore } from '../../../src/plugin-api/storage.js';
 
 export const SLANG_STATUS = Object.freeze({
   CANDIDATE: 'candidate',

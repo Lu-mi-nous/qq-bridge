@@ -13,9 +13,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { looksLikeImageBuffer } from '../../../src/safe-fetch.js';
+import { looksLikeImageBuffer } from '../../../src/plugin-api/media.js';
 import { isGroupLike } from './image-quality.js';
-import { createJsonStore } from '../../../src/state/store.js';
+import { createJsonStore } from '../../../src/plugin-api/storage.js';
 
 const INDEX_VERSION = 1;
 

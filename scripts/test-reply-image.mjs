@@ -38,14 +38,14 @@ console.log('── 从消息段提取图片/表情 ──');
 
 console.log('\n── reserved2：引用里含图时给取图指引 ──');
 {
-  const hint = reserved2MediaFetchHint('group:1000000010');
+  const hint = reserved2MediaFetchHint('group:100002005');
   const info = { sender: '月狐', text: '[图片]', messageId: '-577523028', mediaCount: 1 };
   const t = buildReplyText(info, hint);
   check('含被引用者与原文', t.includes('月狐') && t.includes('[图片]'), t);
   check('含图片数量', t.includes('含 1 个图片/表情'));
   check('含被引用消息 id', t.includes('-577523028'));
   check('含取图工具名', t.includes('qq_get_message_images'));
-  check('参数里带正确 key', t.includes('key="group:1000000010"'));
+  check('参数里带正确 key', t.includes('key="group:100002005"'));
   check('参数里带正确 messageId', t.includes('messageId="-577523028"'));
 }
 

@@ -10,8 +10,10 @@
 //     MCP 不注册工具、桥接在拉取前 403。插件化没有、也不应该绕过这道闸门。
 import { XMonitor } from './lib/index.mjs';
 import { createConfigItems } from './config-items.js';
+import { registerXPostsTools } from './mcp-tools.js';
 
 export function create(ctx) {
+  registerXPostsTools(ctx);
   const monitor = new XMonitor({
     root: ctx.root,
     log: (m) => ctx.log(m)

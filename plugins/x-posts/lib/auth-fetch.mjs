@@ -19,7 +19,7 @@
 // 「Query not found」，按提示更新 QUERY_IDS 即可（从浏览器 Network 面板抄新 ID）。
 import fs from 'node:fs';
 import path from 'node:path';
-import { proxyGet } from '../../../src/proxy-tunnel.js';
+import { proxyGet } from '../../../src/plugin-api/network.js';
 
 const X_HOST = 'https://x.com';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';

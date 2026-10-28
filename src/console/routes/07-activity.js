@@ -15,6 +15,23 @@ export const routes = [
   ['GET', '/api/socialV2/prompt', 'exact']
 ];
 
+// T3：qq_get_prompt 的 compact 载荷（默认）。不重复唤醒提示里已有的状态信息，
+// 只给角色摘要、可用工具、未读数与唤醒配置；完整内容走 detail=full。
+export function buildPromptCompact({ key, roleName = null, digest = '', enabledTools = [], st = {}, wakeSafety = null, now = () => new Date().toISOString() } = {}) {
+  return {
+    ok: true,
+    key,
+    time: now(),
+    detail: 'compact',
+    role: { name: roleName, hint: String(digest || '') },
+    enabledTools: Array.isArray(enabledTools) ? enabledTools : [],
+    unreadCount: Array.isArray(st?.unread) ? st.unread.length : 0,
+    currentWakeConfig: st?.wakeConfig ?? null,
+    wakeSafety,
+    note: '默认 compact：完整角色卡、推荐值、记忆/黑话/表情上下文请传 detail=full；唤醒提示里已有的状态信息不重复返回。'
+  };
+}
+
 export async function handle(req, res, url, ctx) {
   const { sendJson, readBody, deps } = ctx;
   const { agentTokenOk, v2SessionAllowed, v2ToolEnabled } = ctx;
@@ -218,8 +235,11 @@ export async function handle(req, res, url, ctx) {
     if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
     if (req.headers['x-agent-token'] && !v2ToolEnabled('getPrompt')) { sendJson({ ok: false, error: '工具未启用：qq_get_prompt' }, 403); return; }
     const st = getSocialV2State(key);
-    // 让 prompt 里的表情摘要尽量新鲜：按 TTL 同步一次 QQ 收藏表情（失败不阻塞）。
-    if (cfg.socialV2?.sticker?.enabled !== false) {
+    // T3：默认 compact（角色摘要 + 工具 + 唤醒配置）；detail=full 才返回完整角色卡与
+    // 记忆/黑话/表情上下文。唤醒提示里已有的状态信息不再重复。
+    const detail = url.searchParams.get('detail') === 'full' ? 'full' : 'compact';
+    // 让 prompt 里的表情摘要尽量新鲜：按 TTL 同步一次 QQ 收藏表情（失败不阻塞）。仅 full 需要。
+    if (detail === 'full' && cfg.socialV2?.sticker?.enabled !== false) {
       try { await syncStickerLibrary(false); } catch {}
     }
     const roleName = roleFor(key);
@@ -267,10 +287,23 @@ export async function handle(req, res, url, ctx) {
     for (const [flag, name] of Object.entries(toolMap)) {
       if (tools[flag] !== false && !(stickerToolFlags.has(flag) && !stickerEnabled())) enabledTools.push(name);
     }
+    if (detail === 'compact') {
+      const digest = typeof currentRoleHintV2 === 'function' ? currentRoleHintV2(key, { digest: true }) : '';
+      sendJson(buildPromptCompact({
+        key,
+        roleName,
+        digest,
+        enabledTools,
+        st,
+        wakeSafety: computeWakeSafetyV2(st.wakeConfig)
+      }));
+      return;
+    }
     sendJson({
       ok: true,
       key,
       time: new Date().toISOString(),
+      detail,
       role: { name: roleName ?? null, hint: deps.live.currentMode === 'reserved2' ? currentRoleHintV2(key) : currentRoleHint(key) },
       ownerQQ: cfg.ownerQQ ?? null,
       recommended: cfg.socialV2?.provideRecommendations === false ? null : {

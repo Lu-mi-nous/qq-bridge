@@ -25,8 +25,8 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { findFfmpeg } from '../../../src/gif-frames.js';
-import { proxyGet } from '../../../src/proxy-tunnel.js';
+import { findFfmpeg } from '../../../src/plugin-api/process.js';
+import { proxyGet } from '../../../src/plugin-api/network.js';
 
 const FONT_REGULAR = [
   'C:/Windows/Fonts/msyh.ttc',

@@ -44,12 +44,7 @@ console.log('── 1. 模型复用（不重复下载 3GB）──');
 {
   check('内置本机已知模型目录', KNOWN_MODEL_DIRS.length > 0 && KNOWN_MODEL_DIRS[0].includes('large-v3'));
   const picked = pickModelSpec();
-  const hasLocalModel = KNOWN_MODEL_DIRS.some((d) => resolveModelSpec(d).kind === 'dir');
-  if (hasLocalModel) {
-    check('默认挑到本地目录（不是名字下载）', picked.kind === 'dir', `${picked.kind}: ${picked.value}`);
-  } else {
-    skipped('默认挑到本地目录', '本机没有已知 faster-whisper 模型');
-  }
+  check('默认挑到本地目录（不是名字下载）', picked.kind === 'dir', `${picked.kind}: ${picked.value}`);
 
   const largeDir = KNOWN_MODEL_DIRS[0];
   if (fs.existsSync(path.join(largeDir, 'model.bin'))) {
@@ -62,11 +57,7 @@ console.log('── 1. 模型复用（不重复下载 3GB）──');
   }
   check('不存在的目录判为 missing-dir', resolveModelSpec('Z:\\no\\such\\dir').kind === 'missing-dir');
   check('裸名字当 huggingface 模型名', resolveModelSpec('base').kind === 'name');
-  if (hasLocalModel) {
-    check('配置指向坏目录时回落到已知模型', pickModelSpec('Z:\\nope').kind === 'dir');
-  } else {
-    skipped('配置指向坏目录时回落到已知模型', '本机没有已知 faster-whisper 模型');
-  }
+  check('配置指向坏目录时回落到已知模型', pickModelSpec('Z:\\nope').kind === 'dir');
 }
 
 // ── 2. 常驻进程设计 ──

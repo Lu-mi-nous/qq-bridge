@@ -1,6 +1,6 @@
 // 回归测试：状态摘要不能只截开头（引用类消息的指令在末尾）。
 //
-// 事故（2026-10-21，group:1000000004）：群友发
+// 事故（2026-10-21，group:100002015）：群友发
 //   "[引用 群友D：[图片]]（被引用的这条消息含 1 个图片/表情。要看到它请调用
 //    mcp__snowluma__qq_get_message_images，参数 key="…", messageId="…"）@大肥鱼 超分一下"
 // 桥接把它判成 atMention 唤醒（判定是对的），但【此刻状态】只显示前 30 字 →
@@ -27,7 +27,7 @@ const summarize = (text) => {
 
 console.log('── 1. 事故原文必须露出指令 ──');
 {
-  const real = '[引用 群友D：[图片]]（被引用的这条消息含 1 个图片/表情。要看到它请调用 mcp__snowluma__qq_get_message_images，参数 key="group:1000000004", messageId="-1669323357"）@大肥鱼 超分一下';
+  const real = '[引用 群友D：[图片]]（被引用的这条消息含 1 个图片/表情。要看到它请调用 mcp__snowluma__qq_get_message_images，参数 key="group:100002015", messageId="-1669323357"）@大肥鱼 超分一下';
   const out = summarize(real);
   check('含 @大肥鱼', out.includes('@大肥鱼'), out);
   check('含指令「超分一下」', out.includes('超分一下'));

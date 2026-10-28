@@ -9,7 +9,7 @@ const imgPath = process.argv[4] ?? 'C:/qq-bridge/state/vision-test.jpg';
 const askText = process.argv[5] ?? '这张图里是什么？用中文一句话说清：发色、配色、是否睁眼、有无鲸鱼元素。';
 
 const api = new NodeApiClient('http://127.0.0.1:3080');
-const created = unwrap(await api.sessions.create({ cwd: 'C:\\qq-bridge\\state\\vision-e2e' }), 'session.create');
+const created = unwrap(await api.sessions.create({ cwd: 'E:\\Downloads\\qq-bridge-main\\state\\vision-e2e' }), 'session.create');
 const sessionId = created.sessionId;
 console.log('会话:', sessionId);
 

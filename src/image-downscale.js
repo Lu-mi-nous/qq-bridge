@@ -1,3 +1,4 @@
+import { imageSizeOf } from './plugin-api/media.js';
 // 传给模型前把过大的图片降采样。
 //
 // 背景（2026-10-15 实测）：
@@ -56,34 +57,7 @@ export const UPSCALE_TARGET_EDGE = 1220;
  * 只需支持模型最常遇到的三种：PNG / JPEG / GIF——够判断"是不是小图"。
  * 读不出时返回 null，调用方按"不动它"处理（不做无依据的猜测）。
  */
-export function imageSizeOf(buf) {
-  if (!buf || buf.length < 24) return null;
-  try {
-    // PNG：IHDR 宽高在固定偏移
-    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
-      return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
-    }
-    // GIF：小端 16 位
-    if (buf.toString('ascii', 0, 6) === 'GIF87a' || buf.toString('ascii', 0, 6) === 'GIF89a') {
-      return { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) };
-    }
-    // JPEG：逐段找 SOF（0xC0-0xCF，排除 C4/C8/CC）
-    if (buf[0] === 0xff && buf[1] === 0xd8) {
-      let i = 2;
-      while (i < buf.length - 9) {
-        if (buf[i] !== 0xff) { i += 1; continue; }
-        const marker = buf[i + 1];
-        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
-          return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
-        }
-        const len = buf.readUInt16BE(i + 2);
-        if (len <= 0) break;
-        i += 2 + len;
-      }
-    }
-  } catch { /* 头损坏：当作未知 */ }
-  return null;
-}
+export { imageSizeOf } from './plugin-api/media.js';
 
 function runFfmpeg(bin, args, timeoutMs) {
   return new Promise((resolve) => {
@@ -308,9 +282,11 @@ export async function prepareImageForModel(buffer, opts = {}) {
   //   c) 无论哪种失败都只是"跳过"，紧接着走 lanczos —— 缩图/出图链路不受影响。
   if (opts.upscale !== false && opts.upscale?.enabled !== false) {
     try {
-      const { upscaleImage, probeUpscale } = await import('../plugins/upscale/lib/upscale.js');
+      const plugin = opts.getUpscalePlugin?.();
+      if (!plugin) throw new Error('超分插件能力不可用');
+      const { upscaleImage } = plugin;
       const uc = (opts.upscale && typeof opts.upscale === 'object') ? opts.upscale : {};
-      const probe = probeUpscale({ binDir: uc.binDir, modelDir: uc.modelDir, model: uc.model });
+      const probe = plugin.probe() ?? { ok: false, reason: '未完成探测' };
       if (!probe.ok) {
         // 只在第一次说一句，避免每条消息刷屏（探测结果本身有 60s 缓存）
         if (!probeWarned.has(probe.reason)) {
@@ -334,12 +310,12 @@ export async function prepareImageForModel(buffer, opts = {}) {
           return { buffer: cur, mimeType, changed: true, notes };
         }
         if (up.reason && up.reason !== 'big-enough' && up.reason !== 'already-large-enough' && up.reason !== 'empty') {
-          log(`[超分] 本次跳过（${up.reason}），回退 lanczos`);
+          log(`[超分] 本次跳过（${up.reason}），回退 lanczos，不影响出图`);
         }
       }
     } catch (error) {
       // 超分模块自身出问题（文件缺失/版本不兼容/语法错误）也只是回退，不影响出图
-      log(`[超分] 不可用（${error?.message ?? error}），回退 lanczos`);
+      log(`[超分] 不可用（${error?.message ?? error}），回退 lanczos，不影响出图`);
     }
   }
 

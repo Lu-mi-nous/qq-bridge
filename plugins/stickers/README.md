@@ -10,7 +10,7 @@
 | `index.js` | 暴露 lib/pick 能力 + 启动日志 + 控制台卡片 |
 | `lib/sticker-lib.js` | 表情库索引、同步合并、备注、删除、收藏、缓存图写盘、提示词片段 |
 | `lib/sticker-pick.js` | 按语气挑候选、催图文案、语气分类 |
-| `config.schema.js` | 配置字段清单（可读版） |
+| `config.reference.js` | 配置字段清单（可读版） |
 
 ## 谁在用它
 

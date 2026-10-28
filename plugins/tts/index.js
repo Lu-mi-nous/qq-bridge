@@ -7,8 +7,9 @@ import {
   DEFAULT_SOVITS_DIR,
   DEFAULT_SPEECH_PARAMS,
   TTS_DEFAULT_PROBABILITY
-} from '../../src/tts.js';
-import { moodOfText } from '../../src/stickers-api.js';
+} from '../../src/plugin-api/speech.js';
+import { registerTtsTools } from './mcp-tools.js';
+
 
 function num(raw, dflt, min, max) {
   const n = Number(raw);
@@ -23,6 +24,11 @@ function intNum(raw, dflt, min, max) {
 }
 
 export function create(ctx) {
+  registerTtsTools(ctx);
+  const moodOfText = text => {
+    const pick = ctx.capabilities?.get('stickers.instance')?.pick;
+    return pick?.moodOfText ? pick.moodOfText(text) : 'neutral';
+  };
   let engine = null;
   let probe = null;
   let warmupTimer = null;
@@ -137,6 +143,13 @@ export function create(ctx) {
         ctx.log(`已启用但不可用：${probe.reason}（将只发文字）`);
         engine = null;
         return { enabled: true, available: false, reason: probe.reason };
+      }
+      // 本宿主没有语音发送能力（MCP 独立进程只注册工具描述）：不建引擎、不预热。
+      // 预热会拉起 GPT-SoVITS 的 Python 进程，独立进程不需要也不该做这件事。
+      if (typeof ctx.send?.voiceFile !== 'function') {
+        engine = null;
+        ctx.log('本宿主无语音发送能力：只提供工具描述，不加载合成引擎');
+        return { enabled: true, available: false, reason: '没有语音发送能力' };
       }
       engine = createTtsEngine({
         enabled: true,

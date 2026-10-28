@@ -11,7 +11,7 @@
 | `manifest.json` | 插件声明：id / 配置路径 `socialV2.upscale` / 权限 / 控制台卡片 |
 | `index.js` | 生命周期：启动自检、缓存清理定时器、控制台卡片状态 |
 | `lib/upscale.js` | 实现本体：探测、模型选择、缓存、调用 upscayl-bin、`shrinkForPublish` |
-| `config.schema.js` | 配置字段清单（可读版） |
+| `config.reference.js` | 配置字段清单（可读版） |
 
 ## 谁在用它
 

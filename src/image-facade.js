@@ -1,15 +1,15 @@
+import { createImagesApi } from './images-api.js';
 // 图库门面（R3-5）：图库实例、补货拉取、画风分与已发图清理。
 //
 // 只负责图库存储与图源拉取；发图准入、来源标注、差评换图仍由 bridge/发送层编排。
 import fs from 'node:fs';
 import path from 'node:path';
-import { createImageStore } from './images-api.js';
 import { createJsonStore } from './state/store.js';
-import { fetchFromSources } from './images-api.js';
 import { safeFetchBuffer } from './safe-fetch.js';
-import { extractStyleVectors, cosine } from './images-api.js';
 
 export function createImageFacade({
+  imageApi = createImagesApi(),
+  createImageStore = imageApi.createImageStore, fetchFromSources = imageApi.fetchFromSources, extractStyleVectors = imageApi.extractStyleVectors, cosine = imageApi.cosine,
   cfg,
   imageLibDir,
   imageFetchStateFile,
@@ -62,7 +62,7 @@ export function createImageFacade({
   }
 
   function imagesEnabled() {
-    return cfg.socialV2?.images?.enabled === true;
+    return imageApi.available() && cfg.socialV2?.images?.enabled === true;
   }
 
   let imageSweepTimer = null;

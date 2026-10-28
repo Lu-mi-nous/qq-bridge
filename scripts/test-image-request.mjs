@@ -1,3 +1,4 @@
+import { imageApi } from './helpers/image-api-fixture.mjs';
 // R3-9 图片请求服务：来源过滤、预检、冷却、标注。
 import { createImageRequestService } from '../src/image-request.js';
 
@@ -24,6 +25,7 @@ function makeService(overrides = {}) {
     pickRandom: () => ({ count })
   };
   const service = createImageRequestService({
+    imageApi,
     cfg,
     imageStore,
     log: () => {},

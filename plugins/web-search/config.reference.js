@@ -1,5 +1,6 @@
+// 参考文档：宿主不导入此文件，也不据此校验配置。
 // 联网搜索配置说明（与 config-schema.js 的 webSearch 保持同形）。
-export const configSchema = {
+export const configReference = {
   enabled: 'boolean',
   engines: 'string[]',
   maxResults: 'integer(1..20)',
@@ -8,4 +9,4 @@ export const configSchema = {
   proxy: 'string'
 };
 
-export default configSchema;
+export default configReference;

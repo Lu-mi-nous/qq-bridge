@@ -2,9 +2,16 @@
 
 > 按时间倒序记录「做了什么 + 为什么」。修 bug 优先写清真因，因为下次可能再遇到。
 
-## 未发布
+## 0.7.0（2026-10-28）
 
-（暂无）
+- **项目更名：鲸桥 WhaleBridge**（包名 `whale-bridge`）：README/控制台/关于页统一新品牌；仓库地址、`~/.qq-bridge` 插件目录与 state 路径保持不变，兼容旧部署。
+- **R4.6 插件运行时收口**：插件能力注册表、七类网关宿主注入、`src/plugin-api/**` 公共契约、manifest 字段语义化；27 个插件 MCP 工具迁入 Runtime 注册，MCP server 只消费描述/handler；新增跨层导入架构护栏与禁用/缺席矩阵（86 断言）。
+- **T1 回复后不再守候**：删除 preset 的强制 wait 与无条件回复检查唤醒；发言回合由桥接自动标已读并保证唤醒，回复检查只在确有新消息时唤醒。
+- **T2 工具面计量与 profile**：新增 `state/tool-surface.json`（工具数/字符/估算 token）；preset 级档位 full/core/media/bili（默认 full）。
+- **T3 Prompt 分层**：唤醒提示常驻角色改为角色摘要（大肥鱼 764 字），完整卡只在会话初始化/角色切换/`detail=full` 时注入——实测唤醒提示 12,583 → 3,005 字符（-76%）；能力提示随工具档位缺席；`qq_get_prompt` 默认 compact。
+- **T4 上下文与工具结果预算化**：消息工具默认 8 条小窗口；工具结果按工具 6k–12k + DSH 全局 12k 双层裁剪；上下文约 70% 时先压 episode 再主动换会话。
+- **T5 Token 效率指标**：按回合采集并落盘 `state/turn-metrics.json`（14 天）；`npm run metrics:turn -- --compare a,b` 输出前后对比；`/api/socialV2/token-usage` 带 `turnMetrics`。
+- **测试**：183 个脚本；全量 173/183 通过、5,557 条断言，10 个环境类失败，无真实失败。
 
 ## 0.6.0（2026-10-27）
 
@@ -24,7 +31,7 @@
 ## 0.4.1（2026-10-27）
 
 - **版本号统一为 0.4.1**（2026-10-27 用户要求）：`package.json` / `package-lock.json`、控制台关于页 fallback、三个 MCP server 的元数据、`plugins/qq-mode-console` 统一为 0.4.1；新增 `npm run version:set` 一键同步与 `test-version-sync` 护栏。
-- **上游许可归属整理**（2026-10-27）：本仓库 fork 自 [Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge)（MIT）。`LICENSE` 版权行改为本 fork 作者（Lu-mi-nous），上游的版权声明与 MIT 许可正文原样保留在 `THIRD_PARTY_NOTICES.md` §0。
+- **上游许可归属整理**（2026-10-27）：本仓库 fork 自 [Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge)（MIT）。`LICENSE` 版权行改为本 fork 作者（群友H），上游的版权声明与 MIT 许可正文原样保留在 `THIRD_PARTY_NOTICES.md` §0。
 - **重构 R2：状态层统一**（2026-10-26）：新增 `src/state/store.js`，22 个状态文件统一为原子写 + 版本迁移 + mtime 热重载的 JSON store；旧裸数组/带 BOM 文件兼容读取。
 - **重构 R2.5：可选功能插件化试点**（2026-10-26）：新增 `src/plugins/host.js`、`src/plugin-runtime.js` 与 `plugins/tts/`（manifest 校验、权限、生命周期），GPT-SoVITS 语音合成整体出核；`GET /api/plugins` 上线。
 - **重构 R3：bridge 拆分完成**（2026-10-26）：会话、社交调度、任务、加入请求、Token、图库、图片请求、表情库、媒体、社交消息、入站派发、引用解析、报错通道、B站/超分装配逐个出核为独立模块；`bridge.js` 8,621 → **6,475 行**（目标 < 6,500）。

@@ -42,16 +42,16 @@ console.log('── 真实 503：群内人设句 + 私聊详情 ──');
 {
   let t = 1_700_000_000_000;
   const h = makeHandler({ now: () => t });
-  const handled = await h.handleUpstreamError('group:1000000010', REAL_503, { sessionId: 'session-xyz' });
+  const handled = await h.handleUpstreamError('group:100002005', REAL_503, { sessionId: 'session-xyz' });
 
   check('识别并接管（返回 true）', handled === true);
-  const group = h.sent.filter((s) => s.key === 'group:1000000010');
+  const group = h.sent.filter((s) => s.key === 'group:100002005');
   const priv = h.sent.filter((s) => s.key === 'private:1000000000');
   check('群内正好发 1 条', group.length === 1, `${group.length} 条`);
   check('群内是人设短句', group[0]?.text === DEFAULT_MESSAGES[0], group[0]?.text);
   check('群内**不含**原始 JSON', !/no_healthy_account|\{/.test(group[0]?.text ?? ''), group[0]?.text);
   check('私聊正好发 1 条', priv.length === 1, `${priv.length} 条`);
-  check('私聊含群号字段', /群号：1000000010/.test(priv[0]?.text ?? ''));
+  check('私聊含群号字段', /群号：100002005/.test(priv[0]?.text ?? ''));
   check('私聊含错误码', /no_healthy_account/.test(priv[0]?.text ?? ''));
   check('私聊含原始 JSON', /gateway_hint/.test(priv[0]?.text ?? ''));
   check('私聊含 sessionId', /session-xyz/.test(priv[0]?.text ?? ''));

@@ -3,18 +3,10 @@
 // 只负责表情库与 QQ 收藏表情接口；发送/提示词挑选仍在 bridge/pipeline。
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  loadStickerStore,
-  saveStickerStore,
-  mergeStickerLibrary,
-  findSticker,
-  formatStickerList,
-  applyStickerNote,
-  syncStickerCache,
-  writeStickerCacheRecord
-} from './stickers-api.js';
+import { createStickersApi } from './stickers-api.js';
 
 export function createStickerService({
+  stickerApi = createStickersApi(),
   cfg,
   file,
   cacheDir,
@@ -29,6 +21,8 @@ export function createStickerService({
   log = () => {},
   now = Date.now
 } = {}) {
+  const { loadStickerStore, saveStickerStore, mergeStickerLibrary, findSticker, formatStickerList, applyStickerNote, syncStickerCache, writeStickerCacheRecord } = stickerApi;
+  const requireAvailable = () => { if (!stickerApi.available()) throw new Error('表情插件不可用'); };
   if (!file || !cacheDir || !stateDir) throw new Error('createStickerService: 路径不能为空');
   if (typeof request !== 'function') throw new Error('createStickerService: request 不能为空');
 
@@ -37,7 +31,7 @@ export function createStickerService({
   let lastForcedAgentStickerSync = 0;
 
   function enabled() {
-    return cfg.socialV2?.sticker?.enabled !== false;
+    return stickerApi.available() && cfg.socialV2?.sticker?.enabled !== false;
   }
 
   function saveSafe() {
@@ -52,7 +46,7 @@ export function createStickerService({
   }
 
   async function sync(force = false) {
-    if (cfg.socialV2?.sticker?.enabled === false) return null;
+    if (!enabled()) return null;
     const rawTtl = Number(cfg.socialV2?.sticker?.syncTtlMs);
     const ttl = Number.isFinite(rawTtl) ? Math.max(0, rawTtl) : 60000;
     const at = now();
@@ -61,6 +55,7 @@ export function createStickerService({
     }
     try {
       const count = Math.min(500, Math.max(1, Number(cfg.socialV2?.sticker?.maxListCount) || 100));
+      requireAvailable();
       const response = await request('fetch_custom_face_detail', { count });
       if (!response || response.status !== 'ok' || response.retcode !== 0) {
         throw new Error(`fetch_custom_face_detail 失败: ${response?.wording || response?.retcode || 'unknown'}`);
@@ -97,6 +92,7 @@ export function createStickerService({
   }
 
   function applyNote(stickerId, note, tags, usage) {
+    requireAvailable();
     const patch = {};
     if (note !== undefined && note !== null) patch.note = String(note);
     if (tags !== undefined && tags !== null) patch.tags = Array.isArray(tags) ? tags.map(String) : String(tags).split(/[,，\s]+/);
@@ -110,11 +106,13 @@ export function createStickerService({
   }
 
   async function setRemark(stickerId, remark) {
+    requireAvailable();
     const synced = await sync(false);
     const entry = findSticker(synced?.entries ?? entries, stickerId);
     if (!entry) throw new Error(`找不到表情 ${stickerId}，请先用 qq_list_stickers 获取有效 id`);
     const cleanRemark = String(remark ?? '').trim().slice(0, 50);
-    const response = await request('modify_custom_face', { emoji_id: entry.id, desc: cleanRemark });
+    requireAvailable();
+      const response = await request('modify_custom_face', { emoji_id: entry.id, desc: cleanRemark });
     if (!response || response.status !== 'ok' || response.retcode !== 0) {
       throw new Error(`modify_custom_face 失败: ${response?.wording || response?.retcode || 'unknown'}`);
     }
@@ -129,6 +127,7 @@ export function createStickerService({
   }
 
   async function remove(stickerId) {
+    requireAvailable();
     const synced = await sync(false);
     const entry = findSticker(synced?.entries ?? entries, stickerId);
     if (!entry?.id) throw new Error(`找不到表情 ${stickerId}，请先用 qq_list_stickers 获取有效的 id / md5`);
@@ -144,7 +143,8 @@ export function createStickerService({
       log(`[sticker] 删前备份失败（继续但不可恢复）：${error?.message ?? error}`);
     }
     const expectMd5 = String(entry.md5 || '').toUpperCase();
-    const response = await request('delete_custom_face', { emoji_id: entry.id });
+    requireAvailable();
+      const response = await request('delete_custom_face', { emoji_id: entry.id });
     if (!response || response.status !== 'ok' || response.retcode !== 0) {
       throw new Error(`delete_custom_face 失败: ${response?.wording || response?.retcode || 'unknown'}`);
     }
@@ -161,6 +161,7 @@ export function createStickerService({
   }
 
   async function collect(key, messageRef, remark) {
+    requireAvailable();
     const st = getSocialV2State(key);
     const found = (st.recentMessages || []).find((m) => m && (String(m.seq) === String(messageRef) || (m.messageId && String(m.messageId) === String(messageRef))));
     if (!found) throw new Error('找不到这条消息，请确认 messageId/seq 有效且属于当前会话');
@@ -230,7 +231,7 @@ export function createStickerService({
     collect,
     saveSafe,
     find: (ref) => findSticker(entries, ref),
-    getEntries: () => entries,
+    getEntries: () => stickerApi.available() ? entries : [],
     setEntries: (value) => { entries = Array.isArray(value) ? value : []; },
     get syncedAt() { return syncedAt; },
     set syncedAt(value) { syncedAt = Number(value) || 0; },

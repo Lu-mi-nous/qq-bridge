@@ -54,8 +54,9 @@ try {
     check('get 可拿到插件实例', runtime.get('demo')?.started === true);
     await runtime.start();
     check('重复 start 幂等', runtime.get('demo')?.started === true);
+    const instance = runtime.get('demo');
     await runtime.stop();
-    check('stop 调用插件清理', runtime.get('demo')?.stopped === true);
+    check('stop 调用插件清理并撤销实例', instance?.stopped === true && runtime.get('demo') === null);
   }
 
   console.log('\n── 2. TTS 能力查询 ──');

@@ -6,6 +6,7 @@ import { prepareImageForModel } from './image-downscale.js';
 import { tileGifFrames, isGifBuffer, gifFramesHint } from './gif-frames.js';
 
 export function createMediaService({
+  getUpscalePlugin = () => null,
   cfg,
   bot,
   log = () => {},
@@ -221,7 +222,7 @@ export function createMediaService({
         if (dims && dims.width * dims.height > MAX_MEDIA_PIXELS) {
           log(`图片 URL 像素超限，已跳过（${dims.width}x${dims.height}）`);
         } else {
-          const prepared = await prepareImageForModel(fetched.buffer, {
+          const prepared = await prepareImageForModel(fetched.buffer, { getUpscalePlugin,
             mimeType: mimeFromBuffer(fetched.buffer) || mimeFromUrl(media.url),
             log,
             upscale: cfg.socialV2?.upscale
@@ -316,7 +317,7 @@ export function createMediaService({
           // 放在大小检查**之前**：先缩再看大小，避免把能救回来的图直接判超限跳过。
           // 统一预处理：先缩大图（防 base64 过大让 DSH 爆栈），再放大小图
           // （305×92 这类截图文字不足 1 个 patch 高，模型读不出）。见 image-downscale.js。
-          const scaled = await prepareImageForModel(img.buffer, { mimeType: img.mimeType, upscale: cfg.socialV2?.upscale, log: (m) => log(m) });
+          const scaled = await prepareImageForModel(img.buffer, { getUpscalePlugin, mimeType: img.mimeType, upscale: cfg.socialV2?.upscale, log: (m) => log(m) });
           const useBuf = scaled.buffer;
           const useMime = scaled.mimeType || img.mimeType || 'image/jpeg';
           if (totalBytes + useBuf.length > MAX_MEDIA_BYTES) {
@@ -426,7 +427,7 @@ export function createMediaService({
           // 否则 base64 过大时 DSH 侧会爆栈、模型只看到"图片不可用"。
           // 与 resolveMediaList 同一套预处理（缩大图 + 放大小图）——两处必须一致，
           // 否则走 MCP 工具取图时行为不同（这类"两处要同改"的坑踩过多次）。
-          const scaled2 = await prepareImageForModel(img.buffer, { mimeType: img.mimeType, upscale: cfg.socialV2?.upscale, log: (m) => log(m) });
+          const scaled2 = await prepareImageForModel(img.buffer, { getUpscalePlugin, mimeType: img.mimeType, upscale: cfg.socialV2?.upscale, log: (m) => log(m) });
           const useBuf2 = scaled2.buffer;
           const useMime2 = scaled2.mimeType || img.mimeType || 'image/jpeg';
           if (totalBytes + useBuf2.length > MAX_MEDIA_BYTES) {

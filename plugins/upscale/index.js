@@ -4,8 +4,8 @@
 // `lib/upscale.js`，这里只负责生命周期（启动自检 + 缓存清理定时器）和控制台插槽。
 //
 // 谁在用这个实现：
-//   - 桥接出图管线 `src/image-downscale.js`（动态 import，失败即退回 lanczos）；
-//   - MCP 进程 `src/mcp-snowluma-safe.js`（独立进程，直接 import lib；找不到就当没装）；
+//   - 桥接出图管线 `src/image-downscale.js`（通过宿主注入能力，失败即退回 lanczos）；
+//   - MCP 进程 `src/mcp-snowluma-safe.js`（独立进程，使用限定插件的宿主；找不到就当没装）；
 //   - 本插件（缓存定时器 + 控制台卡片状态）。
 // 所以插件目录缺失时：桥接照常出图（lanczos），MCP 不注册 `qq_upscale_image`。
 import path from 'node:path';
@@ -21,8 +21,10 @@ import {
   clearUpscaleCache,
   resetUpscaleState
 } from './lib/upscale.js';
+import { registerUpscaleTools } from './mcp-tools.js';
 
 export function create(ctx) {
+  registerUpscaleTools(ctx);
   let timer = null;
   let probe = null;
 

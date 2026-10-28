@@ -19,7 +19,7 @@
 // 所以它天然远大于"实际新读进去的字数"。cacheReadTokens 更夸张——命中缓存的部分
 // 也会计进 input？不会，DSH 里它们是分开的字段，本模块也分开显示。
 // 图像里一律标"Token 用量"，不出现"花了多少钱"，因为没有单价数据，不该瞎算。
-import { humanTokens } from '../../../src/token-usage.js';
+import { humanTokens } from '../../../src/plugin-api/format.js';
 
 /** 上海时区的 YYYY-MM-DD。 */
 function dayKeyOf(ms) {

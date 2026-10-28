@@ -12,7 +12,7 @@
 | `manifest.json` | 插件声明：id / configPath `xMonitor.review` / 权限 / 控制台卡片 |
 | `index.js` | 生命周期 + 控制台卡片（开关/模式/审计摘要） |
 | `lib/review.mjs` | `reviewText` 统一入口、本地规则、审计（JSONL）、统计 |
-| `config.schema.js` | 配置字段清单（可读版） |
+| `config.reference.js` | 配置字段清单（可读版） |
 
 ## 审核语义
 

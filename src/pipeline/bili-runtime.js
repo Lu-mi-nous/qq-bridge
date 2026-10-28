@@ -1,10 +1,7 @@
-// 自主浏览编排：列表/搜索 → 初判 → 可选追加 → 记账/投递/分享。
-import { GAME_KEYWORDS, buildBrowsePrompt, buildExtendedPrompt,
-  canSelfBrowse, pickCandidate as defaultPickCandidate, watchVideo as defaultWatchVideo } from '../bili-api.js';
-import { fetchPopularVideos as defaultFetchPopularVideos } from '../bili-api.js';
-import { buildSearchKeywords, pickSearchQuery, searchVideos as defaultSearchVideos } from '../bili-api.js';
-
+import { createBiliApi } from '../bili-api.js';
 export function createBiliRuntime(deps) {
+  const biliApi = deps.biliApi ?? createBiliApi();
+  const { buildBrowsePrompt, buildExtendedPrompt, canSelfBrowse, pickCandidate: defaultPickCandidate, watchVideo: defaultWatchVideo, fetchPopularVideos: defaultFetchPopularVideos, buildSearchKeywords, pickSearchQuery, searchVideos: defaultSearchVideos } = biliApi;
   const { cfg, socialV2, live, log, scheduleBiliBrowse, pickBiliSessionKey, biliBrowseState,
     isTokenFused = () => false,
     rememberBiliInfo, judgeBiliScan, deliverBiliPrompt, maybeShareBiliVideo,
@@ -12,6 +9,7 @@ export function createBiliRuntime(deps) {
     watchVideo = defaultWatchVideo, pickCandidate = defaultPickCandidate } = deps;
   // manual 仅跳过自主排期和间隔，仍遵守每日观看额度。
   async function runBiliBrowse(opts = {}) {
+    if (!biliApi.available()) return { ok: false, reason: 'B站插件不可用' };
     const manual = opts.manual === true;
     const b = cfg.socialV2?.bili ?? {};
     const sb = b.selfBrowsing ?? {};
@@ -102,8 +100,8 @@ export function createBiliRuntime(deps) {
           const keywords = buildSearchKeywords(
             { likedTags: taste.totalTags, categories: taste.categories },
             sb.search?.gamesOnly === true
-              ? GAME_KEYWORDS.map((g) => g.name)
-              : GAME_KEYWORDS.map((g) => g.name),
+              ? biliApi.GAME_KEYWORDS.map((g) => g.name)
+              : biliApi.GAME_KEYWORDS.map((g) => g.name),
             { max: Number(sb.search?.maxKeywords) || 6 }
           );
           const kw = pickSearchQuery(keywords);

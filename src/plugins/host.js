@@ -8,17 +8,9 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { createPluginContext } from './context.js';
-
-export const PLUGIN_PERMISSIONS = Object.freeze([
-  'network',
-  'state',
-  'send',
-  'mcp:register',
-  'console:route',
-  'prompt',
-  'process',
-  'secrets'
-]);
+import { createCapabilityRegistry } from './capabilities.js';
+import { PLUGIN_PERMISSIONS, PLUGIN_PERMISSION_MODES, isLocalFileName } from './permissions.js';
+export { PLUGIN_PERMISSIONS, PLUGIN_PERMISSION_MODES } from './permissions.js';
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
@@ -64,7 +56,19 @@ export function validatePluginManifest(manifest, { currentVersion = '0.0.0' } = 
   const m = manifest && typeof manifest === 'object' ? manifest : {};
   if (!ID_RE.test(String(m.id || ''))) errors.push('id 必须是小写字母/数字/连字符，最长 64');
   if (!String(m.version || '').trim()) errors.push('缺少 version');
-  if (!String(m.configSchema || '').trim()) errors.push('缺少 configSchema');
+  if (m.mcpTools != null) {
+    if (!Array.isArray(m.mcpTools)) errors.push('mcpTools 必须是数组');
+    else {
+      const seen = new Set();
+      for (const name of m.mcpTools) {
+        if (typeof name !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(name)) errors.push('mcpTools 工具名不合法');
+        else if (seen.has(name)) errors.push(`mcpTools 工具名重复：${name}`);
+        else seen.add(name);
+      }
+    }
+  }
+  // 配置参考文档可选且不执行；运行时配置校验仍由核心 config-schema 负责。
+  if (m.configDocumentation != null && !isLocalFileName(m.configDocumentation)) errors.push('configDocumentation 必须是插件目录内的文件名');
   if (!Array.isArray(m.permissions)) errors.push('permissions 必须是数组');
   else {
     for (const p of m.permissions) {
@@ -76,7 +80,7 @@ export function validatePluginManifest(manifest, { currentVersion = '0.0.0' } = 
     else {
       for (const name of m.secrets) {
         const raw = String(name || '');
-        if (!raw || path.basename(raw) !== raw) errors.push(`secrets 文件名不合法：${raw}`);
+        if (!isLocalFileName(raw)) errors.push(`secrets 文件名不合法：${raw}`);
       }
       if (m.secrets.length && !(Array.isArray(m.permissions) && m.permissions.includes('secrets'))) {
         errors.push('声明 secrets 文件时必须同时声明 secrets 权限');
@@ -166,6 +170,10 @@ export function createPluginHost({
   const currentVersion = readPackageVersion(root);
   const events = new EventEmitter();
   const plugins = new Map(); // id -> { manifest, dir, instance, ctx, status, error }
+  const disabled = id => (getConfig()?.plugins?.disabled || []).map(String).includes(id);
+  const registry = createCapabilityRegistry({
+    isAvailable: id => plugins.get(id)?.status === 'started' && !disabled(id)
+  });
   let loaded = false;
   let started = false;
 
@@ -198,8 +206,9 @@ export function createPluginHost({
     return found;
   }
 
-  async function load({ only = null } = {}) {
+  async function loadImpl({ only = null } = {}) {
     if (loaded) return list();
+    plugins.clear();
     loaded = true;
     const wanted = Array.isArray(only) ? new Set(only) : null;
     for (const { manifest, dir } of discover()) {
@@ -211,12 +220,16 @@ export function createPluginHost({
         log(`[plugin] ${id} manifest 不合法：${check.errors.join('；')}`);
         continue;
       }
+      const ignored = ['enabledByDefault', 'hooks', 'promptSections', 'configSchema']
+        .filter(key => Object.hasOwn(manifest, key));
+      if (ignored.length) log(`[plugin] ${id} 的旧声明不参与运行：${ignored.join(', ')}；启停使用 plugins.disabled，配置清单使用 configDocumentation`);
       const disabledIds = new Set((getConfig()?.plugins?.disabled || []).map(String));
       if (disabledIds.has(id)) {
         plugins.set(id, { manifest, dir, instance: null, ctx: null, status: 'disabled', error: '', consoleCard: null, consoleCardError: '' });
         log(`[plugin] ${id} 已在 plugins.disabled 中，跳过加载`);
         continue;
       }
+      const capabilityScope = registry.scope(id);
       try {
         const entry = path.join(dir, 'index.js');
         if (!fs.existsSync(entry)) throw new Error('缺少 index.js');
@@ -242,13 +255,16 @@ export function createPluginHost({
           setConfig,
           services,
           log,
-          events
+          events,
+          capabilities: capabilityScope.api
         });
         const instance = await factory(ctx);
         if (!instance || typeof instance !== 'object') throw new Error('插件 create() 未返回对象');
-        plugins.set(id, { manifest, dir, instance, ctx, status: 'loaded', error: '', consoleCard, consoleCardError });
+        capabilityScope.api.provide(`${id}.instance`, instance);
+        plugins.set(id, { manifest, dir, instance, ctx, capabilityScope, status: 'loaded', error: '', consoleCard, consoleCardError });
         log(`[plugin] 已加载 ${id}@${manifest.version}`);
       } catch (error) {
+        capabilityScope.close();
         plugins.set(id, { manifest, dir, instance: null, ctx: null, status: 'failed', error: String(error?.message ?? error) });
         log(`[plugin] ${id} 加载失败：${error?.message ?? error}`);
       }
@@ -256,47 +272,61 @@ export function createPluginHost({
     return list();
   }
 
-  async function start() {
-    if (!loaded) await load();
+  async function startImpl() {
+    if (!loaded) await loadImpl();
     if (started) return list();
     started = true;
     for (const [id, rec] of plugins) {
-      if (rec.status !== 'loaded' || typeof rec.instance?.start !== 'function') continue;
+      if (rec.status !== 'loaded') continue;
+      if (disabled(id)) {
+        rec.capabilityScope?.close();
+        rec.status = 'disabled';
+        await cleanup(id, rec);
+        continue;
+      }
       try {
-        await rec.instance.start();
+        await rec.instance.start?.();
         rec.status = 'started';
         log(`[plugin] 已启动 ${id}`);
       } catch (error) {
         rec.status = 'failed';
+        rec.capabilityScope?.close();
         rec.error = String(error?.message ?? error);
+        await cleanup(id, rec);
         log(`[plugin] ${id} 启动失败：${error?.message ?? error}`);
       }
     }
     return list();
   }
 
-  async function stop() {
+  async function cleanup(id, rec) {
+    if (!rec.instance || rec.cleaned) return;
+    rec.cleaned = true;
+    try { await rec.instance.stop?.(); }
+    catch (error) { log(`[plugin] ${id} 停止失败：${error?.message ?? error}`); }
+  }
+
+  async function stopImpl() {
     const records = [...plugins.entries()].reverse();
+    // 先撤销全部能力，再等待清理，防止异步 stop 期间继续取得实例。
+    for (const [, rec] of records) {
+      rec.capabilityScope?.close();
+      if (rec.instance) rec.status = 'stopped';
+    }
     for (const [id, rec] of records) {
-      if (typeof rec.instance?.stop !== 'function') continue;
-      try {
-        await rec.instance.stop();
-        rec.status = 'stopped';
-        log(`[plugin] 已停止 ${id}`);
-      } catch (error) {
-        log(`[plugin] ${id} 停止失败：${error?.message ?? error}`);
-      }
+      await cleanup(id, rec);
     }
     started = false;
+    loaded = false;
   }
 
   function get(id) {
-    return plugins.get(String(id))?.instance ?? null;
+    return registry.reader.get(`${String(id)}.instance`);
   }
 
   /** 插件上下文：控制台插槽与诊断用（get() 只给 instance）。 */
   function getContext(id) {
-    return plugins.get(String(id))?.ctx ?? null;
+    return get(id) ? plugins.get(String(id))?.ctx ?? null : null;
   }
 
   function list() {
@@ -305,23 +335,38 @@ export function createPluginHost({
       name: String(rec.manifest?.name || id),
       version: String(rec.manifest?.version || ''),
       status: rec.status,
+      available: !!get(id),
+      permissionModes: Object.fromEntries((Array.isArray(rec.manifest?.permissions) ? rec.manifest.permissions : [])
+        .map(permission => [permission, PLUGIN_PERMISSION_MODES[permission] || 'unknown'])),
+      tools: get(id) && Array.isArray(rec.manifest?.mcpTools) ? rec.manifest.mcpTools : [],
       error: rec.error || '',
       dir: rec.dir,
       // R4-5：插件贡献的控制台卡片与路由（只有声明了 console:route 才有路由）。
       console: {
-        cards: Array.isArray(rec.ctx?.console?.cards) ? rec.ctx.console.cards : [],
-        routes: Array.isArray(rec.ctx?.console?.routes)
+        cards: get(id) && Array.isArray(rec.ctx?.console?.cards) ? rec.ctx.console.cards : [],
+        routes: get(id) && Array.isArray(rec.ctx?.console?.routes)
           ? rec.ctx.console.routes.map((r) => ({ path: r.path, method: r.method }))
           : [],
         // 只暴露元数据，绝不把 get/set 闭包带出插件上下文。
-        configItems: Array.isArray(rec.ctx?.console?.configItems)
+        configItems: get(id) && Array.isArray(rec.ctx?.console?.configItems)
           ? rec.ctx.console.configItems.map(({ get, set, ...meta }) => meta)
           : []
       },
-      consoleCard: rec.consoleCard || null,
+      consoleCard: get(id) ? rec.consoleCard || null : null,
       consoleCardError: rec.consoleCardError || ''
     }));
   }
 
-  return { load, start, stop, get, getContext, list, discover, validate: validatePluginManifest };
+  // 所有生命周期操作串行；失败不能毒化后续 stop/start。
+  let lifecycle = Promise.resolve();
+  const enqueue = action => {
+    const result = lifecycle.then(action);
+    lifecycle = result.catch(() => {});
+    return result;
+  };
+  const load = options => enqueue(() => loadImpl(options));
+  const start = () => enqueue(startImpl);
+  const stop = () => enqueue(stopImpl);
+  return { load, start, stop, get, getContext, list, discover,
+    capabilities: registry.reader, validate: validatePluginManifest };
 }

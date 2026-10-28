@@ -1,3 +1,6 @@
+import { mediaMcpHarness } from './helpers/media-mcp-harness.mjs';
+const mediaToolConfig = { tools: {} };
+const mediaTools = mediaMcpHarness(mediaToolConfig);
 // 回归测试：Token 用量报表（数据 → HTML → PNG → 发群）。
 //
 // 需求（2026-10-21 用户）：「让 bot 能够看到 token 消耗日志，能够以图片形式响应
@@ -218,8 +221,8 @@ console.log('\n── 6. 接线 ──');
   const html = readConsoleUiSource({ unescape: true });
   const { TOOL_FLAGS, toolNamesOf } = await import('../src/tool-flags.js');
 
-  check('MCP 注册了 qq_token_report', /server\.tool\(\s*\n?\s*'qq_token_report'/.test(mcp));
-  check('MCP 工具受 tokenReport 开关控制', /cfg\.socialV2\?\.tools\?\.tokenReport !== false/.test(mcp));
+  check('MCP 注册了 qq_token_report', mediaTools.has('qq_token_report'));
+  check('MCP 工具受 tokenReport 开关控制', (() => { mediaToolConfig.tools.tokenReport = false; const off = !mediaTools.get('qq_token_report').isEnabled(); delete mediaToolConfig.tools.tokenReport; return off && mediaTools.get('qq_token_report').isEnabled(); })());
   check('工具清单里有 tokenReport', TOOL_FLAGS.some((x) => x.flag === 'tokenReport' && x.tools.includes('qq_token_report')));
   check('工具清单总工具数已同步', toolNamesOf().includes('qq_token_report'));
 

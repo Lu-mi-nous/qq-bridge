@@ -26,6 +26,78 @@ function walk(dir, out = []) {
 
 const locOf = (f) => fs.readFileSync(f, 'utf8').split('\n').length;
 const sum = (arr, fn) => arr.reduce((s, x) => s + fn(x), 0);
+const readText = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+
+// 从 openIdx 处的 `{` 扫到配对的 `}`，跳过字符串与注释。
+function balancedBlock(text, openIdx) {
+  let depth = 0;
+  let inStr = null;
+  let inLine = false;
+  let inBlock = false;
+  for (let i = openIdx; i < text.length; i++) {
+    const c = text[i];
+    const n = text[i + 1];
+    if (inLine) { if (c === '\n') inLine = false; continue; }
+    if (inBlock) { if (c === '*' && n === '/') { inBlock = false; i++; } continue; }
+    if (inStr) {
+      if (c === '\\') { i++; continue; }
+      if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '/' && n === '/') { inLine = true; i++; continue; }
+    if (c === '/' && n === '*') { inBlock = true; i++; continue; }
+    if (c === "'" || c === '"' || c === '`') { inStr = c; continue; }
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) return { body: text.slice(openIdx + 1, i), end: i + 1 };
+    }
+  }
+  return null;
+}
+
+// 只切顶层的逗号，嵌套对象/数组算一项。
+function topLevelEntries(body) {
+  let depth = 0;
+  let cur = '';
+  let inStr = null;
+  let inLine = false;
+  let inBlock = false;
+  const out = [];
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    const n = body[i + 1];
+    if (inLine) { cur += c; if (c === '\n') inLine = false; continue; }
+    if (inBlock) { cur += c; if (c === '*' && n === '/') { inBlock = false; cur += n; i++; } continue; }
+    if (inStr) {
+      cur += c;
+      if (c === '\\') { cur += body[++i]; continue; }
+      if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '/' && n === '/') { inLine = true; cur += c; continue; }
+    if (c === '/' && n === '*') { inBlock = true; cur += c; continue; }
+    if (c === "'" || c === '"' || c === '`') { inStr = c; cur += c; continue; }
+    if (c === '{' || c === '(' || c === '[') depth++;
+    else if (c === '}' || c === ')' || c === ']') depth--;
+    if (c === ',' && depth === 0) { out.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  if (cur.trim()) out.push(cur);
+  return out;
+}
+
+function countObjectKeys(body) {
+  return topLevelEntries(body)
+    .map((t) => t.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').trim())
+    .filter((s) => /^[A-Za-z_$][\w$]*\s*(:|,|$)/.test(s) || /^['"][^'"]+['"]\s*:/.test(s))
+    .length;
+}
+
+function lineOf(text, re) {
+  const m = text.match(re);
+  return m ? text.slice(0, m.index).split('\n').length : 0;
+}
 
 const srcFiles = walk(path.join(ROOT, 'src')).filter((f) => /\.(js|mjs)$/.test(f));
 const scriptFiles = walk(path.join(ROOT, 'scripts')).filter((f) => /\.(js|mjs)$/.test(f));
@@ -115,13 +187,64 @@ const mcpTools = sum(
 // R4：路由按域拆到 src/console/routes/*.js，模块用 routes 清单声明端点。
 // 计数 = 主文件内联比较 + 模块清单条目（00-overview 用 router.get/post 注册）。
 const routeDir = path.join(ROOT, 'src', 'console', 'routes');
-const consoleRoutes = (fs.readFileSync(path.join(ROOT, 'src', 'console-server.js'), 'utf8')
-  .match(/url\.pathname ===/g) || []).length
+const consoleSource = readText('src/console-server.js');
+const consoleRoutes = (consoleSource.match(/url\.pathname ===/g) || []).length
   + sum(fs.readdirSync(routeDir).filter((f) => f.endsWith('.js')), (f) => {
     const src = fs.readFileSync(path.join(routeDir, f), 'utf8');
     return (src.match(/^  \['(?:GET|POST|PUT|DELETE|PATCH)', '[^']+', '(?:exact|prefix)'\]/gm) || []).length
       + (src.match(/router\.(?:get|post|put|del)\(/g) || []).length;
   });
+
+// 结构与基线指标（COMPLEXITY.md G1–G4 的对应项）。
+// 这些值曾靠临时脚本手工统计，容易和文档漂移；这里统一由 measure 产出。
+const bridgeText = readText('src/bridge.js');
+const bridgeLines = bridgeText.split('\n');
+const mainStart = lineOf(bridgeText, /^async function main\(\)/m);
+let mainEnd = 0;
+if (mainStart) {
+  for (let i = mainStart; i < bridgeLines.length; i++) {
+    // 顶层 `}` 在第 0 列；行尾可能是 CRLF，先去掉 \r。
+    if (bridgeLines[i].replace(/\r$/, '') === '}') { mainEnd = i + 1; break; }
+  }
+}
+const bagOpen = bridgeText.indexOf('{', bridgeText.indexOf('createConsoleServer('));
+const consoleDependencyBag = bagOpen >= 0 ? countObjectKeys(balancedBlock(bridgeText, bagOpen).body) : 0;
+
+const consoleRouteMaxSlice = Math.max(0, ...fs.readdirSync(routeDir)
+  .filter((f) => f.endsWith('.js'))
+  .map((f) => {
+    const src = fs.readFileSync(path.join(routeDir, f), 'utf8');
+    let max = 0;
+    for (const m of src.matchAll(/const\s*\{/g)) {
+      const blk = balancedBlock(src, m.index + m[0].length - 1);
+      if (!blk || !/^\s*=\s*(deps|ctx)\s*;/.test(src.slice(blk.end))) continue;
+      max = Math.max(max, countObjectKeys(blk.body));
+    }
+    return max;
+  }));
+
+const flagsSource = readText('src/tool-flags.js');
+const toolFlagEntries = (flagsSource.match(/\{\s*flag:\s*'/g) || []).length;
+const fixedToolFlags = flagsSource.split(/\r?\n/)
+  .filter((l) => !l.trim().startsWith('//') && /fixed:\s*true/.test(l)).length;
+
+const allowStart = consoleSource.indexOf('AGENT_ALLOWED_PATHS = new Set([');
+const allowEnd = consoleSource.indexOf(']);', allowStart);
+const agentAllowedPaths = allowStart >= 0
+  ? (consoleSource.slice(allowStart, allowEnd).match(/^\s*'[^']+',?\s*$/gm) || []).length
+  : 0;
+
+const periodicTimerSites = sum(srcFiles, (f) => {
+  const t = fs.readFileSync(f, 'utf8');
+  return (t.match(/\bsetInterval\s*\(/g) || []).length + (t.match(/\bsetIntervalFn\s*\(/g) || []).length;
+});
+
+const stateDir = path.join(ROOT, 'state');
+const stateEntries = fs.existsSync(stateDir) ? fs.readdirSync(stateDir).length : 0;
+let stateBytes = 0;
+for (const f of walk(stateDir)) {
+  try { stateBytes += fs.statSync(f).size; } catch {}
+}
 
 const result = {
   generatedAt: new Date().toISOString(),
@@ -132,9 +255,35 @@ const result = {
     buckets,
     top: srcRows.slice(0, 10),
   },
-  tests: { scripts: testFiles.length, scriptFiles: scriptFiles.length, lines: sum(scriptFiles, locOf) },
+  tests: {
+    testFiles: testFiles.length,
+    testLoc: sum(testFiles, locOf),
+    scriptFiles: scriptFiles.length,
+    scriptLoc: sum(scriptFiles, locOf),
+  },
   public: { files: publicFiles.length, lines: sum(publicFiles, locOf) },
   docs: { files: docFiles.length, lines: sum(docFiles, locOf) },
+  structure: {
+    bridgeLines: bridgeLines.length - 1,
+    bridgeMain: {
+      start: mainStart,
+      end: mainEnd,
+      span: mainStart && mainEnd ? mainEnd - mainStart + 1 : 0,
+      toEof: mainStart ? bridgeLines.length - 1 - mainStart + 1 : 0,
+    },
+    bridgeJsonStores: (bridgeText.match(/createJsonStore\(/g) || []).length,
+    consoleDependencyBag,
+    consoleRouteMaxSlice,
+    agentAllowedPaths,
+    toolFlagEntries,
+    fixedToolFlags,
+    periodicTimerSites,
+  },
+  runtimeSnapshot: {
+    stateEntries,
+    stateMB: Math.round(stateBytes / 1024 / 1024),
+    note: '工作机运行时数据；发布包可能裁剪，不可由源码静态复现',
+  },
   graph: {
     cycles: cycles.length,
     fanOutTop: fanOutTop.slice(0, 10),
@@ -161,13 +310,16 @@ if (process.argv.includes('--json')) {
   console.log('─'.repeat(52));
   console.log(`源码      ${result.src.files} 个文件 / ${result.src.lines} 行（平均 ${result.src.average}）`);
   console.log(`文件分布  ≤100: ${buckets['<=100']}  101-300: ${buckets['101-300']}  301-600: ${buckets['301-600']}  601-1000: ${buckets['601-1000']}  >1000: ${buckets['>1000']}`);
-  console.log(`测试      ${result.tests.scripts} 个脚本 / ${result.tests.lines} 行`);
+  console.log(`测试      ${result.tests.testFiles} 个 test / ${result.tests.testLoc} LOC（全部 scripts ${result.tests.scriptFiles} 个 / ${result.tests.scriptLoc} LOC）`);
   console.log(`前端      ${result.public.lines} 行 | 文档 ${result.docs.lines} 行 / ${result.docs.files} 份`);
   console.log(`控制流    if ${result.controlFlow.if}  try ${result.controlFlow.try}  await ${result.controlFlow.await}  定时器 ${result.controlFlow.timers}`);
   console.log(`注释      ${result.comments.commentLines} 行（${result.comments.ratio}%）  TODO ${result.todo}`);
-  console.log(`配置      ${result.config.keys} 键 / ${result.config.tools} 个工具开关`);
-  console.log(`接口      MCP ${result.mcpTools} 个 | 控制台路由 ${result.consoleRoutes} 条`);
+  console.log(`配置      ${result.config.keys} 键 / ${result.config.tools} 个配置工具键（TOOL_FLAGS ${result.structure.toolFlagEntries}，fixed ${result.structure.fixedToolFlags}）`);
+  console.log(`接口      MCP ${result.mcpTools} 个 | 控制台路由 ${result.consoleRoutes} 条 | Agent 白名单 ${result.structure.agentAllowedPaths}`);
+  console.log(`结构      main ${result.structure.bridgeMain.span} 行 | JSON store ${result.structure.bridgeJsonStores} | 周期定时器 ${result.structure.periodicTimerSites} 处`);
+  console.log(`注入      createConsoleServer ${result.structure.consoleDependencyBag} 项 | 路由最大解构 ${result.structure.consoleRouteMaxSlice} 项`);
   console.log(`依赖      ${result.dependencies} 个 | 循环依赖 ${result.graph.cycles}`);
+  console.log(`运行态    state ${result.runtimeSnapshot.stateEntries} 项 / ${result.runtimeSnapshot.stateMB} MB（运行时快照）`);
   console.log('\n最大的 10 个源文件：');
   for (const r of result.src.top) console.log(String(r.loc).padStart(7), r.rel);
   console.log('\n扇出最大：');

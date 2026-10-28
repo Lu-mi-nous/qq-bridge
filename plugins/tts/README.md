@@ -4,7 +4,7 @@
 
 - `index.js`：探测 GPT-SoVITS、创建常驻引擎、概率判定、语音发送
 - `manifest.json`：插件 id/版本/权限/配置路径
-- `config.schema.js`：配置字段可读清单
+- `config.reference.js`：配置字段可读清单
 
 关闭 `socialV2.tts.enabled` 时插件不创建引擎，桥接只发文字；插件加载失败也不会影响核心启动。
 

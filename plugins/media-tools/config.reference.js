@@ -1,8 +1,9 @@
+// 参考文档：宿主不导入此文件，也不据此校验配置。
 // 媒体工具配置说明。
 //
 // 三个工具共用 `socialV2` 子树：GitHub 截图读 `githubShot.*`；
 // 功能菜单与 Token 报表由 `tools.*` 开关控制（菜单内容来自当前配置）。
-export const configSchema = {
+export const configReference = {
   'githubShot.enabled': 'boolean',
   'githubShot.sliceHeight': 'integer(400..8000)',
   'githubShot.maxHeight': 'integer(1000..30000)',
@@ -13,4 +14,4 @@ export const configSchema = {
   'tools.tokenReport': 'boolean'
 };
 
-export default configSchema;
+export default configReference;

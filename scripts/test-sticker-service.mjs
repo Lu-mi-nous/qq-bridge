@@ -1,3 +1,4 @@
+import * as stickerLib from '../plugins/stickers/lib/sticker-lib.js';
 // R3-6 表情包服务：同步、列表、备注、删除、收藏错误路径。
 import fs from 'node:fs';
 import os from 'node:os';
@@ -22,6 +23,7 @@ function makeService(overrides = {}) {
   const requests = [];
   const cfg = { socialV2: { sticker: { enabled: true, syncTtlMs: 60000, maxListCount: 100, ...(overrides.sticker || {}) } } };
   const service = createStickerService({
+    stickerApi: { ...stickerLib, available: () => true },
     cfg,
     file,
     cacheDir,

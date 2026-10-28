@@ -1,5 +1,6 @@
+// 参考文档：宿主不导入此文件，也不据此校验配置。
 // X（Twitter）帖子插件配置说明（与 config-schema.js 的 xMonitor 保持同形）。
-export const configSchema = {
+export const configReference = {
   proxy: 'string',
   translate: 'boolean',
   gatewayUrl: 'string',
@@ -17,4 +18,4 @@ export const configSchema = {
   maxVideoBytes: 'integer(1048576..524288000)'
 };
 
-export default configSchema;
+export default configReference;

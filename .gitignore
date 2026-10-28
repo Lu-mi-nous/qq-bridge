@@ -5,26 +5,9 @@ node_modules/
 # Runtime state and local config (never publish)
 state/
 config.json
-config.json.pretest-*
-config.json.pretest
 *.log
 *.bak
 *.bak-*
-tmp-*
-roles/.backups/
-__pycache__/
-
-# Secrets / local environment
-.env
-.env.*
-*.pem
-*.key
-
-# Local model weights (download separately, see README)
-/models/*.onnx
-
-# Large demo media (keep out of the repo; link from Releases instead)
-/assets/*.mp4
 
 # Local development / planning / research docs (not part of public project)
 /PROJECT_GUIDE.md

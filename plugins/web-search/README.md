@@ -12,7 +12,7 @@
 | `lib/index.mjs` | 引擎注册表 + 回退链 + 查询词清洗 + 熔断 |
 | `lib/query-plan.mjs` | 查询改写（降级检测、天气定位、实体切分） |
 | `lib/engines/*.mjs` | 各引擎实现（往目录丢一个 .mjs 即成为可用引擎） |
-| `config.schema.js` | 配置字段清单（可读版） |
+| `config.reference.js` | 配置字段清单（可读版） |
 
 ## 谁在用它
 

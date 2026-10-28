@@ -2,6 +2,8 @@
 //
 // bridge 只依赖这个运行时对象，不再直接知道 createPluginHost 的细节。
 import { createPluginHost } from './plugins/host.js';
+import { createContentReviewApi } from './content-review-api.js';
+import { runtimeMcpTools } from './plugins/mcp-tools.js';
 
 export function createPluginRuntime({
   root,
@@ -13,9 +15,10 @@ export function createPluginRuntime({
   only = null
 } = {}) {
   const host = createPluginHost({ root, log, getConfig, setConfig, services, dirs });
+  const contentReview = createContentReviewApi({ capabilities: host.capabilities });
   let started = false;
 
-  async function start() {
+  async function startImpl() {
     if (started) return host.list();
     await host.load(only ? { only } : undefined);
     await host.start();
@@ -23,8 +26,7 @@ export function createPluginRuntime({
     return host.list();
   }
 
-  async function stop() {
-    if (!started) return;
+  async function stopImpl() {
     started = false;
     await host.stop();
   }
@@ -57,5 +59,14 @@ export function createPluginRuntime({
     return tts()?.speechParams?.() ?? {};
   }
 
-  return { host, start, stop, get, list, tts, ttsEngine, ttsSpeechParams, upscale, xMonitor };
+  let lifecycle = Promise.resolve();
+  const enqueue = action => {
+    const result = lifecycle.then(action);
+    lifecycle = result.catch(() => {});
+    return result;
+  };
+  const start = () => enqueue(startImpl);
+  const stop = () => enqueue(stopImpl);
+  return { host, start, stop, get, list, mcpTools: () => runtimeMcpTools(host), capabilities: host.capabilities, contentReview,
+    tts, ttsEngine, ttsSpeechParams, upscale, xMonitor };
 }

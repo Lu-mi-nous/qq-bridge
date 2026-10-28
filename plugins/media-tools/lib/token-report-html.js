@@ -13,7 +13,7 @@
 // 群友问"最近用了多少 token"，只给 7 行数字他们看不出趋势。一根柱子的高度
 // 比"M 和 B 两个单位"直观得多。柱子用 div 的百分比高度实现——纯 CSS，
 // 不引任何图表库（项目没有前端依赖，也不该为一张图引入）。
-import { humanTokens } from '../../../src/token-usage.js';
+import { humanTokens } from '../../../src/plugin-api/format.js';
 
 export function escapeHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

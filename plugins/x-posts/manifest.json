@@ -2,13 +2,30 @@
   "id": "x-posts",
   "name": "X（Twitter）帖子拉取",
   "version": "1.0.0",
-  "engines": { "qqBridge": ">=0.4.0" },
-  "enabledByDefault": false,
+  "engines": {
+    "qqBridge": ">=0.4.0"
+  },
   "configPath": "xMonitor",
-  "configSchema": "config.schema.js",
-  "permissions": ["network", "state", "console:route", "secrets"],
-  "secrets": ["x-auth.json"],
-  "hooks": ["onStart", "onStop"],
-  "mcpTools": ["qq_fetch_x_posts"],
-  "console": { "cards": ["x-posts"], "routes": ["/api/plugins/x-posts/card"] }
+  "permissions": [
+    "network",
+    "state",
+    "console:route",
+    "secrets",
+    "mcp:register"
+  ],
+  "secrets": [
+    "x-auth.json"
+  ],
+  "mcpTools": [
+    "qq_fetch_x_posts"
+  ],
+  "console": {
+    "cards": [
+      "x-posts"
+    ],
+    "routes": [
+      "/api/plugins/x-posts/card"
+    ]
+  },
+  "configDocumentation": "config.reference.js"
 }

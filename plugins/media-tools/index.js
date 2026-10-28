@@ -1,3 +1,4 @@
+import { registerMediaTools } from './mcp-tools.js';
 // 媒体工具插件（R4.5-9）。
 //
 // 三个“生成一张图”的能力：
@@ -19,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { createConfigItems } from './config-items.js';
 
 export function create(ctx) {
+  registerMediaTools(ctx);
   ctx.console?.registerCard?.({
     id: 'media-tools',
     title: '媒体工具（截图 / 菜单 / 报表）',

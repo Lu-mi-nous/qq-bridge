@@ -187,7 +187,7 @@ export function createSocialEngine({
       const safeText = redactKnownTokensOnly(bodyText).slice(0, 200);
       // 语音必须留下可识别标记：桥接按概率把文字换成语音时，模型并没有主动
       // 调用 qq_send_voice；如果 recentMessages 里仍记成原文，它下一轮就不知道
-      // 自己发的是语音（实测 2026-10-23 group:1000000001）。
+      // 自己发的是语音（实测 2026-10-23 group:100002013）。
       const text = (isVoice ? '[语音] ' : '') + safeText;
       const entry = {
         sender: '我',

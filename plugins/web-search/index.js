@@ -4,7 +4,7 @@
 // 生命周期（启动日志）与控制台插槽。
 //
 // 谁在用这个实现：
-//   - MCP 进程 `src/mcp-web-search-safe.js`（独立进程，直接 import lib；不在就**不注册**
+//   - MCP 进程 `src/mcp-web-search-safe.js`（独立进程，使用限定插件的宿主；不在就**不注册**
 //     `web_search`，但 `web_fetch` / `web_view_image` 仍可用——它们不依赖引擎链）；
 //   - 本插件（控制台卡片状态）。
 //
@@ -12,8 +12,10 @@
 // 改完保存即生效，不用重启桥接/DSH（这一点没有因为插件化而改变）。
 import { searchWeb, describeEngines, sanitizeQuery } from './lib/index.mjs';
 import { createConfigItems } from './config-items.js';
+import { registerSearchTool } from './mcp-tools.js';
 
 export function create(ctx) {
+  registerSearchTool(ctx, { searchWeb, describeEngines, sanitizeQuery });
   ctx.console?.registerCard?.({
     id: 'web-search',
     title: '联网搜索（多引擎回退）',

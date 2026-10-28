@@ -182,13 +182,13 @@ console.log('\n── 6. 控制台 ──');
 // 能力不注册工具、不写提示词，就等于不存在——这正是本次要锁住的。
 console.log('\n── 6b. 主动发语音 ──');
 {
-  const mcpSrc = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
+  const mcpSrc = fs.readFileSync(path.join(root, 'plugins', 'tts', 'mcp-tools.js'), 'utf8');
   const preset = fs.readFileSync(path.join(root, 'dsh', 'agent-presets', 'qq-chat-v2', 'agent.cordis.yml'), 'utf8');
 
   check('MCP 注册了 qq_send_voice', /'qq_send_voice'/.test(mcpSrc));
-  check('只在 TTS 可用时注册（可插拔）', /sovitsAvailable\(\)/.test(mcpSrc));
-  check('工具受 sendVoice 开关控制', /tools\?\.sendVoice !== false/.test(mcpSrc));
-  check('探测只看文件不启动进程', /function sovitsAvailable/.test(mcpSrc) && /existsSync/.test(mcpSrc));
+  check('只在 TTS 可用时注册（可插拔）', /sovitsReady\(ctx\)/.test(mcpSrc));
+  check('工具受 sendVoice 开关控制', /toolFlag\('sendVoice'\) !== false/.test(mcpSrc));
+  check('探测只看文件不启动进程', /probeSovits/.test(mcpSrc) && /plugin-api\/speech/.test(mcpSrc));
 
   check('桥接有 send-voice 端点', /pathname === '\/api\/socialV2\/send-voice'/.test(consoleServerSrc));
   check('端点要求 agent token', /发送语音必须携带 agent token/.test(consoleServerSrc));

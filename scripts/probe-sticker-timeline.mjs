@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
-const dir = 'C:/Users/you/.dsh/sessions/--qq-bridge-state-agents--';
+const dir = 'C:/Users/you/.dsh/sessions/--E-Downloads-qq-bridge-main-state-agents--';
 const MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 
 function lines(file) {

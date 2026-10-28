@@ -1,6 +1,6 @@
 // 回归测试：群友问 token 用量时，桥接必须能认出来并要求调工具。
 //
-// 事故（2026-10-21，group:1000000001）：
+// 事故（2026-10-21，group:100002013）：
 //   问「你用了多少token」→ 调了 qq_token_report（历史上成功 6 次）
 //   问「看看你吃了多少token」→ **没调**
 //   问「你怎么这么能吃白饭」→ **没调**，还编出「35.27B里prompt占35.25B」
@@ -25,7 +25,8 @@ import { createContentRequestPolicy } from '../src/pipeline/content-request.js';
 const cfg = { socialV2: { tools: {} } };
 const { buildTokenAskLineV2 } = createContentRequestPolicy({ cfg });
 const wakeSrc = fs.readFileSync(path.join(root, 'src/pipeline/wake.js'), 'utf8');
-const mcpSrc = fs.readFileSync(path.join(root, 'src/mcp-snowluma-safe.js'), 'utf8');
+// R4.6-5c：qq_token_report 的描述已迁入 plugins/media-tools/mcp-tools.js。
+const mcpSrc = fs.readFileSync(path.join(root, 'plugins', 'media-tools', 'mcp-tools.js'), 'utf8');
 
 const isTokenAsk = text => !!buildTokenAskLineV2({ unread: [{ plain: text }] });
 

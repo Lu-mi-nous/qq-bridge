@@ -10,7 +10,7 @@ const api = new NodeApiClient('http://127.0.0.1:3080');
 const desc = unwrap(await api.host.describe({}), 'host.describe');
 console.log('DSH 已连接, 默认模型:', desc.provider, '/', desc.model);
 
-const cwd = 'C:\\qq-bridge\\state\\local-e2e';
+const cwd = 'E:\\Downloads\\qq-bridge-main\\state\\local-e2e';
 const created = unwrap(await api.sessions.create({ cwd }), 'session.create');
 const sessionId = created.sessionId;
 console.log('测试会话:', sessionId);

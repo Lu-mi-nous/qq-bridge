@@ -1,3 +1,5 @@
+import { createImagesApi } from './images-api.js';
+import { createMediaToolsApi } from './media-tools-api.js';
 import { clearSessionTracking as clearSessionTrackingState } from './pipeline/session-tracking.js';
 // QQ ↔ DeepSeek Harness 桥接主程序。
 //
@@ -32,13 +34,10 @@ import { looksLikeUnfinished } from './v2-wait.js';
 import { shrinkStickerForUpload, STICKER_UPLOAD_MAX_BYTES, STICKER_UPLOAD_TARGET_BYTES } from './image-downscale.js';
 // 群文件只读分类（列表/统计/搜索，不做写操作），见模块顶部说明。
 import { summarizeGroupFiles, formatSummary, searchGroupFiles, humanSize } from './group-files.js';
-import { fetchFromSources, resolveTagName, sourcePageOf } from './images-api.js';
-import { loadPixivAuth, setPixivCookie } from './images-api.js';
 import { createAsrEngine } from './asr.js';
 import { DEFAULT_SOVITS_DIR, TTS_DEFAULT_PROBABILITY } from './tts.js';
 import { createPluginRuntime } from './plugin-runtime.js';
 import { collectCacheItems, summarizeCache, purgeCache, humanBytes, CACHE_GROUPS } from './cache-manager.js';
-import { detectSourceRequest } from './images-api.js';
 import { createImageFacade } from './image-facade.js';
 import { createImageRequestService } from './image-request.js';
 import { createMediaService } from './media-service.js';
@@ -46,8 +45,6 @@ import { createSocialEngine } from './social-engine.js';
 import { createSocialLoop } from './social-loop.js';
 import { createErrorService } from './error-service.js';
 import { createBiliBootstrap } from './bili-bootstrap.js';
-import { createReverseSearcher } from './images-api.js';
-import { classifyImageFeedback } from './images-api.js';
 // 回复时按概率 @ 对方：由桥接掷骰（模型几乎不主动传 atUserId），见 auto-at.js 顶部说明。
 import { pickAutoAt, DEFAULT_AUTO_AT } from './auto-at.js';
 // 非白名单群的 @：预设话术直接回，不经过 DSH（不消耗 token）。
@@ -98,13 +95,7 @@ import { safeFetchBuffer, validateFetchUrl } from './safe-fetch.js';
 // 超分回传要按魔数确认"这确实是图片"，不能变成任意文件发送通道。
 import { sniffImageMime } from './web-image-fetch.js';
 // B 站：自己刷视频 + 全局观看记忆。见 bili.js / bili-browse.js 顶部说明。
-import { createVideoMemory, resolveBiliId, fetchVideoInfo, fetchPopularVideos, setBiliCookie } from './bili-api.js';
-import { loadBiliAuth, searchVideos, buildSearchKeywords, pickSearchQuery } from './bili-api.js';
-import {
-  pickCandidate, watchDepth, watchVideo, canSelfBrowse,
-  nextBrowseDelay, buildBrowsePrompt, buildScanPrompt, buildExtendedPrompt,
-  parseScanVerdict, categoryGroup, categoryWeight, GAME_KEYWORDS
-} from './bili-api.js';
+import { createBiliApi } from './bili-api.js';
 import { extractForwardIds, forwardIdFromData, sanitizeForwardId, formatForwardResponse } from './forward.js';
 import { stripLeadingMetaMarker, stripLeadingMetaMarkers } from './meta-marker.js';
 import { extractQuotedMedia, buildReplyText, reserved2MediaFetchHint, inlineMediaFactHint } from './quoted-media.js';
@@ -114,51 +105,24 @@ import { resolvePokeTarget, isSymbolicPokeRef } from './poke-target.js';
 import { parseShareCard, formatShareCard, coverUrlOf, extractShareCards } from './share-card.js';
 import { crawlUrl, crawlAigengtu, saveStickerImage, isAigengtuUrl } from './web-crawler.js';
 // 群友功能菜单图（HTML+CSS → Chrome 无头截图），见 feature-menu.js 顶部说明。
-import { renderFeatureMenu } from './media-tools-api.js';
-import { parseGitHubUrl, extractGitHubUrl, screenshotGitHubRepo } from './media-tools-api.js';
 import { describeJoinRequest, createJoinQueue, DEFAULT_TTL_MS as JOIN_TTL_MS } from './join-request.js';
 import { CREDENTIAL_ITEMS, maskValue } from './credentials-doc.js';
 import { TOOL_FLAGS, toolNamesOf, groupedToolFlags } from './tool-flags.js';
 import { aggregateTokenUsage, humanTokens, dayKey } from './token-usage.js';
-import { buildTokenReport, summarizeTokenReport } from './media-tools-api.js';
-import { renderTokenReport, pruneTokenReportCache } from './media-tools-api.js';
 import { validateEmojiId, createReactionGate, REACTION_EMOJIS, emojiMenuText } from './emoji-react.js';
-import {
-  loadSlang,
-  saveSlang,
-  upsertSlangEntry,
-  buildSlangContext,
-  buildExtractionPrompt,
-  buildResearchPrompt,
-  parseExtractionJson,
-  parseResearchJson,
-  createSlangEntry,
-  mergeEvidence,
-  SLANG_STATUS
-} from './slang-api.js';
-import {
-  formatStickerList,
-  findSticker,
-  buildStickerContext,
-  buildStickerStrategyHint,
-  markStickerUsed,
-  writeStickerCacheImage
-} from './stickers-api.js';
+import { createSlangApi } from './slang-api.js';
+import { createStickersApi } from './stickers-api.js';
 import { createStickerService } from './sticker-service.js';
 // 表情包主动要求：按本轮语气挑候选（见模块顶部说明）
-import { pickStickerCandidates, buildStickerNudge, moodOfText } from './stickers-api.js';
 import { createConsoleServer } from './console-server.js';
 import { createAdminCommands, isAdminCommand, canBypassAdmission, rawTextOfMessage } from './admin-commands.js';
-import { createContextRecovery, isContextOverflowError, rotateContextSession } from './context-recovery.js';
+import { createContextRecovery, isContextOverflowError, rotateContextSession, shouldRotateProactive } from './context-recovery.js';
 import { createJsonStore } from './state/store.js';
 import { createSessionHistory } from './session-history.js';
 import { createSessionGap, normalizeGapNoticeConfig } from './session-gap.js';
-import {
-  normalizeSharedMemoryConfig,
-  mergeEpisodeToSharedMemory,
-  formatSharedMemoryForWake
-} from './shared-memory-api.js';
+import { createSharedMemoryApi } from './shared-memory-api.js';
 import { createTokenFuse } from './token-fuse.js';
+import { createTurnMetrics } from './turn-metrics.js';
 import { needsNewSession } from './pipeline/session-generation.js';
 import { createSessionService } from './session-service.js';
 import { createSocialService } from './social-service.js';
@@ -171,6 +135,9 @@ import { segmentsToText, extractMediaFromSegments } from './pipeline/segments.js
 import { normalizeMessagesInput } from './pipeline/text-normalize.js';
 import { createSendQueue } from './pipeline/send-queue.js';
 import { createWakePromptBuilder, findPendingCallers, wakePriorityV2 } from './pipeline/wake.js';
+import { createTurnWrap } from './pipeline/turn-wrap.js';
+import { buildRoleDigest, createRoleDigestReader, shouldInjectFullRole } from './pipeline/role-digest.js';
+import { createActiveToolProfile } from './pipeline/tool-profile-reader.js';
 import { createQQSender } from './pipeline/qq-send.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -290,7 +257,8 @@ function readActivityTail(n) {
 function listRoles() {
   try {
     return fs.readdirSync(path.join(ROOT, 'roles'))
-      .filter((f) => f.endsWith('.md') && f !== 'README.md')
+      // T3：<角色>.digest.md 是摘要，不是可选角色；不要出现在角色列表里。
+      .filter((f) => f.endsWith('.md') && !f.endsWith('.digest.md') && f !== 'README.md')
       .map((f) => f.slice(0, -3))
       .sort((a, b) => a.localeCompare(b, 'zh-CN'));
   } catch {
@@ -1172,6 +1140,17 @@ const REJECT_WORDS = new Set(['拒绝', '不同意', '不允许', '驳回', 'no'
 
 // ── 主流程 ──────────────────────────────────────────────────────────────────
 async function main() {
+  let pluginRuntime = null;
+  const imageApi = createImagesApi({ getCapability: name => pluginRuntime?.capabilities.get(name) });
+  const { fetchFromSources, resolveTagName, sourcePageOf, loadPixivAuth, setPixivCookie, detectSourceRequest, createReverseSearcher, classifyImageFeedback } = imageApi;
+  const biliApi = createBiliApi({ getCapability: name => pluginRuntime?.capabilities.get(name) });
+  const { createVideoMemory, resolveBiliId, fetchVideoInfo, fetchPopularVideos, setBiliCookie, loadBiliAuth, searchVideos, buildSearchKeywords, pickSearchQuery, pickCandidate, watchDepth, watchVideo, canSelfBrowse, nextBrowseDelay, buildBrowsePrompt, buildScanPrompt, buildExtendedPrompt, parseScanVerdict, categoryGroup, categoryWeight } = biliApi;
+  const stickerApi = createStickersApi({ getCapability: name => pluginRuntime?.capabilities.get(name) });
+  const { formatStickerList, findSticker, buildStickerContext, buildStickerStrategyHint, markStickerUsed, writeStickerCacheImage, pickStickerCandidates, buildStickerNudge, moodOfText } = stickerApi;
+  const { renderFeatureMenu, parseGitHubUrl, extractGitHubUrl, screenshotGitHubRepo, buildTokenReport, summarizeTokenReport, renderTokenReport, pruneTokenReportCache } = createMediaToolsApi({ getCapability: name => pluginRuntime?.capabilities.get(name) });
+  const slangApi = createSlangApi({ getCapability: name => pluginRuntime?.capabilities.get(name) });
+  const { loadSlang, saveSlang, upsertSlangEntry, buildSlangContext, buildExtractionPrompt, buildResearchPrompt, parseExtractionJson, parseResearchJson, createSlangEntry, mergeEvidence, SLANG_STATUS } = slangApi;
+  const { normalizeSharedMemoryConfig, mergeEpisodeToSharedMemory, formatSharedMemoryForWake } = createSharedMemoryApi({ getCapability: name => pluginRuntime?.capabilities.get(name) });
   const cfg = loadConfig();
 
   // 插件配置写入：只能由插件宿主调用，路径已由 context 限制在插件自己的
@@ -1252,6 +1231,21 @@ async function main() {
     retryDelayMs: 1000
   });
 
+  // T4：主动轮换。回合结束时按最后一次请求的上下文大小判断；超过阈值先补一条 episode
+  // 再换会话（不等到 prompt_too_long）。阈值来自 socialV2.contextMemory.rotateAtRatio /
+  // modelLimitTokens；静默摘要回合不触发（事件泵里已排除）。
+  async function rotateContextIfNeeded(key, sessionId, estimatedTokens) {
+    const cm = contextCfg();
+    if (!shouldRotateProactive(estimatedTokens, cm)) return { rotated: false };
+    try {
+      // 先持久化：把最近消息压成 episode，保证换会话后 recall/记忆能补上小窗口缺口。
+      await makeEpisodeNow(key, { force: false });
+    } catch (error) {
+      log(`[上下文] ${key} 主动轮换前 episode 失败（不阻断轮换）：${error?.message ?? error}`);
+    }
+    return contextRecovery.rotateProactive({ key, sessionId, estimatedTokens });
+  }
+
   // ── 群聊黑话/网络用语学习（slang） ──────────────────────────────────────
   let slangEntries = loadSlang(SLANG_FILE);
   const slangWindows = new Map();       // key -> [{sender,text,time}]：待学习消息窗口
@@ -1272,6 +1266,7 @@ async function main() {
 
   // ── 表情包体系（二代仿真）本地知识库 ────────────────────────────────────
   const stickerService = createStickerService({
+    stickerApi,
     cfg,
     file: STICKER_FILE,
     cacheDir: STICKER_CACHE_DIR,
@@ -1291,6 +1286,7 @@ async function main() {
   const IMAGE_FETCH_STATE_FILE = path.join(STATE_DIR, 'image-fetch-state.json');
   const STYLE_CENTER_FILE = path.join(STATE_DIR, 'style-center.json');
   const imageFacade = createImageFacade({
+    imageApi,
     cfg,
     imageLibDir: cfg.socialV2?.images?.libDir ? String(cfg.socialV2.images.libDir) : IMAGE_LIB_DIR,
     imageFetchStateFile: IMAGE_FETCH_STATE_FILE,
@@ -1347,6 +1343,7 @@ async function main() {
   }
 
   const imageRequestService = createImageRequestService({
+    imageApi,
     cfg,
     imageStore,
     imageFetchUA: IMAGE_FETCH_UA,
@@ -1477,7 +1474,7 @@ async function main() {
   }
 
   async function runSlangExtraction(key) {
-    if (cfg.slang?.enabled === false) return;
+    if (!slangApi.available() || cfg.slang?.enabled === false) return;
     if (!dshReady) return;
     const messages = slangWindows.get(key) ?? [];
     const min = Math.max(1, Number(cfg.slang?.extractMinMessages ?? 10));
@@ -1492,6 +1489,7 @@ async function main() {
     }
 
     const promptText = buildExtractionPrompt(messages);
+    if (!promptText || !slangApi.available()) return;
     try {
       const accepted = await api.sessions.prompt({ sessionId, mode: 'queue', content: [{ type: 'text', text: promptText }] });
       if (!accepted.result.ok) {
@@ -1540,7 +1538,7 @@ async function main() {
 
   async function runSlangResearch(candidates) {
     if (!candidates || !candidates.length) return;
-    if (cfg.slang?.enabled === false) return;
+    if (!slangApi.available() || cfg.slang?.enabled === false) return;
     if (!dshReady) return;
     // 过滤掉已经在研究队列里的候选，避免同一批被重复排队研究。
     const targets = candidates.filter((e) => e && !slangResearchingIds.has(e.id));
@@ -1555,6 +1553,7 @@ async function main() {
       return;
     }
     const promptText = buildResearchPrompt(targets);
+    if (!promptText || !slangApi.available()) return;
     try {
       const accepted = await api.sessions.prompt({ sessionId, mode: 'queue', content: [{ type: 'text', text: promptText }] });
       if (!accepted.result.ok) {
@@ -1593,7 +1592,7 @@ async function main() {
   }
 
   function maybeQueueSlangExtraction(key) {
-    if (cfg.slang?.enabled === false) return;
+    if (!slangApi.available() || cfg.slang?.enabled === false) return;
     if (!dshReady) return;
     const cooldown = Number(cfg.slang?.extractCooldownMs ?? 300000);
     const last = slangExtractionCooldowns.get(key) ?? 0;
@@ -1608,7 +1607,7 @@ async function main() {
   // 黑话学习素材入口：群聊普通消息进入滚动窗口（命令/角色控制语不学；
   // 只学当前消息自己的文字，不学引用原文）。一代/二代共用。
   function feedSlangWindow(key, sender, plainContent) {
-    if (cfg.slang?.enabled === false) return;
+    if (!slangApi.available() || cfg.slang?.enabled === false) return;
     if (!key || !plainContent || typeof plainContent !== 'string') return;
     const text = plainContent.trim();
     if (!text || text.startsWith('/')) return;
@@ -1652,6 +1651,7 @@ async function main() {
 
   // 已确认黑话的公开列表（按出现次数排序，最多 injectMax 条）。
   function confirmedSlangListV2() {
+    if (!slangApi.available()) return [];
     const max = Math.max(1, Math.min(30, Number(cfg.slang?.injectMax) || 8));
     return slangEntries
       .filter((e) => e.status === SLANG_STATUS.CONFIRMED && e.content && e.meaning)
@@ -2383,8 +2383,14 @@ async function main() {
   // 撤回本来就只对刚发的消息有意义）。
   const SENT_MSG_KEEP = 20;
   const sentMessages = new Map(); // key -> [{ messageId, at, preview }]
+  // T5：按回合的 Token 效率指标（KPI 见 docs/refactor-t5-acceptance.md）。
+  const turnMetrics = createTurnMetrics({
+    file: path.join(STATE_DIR, 'turn-metrics.json'),
+    log
+  });
   const keyForKindId = (kind, id) => `${kind}:${id}`;
   function recordSentMessage(key, data, preview = '') {
+    try { turnMetrics.recordSent(key); } catch { /* 指标失败不影响发送 */ }
     try {
       const mid = data?.message_id ?? data?.messageId;
       if (mid === undefined || mid === null || String(mid) === '') return;
@@ -3191,7 +3197,7 @@ async function main() {
   let selfDisplayName = '';
   // 机器人在**每个群**的群名片。@ 时 QQ 显示的是群名片，不是账号昵称。
   //
-  // 2026-10-22 事故（group:1000000007）：账号昵称是 `dsh`，群名片是 `?！哦鲸鲸  ? !`，
+  // 2026-10-22 事故（group:100002007）：账号昵称是 `dsh`，群名片是 `?！哦鲸鲸  ? !`，
   // 而别名表只放了 `dsh`，于是所有 `@?！哦鲸鲸  ? !` 都不算"在叫它"，
   // 自动@ 退化成模糊字面匹配，把票投给了只顺口说了句「大肥鱼可爱」的人。
   const selfCardCache = new Map(); // groupId -> { card, at }
@@ -3264,6 +3270,8 @@ async function main() {
   let contextSweepRunning = false;
   const episodeInFlight = new Set();
   const contextMetrics = new Map(); // key -> { lastPromptChars, lastMemoryChars, lastEpisodeAt, ... }
+  // T4：sessionId -> 最后一次请求的上下文大小（input+cacheRead），回合结束时用于主动轮换。
+  const sessionContextTokens = new Map();
   const contextPendingCache = new Map(); // key -> { lastSeq, lastAt, journalBytes, at, count }
   const sessionSizeCache = new Map(); // sessionId -> { bytes, at }
 
@@ -3804,7 +3812,7 @@ async function main() {
   // 语音合成引擎（可选，GPT-SoVITS）。null = 未启用/探测失败。
   // 可插拔：装不上就是不存在，所有调用点都会自动跳回文字。
   let ttsEngine = null;
-  let pluginRuntime = null; // 插件运行时（R3-4）；null = 未加载
+
   // 上次搜索用的关键词（控制台展示"它在找什么"用）
   let lastBiliSearchKeyword = '';
   // 上次在群里推荐视频的时间（分享间隔控制）
@@ -4487,7 +4495,37 @@ async function main() {
     return `第 ${bad.join('，')} 条之间像是把同一句话拆开了；如果两条拼起来才完整，请合并成一条，或把断点移到完整句子的边界。`;
   }
 
-  function currentRoleHintV2(key) {
+  // T3：角色摘要（600–1200 字）常驻注入；完整卡只在角色切换 / bootstrap / detail=full 时注入。
+  // 摘要优先 roles/<角色>.digest.md（人工整理），缺失时按卡片自动生成。
+  const readRoleDigestFile = createRoleDigestReader({ ROOT, log });
+  const rolePromptInjected = new Map(); // key -> 上次注入的角色名（换角色时强制注入一次完整卡）
+  function roleDigestFor(key) {
+    const name = roleFor(key);
+    if (!name) return '';
+    const curated = readRoleDigestFile(name);
+    if (curated) return curated;
+    return buildRoleDigest(currentRoleHintV2(key));
+  }
+  function roleTextFor(key, reason = '', opts = {}) {
+    const name = roleFor(key);
+    if (!name) return '';
+    const changed = rolePromptInjected.get(key) !== name;
+    rolePromptInjected.set(key, name);
+    const full = shouldInjectFullRole({ reason, changed, full: opts.full === true });
+    return full ? currentRoleHintV2(key) : roleDigestFor(key);
+  }
+  // T3：profile 收窄时，唤醒提示里的能力片段一起缺席（与 preset 的 restrict 读同一份数据）。
+  const activeToolProfile = createActiveToolProfile({
+    getPreset: () => modePreset('', currentMode, cfg)
+  });
+  function capabilityVisibleForPrompt(toolName) {
+    try { return activeToolProfile.allows(toolName); } catch { return true; }
+  }
+
+  // T3：`{ digest: true }` 返回角色摘要（qq_get_prompt compact 用）；默认返回完整卡。
+  // 用同一函数而不是新增依赖键，保持控制台依赖袋不增长（G2）。
+  function currentRoleHintV2(key, opts = {}) {
+    if (opts && opts.digest === true) return roleDigestFor(key);
     const raw = currentRoleHint(key);
     if (!raw) return '';
     // 一代仿真模式专用指令整行过滤，避免污染二代工具协议
@@ -4701,7 +4739,7 @@ async function main() {
     const tr = st.wakeConfig?.triggers ?? {};
     // 顺序必须按 WAKE_PRIORITY 从高到低。`anyMessage` 若放在前面，会把所有
     // @/提问/指定成员/名字/关键词都吞成低优先级的 anyMessage——群一热闹就被
-    // 限流丢掉。2026-10-23 群 1000000005 实测：owner 的「查下来源」被记成
+    // 限流丢掉。2026-10-23 群 100002004 实测：owner 的「查下来源」被记成
     // anyMessage@seq7064，之后只剩「唤醒频率超限，跳过」，表现就是 @ 了不理。
     if (tr.atMention) {
       const atSelf = Array.isArray(event?.message) && event.message.some((seg) => seg?.type === 'at' && String(seg.data?.qq) === String(event?.self_id ?? ''));
@@ -4754,11 +4792,24 @@ async function main() {
     return findPendingCallers(st, botAliasNamesV2(key, st));
   }
 
+  // T1：发言回合的自动收尾（自动标已读水位 + 保证可唤醒）。
+  // 逻辑在 pipeline/turn-wrap.js（可单测）；这里只做依赖注入。
+  const autoWrapAfterReply = createTurnWrap({
+    getState: getSocialV2State,
+    findCallers: findCallersV2,
+    ensureWakeable: ensureWakeableV2,
+    save: saveSocialV2State,
+    log,
+    now: Date.now
+  });
+
   // 第 4A 步：唤醒提示构建已抽到 src/pipeline/wake.js；
   // 这里只注入依赖，具体 prompt 文案/结构在 pipeline 里维护。
   const wakePrompts = createWakePromptBuilder({
     roleFor,
     currentRoleHintV2,
+    roleTextFor,
+    capabilityVisible: capabilityVisibleForPrompt,
     getSocialV2State,
     cfg,
     getTtsEngine: () => ttsEngine,
@@ -4798,10 +4849,10 @@ async function main() {
 
   function buildWakeReminderPromptV2(key) {
     const roleName = roleFor(key);
-    // 与主唤醒提示一致：角色卡正文要直接给，不能只给名字。
+    // 与主唤醒提示一致：T3 起默认给角色摘要（完整卡走 bootstrap / qq_get_prompt detail=full）。
     // 这条提醒是「模型忘了收尾」时补发的，措辞若只催"收尾"，它会直接
     // qq_set_wake_config 潜水，把还没回的 @ 一起带走。
-    const roleCard = roleName ? currentRoleHintV2(key) : '';
+    const roleCard = roleName ? roleTextFor(key, 'wakeReminder') : '';
     const roleLine = roleName
       ? `【当前角色】${roleName}\n\n${roleCard ? roleCard.trim() + '\n\n' : ''}`
       : '';
@@ -4863,6 +4914,7 @@ async function main() {
   function startTokenUsageScheduler() { return tokenService.startScheduler(); }
 
   function scheduleBiliBrowse() {
+    if (!biliApi.available()) return;
     const b = cfg.socialV2?.bili ?? {};
     const sb = b.selfBrowsing ?? {};
     if (b.enabled === false || sb.enabled === false || !biliMem) return;
@@ -4891,6 +4943,7 @@ async function main() {
     }
   });
   const { runBiliBrowse } = createBiliRuntime({
+    biliApi,
     cfg, socialV2, log, scheduleBiliBrowse, pickBiliSessionKey, biliBrowseState,
     isTokenFused: (key) => tokenFuse.isFused(key),
     rememberBiliInfo, judgeBiliScan, deliverBiliPrompt, maybeShareBiliVideo,
@@ -5130,6 +5183,8 @@ async function main() {
   }
 
   async function sendWakePromptV2(key, reason, opts = {}) {
+    // T5：记下本次唤醒原因，回合开始/结束按它统计 wakeTurns 与无发言唤醒。
+    try { turnMetrics.setWakeReason(key, reason); } catch { /* 指标失败不影响唤醒 */ }
     if (cfg.socialV2?.enabled === false) return;
     if (currentMode !== 'reserved2' || socialV2.paused) return;
     if (!isSessionAllowedInCurrentMode(key)) {
@@ -5145,7 +5200,7 @@ async function main() {
     const st = getSocialV2State(key);
     // 兜底升级：只要未读里还有没答过的 @，这次唤醒就按 atMention 处理。
     // 否则 anyMessage/probability 定时器会在限流时被直接丢掉，@ 跟着一起饿死
-    // （2026-10-23 群 1000000005：owner 的「查下来源」就是这样被反复跳过的）。
+    // （2026-10-23 群 100002004：owner 的「查下来源」就是这样被反复跳过的）。
     try {
       const pendingCallers = findCallersV2(key, st).pending.length;
       if (pendingCallers > 0 && wakePriorityV2(reason) < 90) {
@@ -5502,6 +5557,7 @@ async function main() {
   });
 
   mediaService = createMediaService({
+    getUpscalePlugin: () => pluginRuntime?.upscale() ?? null,
     cfg,
     bot,
     log,
@@ -5590,6 +5646,7 @@ async function main() {
 
 
   const imageSender = createImageSender({
+    imageApi,
     cfg, imagesEnabled, imageSendAllowed, sourcesWithHint, imageStore, sourceFilterForPick,
     groupImageOpts, refreshImageLib, imageAnnotation, recordSentMessage, onebotSend,
     log, lastSentImage, imageSendTimes, sendQueue,
@@ -5871,6 +5928,7 @@ async function main() {
     armPendingWakeLease,
     disarmPendingWakeLease,
     ensureWakeableV2,
+    autoWrapAfterReply,
     deliverPrompt,
     buildWakeReminderPromptV2,
     wakePriorityV2,
@@ -5880,6 +5938,9 @@ async function main() {
     contextRecovery,
     contextCfg,
     recordTokenUsage: (sessionId, usage) => tokenFuse.recordUsage(sessionId, usage),
+    turnMetrics,
+    sessionContextTokens,
+    rotateContextIfNeeded,
     recordSessionProcessed: (key) => sessionGap.markProcessed(key),
     STATE_DIR,
     appendCompaction,
@@ -6072,6 +6133,7 @@ async function main() {
     log(`桥接已就绪（控制台自重启，PID ${process.pid}）`);
   }
   const biliBootstrap = createBiliBootstrap({
+    biliApi,
     cfg,
     root: ROOT,
     log,
@@ -6080,7 +6142,7 @@ async function main() {
     setBiliAuth: (v) => { biliAuth = v; },
     setAsrEngine: (v) => { asrEngine = v; }
   });
-  biliBootstrap.start();
+
 
   // ── 插件运行时（R3-4）：核心只装配运行时，不直接创建宿主 ──────────────
   //
@@ -6101,6 +6163,12 @@ async function main() {
   pluginRuntimeForShutdown = pluginRuntime;
   try {
     await pluginRuntime.start();
+    const pixivAuth = loadPixivAuth(pixivAuthFile);
+    setPixivCookie(pixivAuth.loaded ? pixivAuth.cookie : '');
+    startSentSweep();
+    biliBootstrap.start();
+    stickerService.setEntries(stickerApi.loadStickerStore(STICKER_FILE));
+    slangEntries = loadSlang(SLANG_FILE);
     ttsEngine = pluginRuntime.ttsEngine();
     if (!pluginRuntime.tts()) log('[plugin] TTS 插件未加载；只发文字');
   } catch (error) {
@@ -6403,6 +6471,8 @@ async function main() {
     taskService,
     xMonitor,
     live: {
+      // T5：Token 效率指标（控制台 05 Token 卡读取）。
+      turnMetrics: () => turnMetrics.stats(),
       get asrEngine() { return asrEngine; },
       set asrEngine(value) { asrEngine = value; },
       get biliAuth() { return biliAuth; },

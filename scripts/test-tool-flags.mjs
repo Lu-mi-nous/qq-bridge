@@ -38,6 +38,19 @@ const html = readConsoleUiSource({ unescape: true });
 
 const actualTools = new Set([...mcp.matchAll(/server\.tool\(\s*\n?\s*'([^']+)'/g)].map((x) => x[1]));
 
+const { registerSlangTools } = await import('../plugins/slang/mcp-tools.js');
+registerSlangTools({ mcp: { registerTool: name => actualTools.add(name) } });
+
+const { mediaMcpHarness } = await import('./helpers/media-mcp-harness.mjs');
+for (const name of mediaMcpHarness().keys()) actualTools.add(name);
+
+const { biliMcpHarness } = await import('./helpers/bili-mcp-harness.mjs');
+for (const name of biliMcpHarness().keys()) actualTools.add(name);
+
+// R4.6-5e：图库/表情/语音/超分/X 的工具也由插件注册（描述/handler 已迁出 MCP server）。
+const { pluginMcpHarness } = await import('./helpers/plugin-mcp-harness.mjs');
+for (const name of pluginMcpHarness().keys()) actualTools.add(name);
+
 console.log('── 1. 清单完整性（核心：不再漏工具）──');
 {
   const declared = toolNamesOf();
@@ -105,8 +118,11 @@ console.log('\n── 4. 桥接接线 ──');
   check('不再有手写的 toolFlags 数组',
     !/const toolFlags = \['getPrompt'/.test(consoleRoutes));
   // P0 内容安全止血：开关必须真正控制 MCP 注册，且桥接路由在拉取前硬拦截。
+  // R4.6-5e：qq_fetch_x_posts 已迁入 plugins/x-posts，开关仍真正控制注册。
+  const xTools = fs.readFileSync(path.join(root, 'plugins', 'x-posts', 'mcp-tools.js'), 'utf8');
   check('fetchXPosts 开关真正控制 MCP 注册',
-    /if \(cfg\.socialV2\?\.tools\?\.fetchXPosts !== false\) \{\s*server\.tool\(\s*'qq_fetch_x_posts'/.test(mcp));
+    /ctx\.config\.toolFlag\('fetchXPosts'\) !== false/.test(xTools)
+    && /registerTool\(\s*'qq_fetch_x_posts'/.test(xTools));
   check('fetchXPosts 关闭时桥接路由拒绝拉取',
     /!v2ToolEnabled\('fetchXPosts'\)/.test(consoleRoutes)
       && /X 帖子转发已临时关闭/.test(consoleRoutes));

@@ -1,3 +1,5 @@
+import { findFfmpeg, findFfprobe } from './plugin-api/process.js';
+export { findFfmpeg, findFfprobe } from './plugin-api/process.js';
 // GIF 动图抽帧拼图：把多帧动图抽成若干关键帧，横向拼成一张静态图。
 //
 // 背景：多模态模型接到的 image part 若是 GIF，实际只能看到**第一帧**（已实测：
@@ -17,39 +19,6 @@ import os from 'node:os';
 import path from 'node:path';
 
 const DEFAULT_TIMEOUT_MS = 15000;
-
-/** 在 PATH 与常见安装位置里找 ffmpeg/ffprobe，找到返回绝对路径，否则 null。 */
-function resolveBinary(name) {
-  const exts = process.platform === 'win32' ? ['.exe', ''] : [''];
-  const dirs = [
-    ...String(process.env.PATH ?? '').split(path.delimiter),
-    'C:\\Program Files\\ffmpeg-6.1.1-essentials_build\\bin',
-    'C:\\ffmpeg\\bin',
-    '/usr/bin',
-    '/usr/local/bin',
-    '/opt/homebrew/bin'
-  ].filter(Boolean);
-  for (const dir of dirs) {
-    for (const ext of exts) {
-      const candidate = path.join(dir, name + ext);
-      try {
-        if (fs.statSync(candidate).isFile()) return candidate;
-      } catch {}
-    }
-  }
-  return null;
-}
-
-let cachedFfmpeg;
-let cachedFfprobe;
-export function findFfmpeg() {
-  if (cachedFfmpeg === undefined) cachedFfmpeg = resolveBinary('ffmpeg');
-  return cachedFfmpeg;
-}
-export function findFfprobe() {
-  if (cachedFfprobe === undefined) cachedFfprobe = resolveBinary('ffprobe');
-  return cachedFfprobe;
-}
 
 function run(bin, args, timeoutMs) {
   return new Promise((resolve) => {

@@ -303,6 +303,8 @@
       "memoryPackChars": 1500,
       "promptBudgetChars": 20000,
       "promptMaxChars": 6000,
+      "rotateAtRatio": 0.7,
+      "modelLimitTokens": 1048576,
       "backlogWarnMessages": 200,
       "backlogCriticalMessages": 800,
       "backlogHistoryKeep": 288,

@@ -1,5 +1,6 @@
+// 参考文档：宿主不导入此文件，也不据此校验配置。
 // 黑话插件配置说明（与 config-schema.js 的 slang 保持同形）。
-export const configSchema = {
+export const configReference = {
   enabled: 'boolean',
   extractMinMessages: 'integer(1..1000)',
   extractCooldownMs: 'integer(0..86400000)',
@@ -10,4 +11,4 @@ export const configSchema = {
   autoResearch: 'boolean'
 };
 
-export default configSchema;
+export default configReference;

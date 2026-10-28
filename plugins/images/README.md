@@ -17,7 +17,7 @@
 | `lib/pixiv-auth.js` | Pixiv 凭据加载与请求头注入 |
 | `lib/image-quality.js` | 画质门槛与群像判定 |
 | `lib/image-store.js` | 图库索引/存储（R4.5-5b 迁入） |
-| `config.schema.js` | 配置字段清单（可读版） |
+| `config.reference.js` | 配置字段清单（可读版） |
 
 ## 谁在用它
 

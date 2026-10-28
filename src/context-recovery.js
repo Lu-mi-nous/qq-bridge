@@ -30,6 +30,17 @@ export function isContextOverflowError(raw) {
 }
 
 /**
+ * T4：是否该主动轮换。estimatedTokens 是最后一次请求的 input+cacheRead，
+ * 达到 modelLimitTokens × rotateAtRatio 就提前换会话。
+ */
+export function shouldRotateProactive(estimatedTokens, { rotateAtRatio = 0.7, modelLimitTokens = 1048576 } = {}) {
+  const est = Number(estimatedTokens) || 0;
+  const ratio = Number(rotateAtRatio) > 0 ? Number(rotateAtRatio) : 0.7;
+  const limit = Number(modelLimitTokens) > 0 ? Number(modelLimitTokens) : 1048576;
+  return est > 0 && est >= limit * ratio;
+}
+
+/**
  * 创建上下文超限恢复器。
  *
  * deps:
@@ -128,7 +139,27 @@ export function createContextRecovery(deps) {
     return { handled: true, retried: true };
   }
 
-  return { recover, isContextOverflowError };
+  /**
+   * T4：主动轮换。预估上下文接近模型上限（60~70%）时提前换会话，
+   * 不等到 prompt_too_long。只轮换、不重投、不通知管理员（不是错误）；
+   * 与 recover 共用冷却，避免同一会话反复轮换。
+   * @returns {Promise<{rotated:boolean, reason?:string}>}
+   */
+  async function rotateProactive({ key, sessionId, estimatedTokens = 0 } = {}) {
+    const at = now();
+    const prev = lastRecoveryAt.get(key) ?? 0;
+    if (at - prev < cooldownMs) {
+      deps.log(`[上下文] ${key} 主动轮换冷却中，跳过（预估 ${estimatedTokens} tokens）`);
+      return { rotated: false, reason: 'cooldown' };
+    }
+    lastRecoveryAt.set(key, at);
+    deps.rotateSession(key, sessionId);
+    deps.appendActivity(`${key} [上下文] 预估 ${Math.round(Number(estimatedTokens) / 1000)}k tokens 接近模型上限，提前轮换会话`);
+    deps.log(`[上下文] ${key} 主动轮换会话（estimatedTokens=${estimatedTokens}）`);
+    return { rotated: true };
+  }
+
+  return { recover, rotateProactive, isContextOverflowError };
 }
 
 // 只摘 session 级状态，保留群聊记忆；独立导出以直接验证轮换行为。

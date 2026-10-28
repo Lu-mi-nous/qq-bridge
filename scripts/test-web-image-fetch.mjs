@@ -140,7 +140,10 @@ console.log('\n── 9. 失败路径必须给可操作信息（不静默）─�
 
 console.log('\n── 10. 不污染既有工具 ──');
 {
-  check('web_search 仍在', /'web_search'/.test(mcpSrc));
+  const { registerSearchTool } = await import('../plugins/web-search/mcp-tools.js');
+  const names = [];
+  registerSearchTool({ config: { get: () => ({}) }, mcp: { registerTool: name => names.push(name) } }, {});
+  check('web_search 仍由搜索插件注册', names.includes('web_search'));
   check('web_fetch 仍在', /'web_fetch'/.test(mcpSrc));
   check('内网拦截仍生效（既有断言未被动过）', /禁止访问内网\/本机地址/.test(
     fs.readFileSync(path.join(root, 'src/safe-fetch.js'), 'utf8')));

@@ -265,6 +265,11 @@ check('发起人角色与群身份同源', /st\.lastRequesterRole = groupRole/.t
 check('owner 时间窗只记录后台管理员', /if \(ownerQq && String\(userId\)\.trim\(\) === ownerQq\)/.test(socialEngine) && /st\.ownerSpokeAt = Date\.now\(\)/.test(socialEngine));
 check('管理员权限使用唯一纯函数', /isOwnerTurnPure\(\{/.test(bridge) && /cfg\.socialV2\?\.adminCommandWindowMs/.test(bridge));
 check('B 站凭据只报状态不打印内容', /账号凭据已加载/.test(biliBootstrap) && !/log\(.*auth\.cookie/.test(biliBootstrap));
+// T3：唤醒构建器接入分层依赖（角色摘要 / profile 能力可见性）。
+check('唤醒构建器注入 roleTextFor 与 capabilityVisible', /roleTextFor,/.test(bridge)
+  && /capabilityVisible: capabilityVisibleForPrompt/.test(bridge));
+check('完整角色卡由 shouldInjectFullRole 判定', /shouldInjectFullRole\(/.test(bridge));
+check('角色列表排除 .digest.md', /!f\.endsWith\('\.digest\.md'\)/.test(bridge));
 
 console.log(`✅ ${pass} 通过 / ${fail} 失败`);
 process.exitCode=fail?1:0;

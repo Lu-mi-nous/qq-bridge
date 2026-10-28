@@ -40,6 +40,8 @@ export function createDshEventPump(deps) {
     armPendingWakeLease,
     disarmPendingWakeLease,
     ensureWakeableV2,
+    // T1：发言回合的自动收尾（自动标已读水位 + 保证可唤醒）。桥接注入；缺席时退回提醒。
+    autoWrapAfterReply = null,
     deliverPrompt,
     buildWakeReminderPromptV2,
     wakePriorityV2,
@@ -48,6 +50,11 @@ export function createDshEventPump(deps) {
     SILENT_TURN_TIMEOUT_MS,
     contextRecovery,
     recordTokenUsage,
+    // T5：按回合采集 Token 效率指标；缺失时不影响主流程。
+    turnMetrics = null,
+    // T4：本回合最后一次请求的上下文估算（sessionId -> input+cacheRead）与主动轮换回调。
+    sessionContextTokens = null,
+    rotateContextIfNeeded = null,
     recordSessionProcessed,
     contextCfg,
     STATE_DIR,
@@ -107,13 +114,19 @@ export function createDshEventPump(deps) {
     }
   }
 
-  function startTurn(frame) {
+  function startTurn(frame, key) {
     sendToolSucceededSessions.delete(frame.sessionId);
     pendingSendToolCalls.delete(frame.sessionId);
     const startedAt = now();
     v2TurnStartAt.set(frame.sessionId, startedAt);
     const turnId = makeTurnId(frame.sessionId, frame.event.data?.turn);
     currentTurnBySession.set(frame.sessionId, { turn: frame.event.data?.turn, turnId, startedAt });
+    // T5：回合开始即记账（静默摘要回合只标记不计入；提示分项取自最近一次唤醒）。
+    const silentQueued = (social.silentTurns.get(frame.sessionId) ?? []).length > 0;
+    turnMetrics?.beginTurn(frame.sessionId, key, {
+      silent: silentQueued,
+      promptChars: contextMetrics.get(key)?.lastPromptSections ?? null
+    });
     // B 站 waiter 只认“登记后真正开始的那一个回合”：
     // 登记时正在跑的旧回合不参与，避免把群聊回复当成初判结果。
     const judgeWaiter = biliJudgeWaiters.get(frame.sessionId);
@@ -132,6 +145,7 @@ export function createDshEventPump(deps) {
     const callId = frame.event.data?.callId;
     const args = sanitizeToolArgs(frame.event.data?.arguments ?? frame.event.data?.input ?? frame.event.data);
     appendToolLog({ type: 'call', time: new Date(now()).toISOString(), key, sessionId: frame.sessionId, tool: toolName, args });
+    turnMetrics?.recordToolCall(frame.sessionId, toolName);
     if (callId != null) {
       if (isSendToolName(toolName)) {
         let pending = pendingSendToolCalls.get(frame.sessionId);
@@ -165,6 +179,8 @@ export function createDshEventPump(deps) {
       ok: !resultError,
       error: errorText ? sanitizeToolArgs(errorText) : null
     });
+    // T5：工具结果字符量（文本部分），用于 toolResultCharsPerTurn。
+    turnMetrics?.recordToolResult(frame.sessionId, typeof resultBlock?.text === 'string' ? resultBlock.text.length : 0);
     if (callId != null) {
       toolCallNames.get(frame.sessionId)?.delete(String(callId));
       const pending = pendingSendToolCalls.get(frame.sessionId);
@@ -258,6 +274,20 @@ export function createDshEventPump(deps) {
       log(`摘要投喂 turn 结束，静默 (${key})`);
       return;
     }
+    // T4：主动轮换。本回合最后一次请求的上下文估算接近模型上限时，
+    // 先持久化（由桥接的 rotateContextIfNeeded 完成 episode），再换会话，
+    // 不等到 prompt_too_long 才被动恢复。静默摘要回合已在上方返回，不触发。
+    {
+      const estimated = sessionContextTokens instanceof Map ? sessionContextTokens.get(frame.sessionId) : 0;
+      if (sessionContextTokens instanceof Map) sessionContextTokens.delete(frame.sessionId);
+      if (estimated > 0 && typeof rotateContextIfNeeded === 'function') {
+        try {
+          await rotateContextIfNeeded(key, frame.sessionId, estimated);
+        } catch (error) {
+          log(`[上下文] ${key} 主动轮换失败：${error?.message ?? error}`);
+        }
+      }
+    }
     // reserved2 防遗忘：每次唤醒回合结束时，若 AI 没有调用 qq_set_wake_config 设置下一次唤醒条件，
     // 则发送提醒；连续未设置达到上限后重置为默认唤醒配置。静默回合已在上方返回，不触发。
     if (pendingWakeKeys.has(key)) {
@@ -265,6 +295,20 @@ export function createDshEventPump(deps) {
       disarmPendingWakeLease(key);
       if (wakeConfigUpdatedKeys.has(key) || markReadCalledKeys.has(key)) {
         ensureWakeableV2(getSocialV2State(key), { key });
+        wakeConfigUpdatedKeys.delete(key);
+        markReadCalledKeys.delete(key);
+        wakeConfigMissCount.delete(key);
+      } else if (sendToolSucceeded && typeof autoWrapAfterReply === 'function') {
+        // T1：本回合已经发过言 = 正常收尾。桥接自动标记已读水位并保证下一次可唤醒，
+        // 不再投递「未设置唤醒条件」提醒（那是纯额外的一次模型调用/一个回合）。
+        // 未答的 @ 由 autoWrapAfterReply 内部保留，不会顺手标读。
+        try {
+          autoWrapAfterReply(key);
+          log(`[reserved2] ${key} 已发言，自动收尾（T1：已读水位 + 唤醒配置）`);
+        } catch (error) {
+          log(`[reserved2] ${key} 自动收尾失败，回退到提醒: ${error?.message ?? error}`);
+          ensureWakeableV2(getSocialV2State(key), { key });
+        }
         wakeConfigUpdatedKeys.delete(key);
         markReadCalledKeys.delete(key);
         wakeConfigMissCount.delete(key);
@@ -299,7 +343,7 @@ export function createDshEventPump(deps) {
     // 繁忙期间被暂存的唤醒原因：当前 turn 结束后补一次，避免关键 @/提问被漏掉。
     //
     // ⚠️ 2026-10-11 修：原先只 `shift()` **最旧**一条（FIFO），结果 @ 会被更早的
-    // poke/probability 插队——实测群 1000000007：用户 16:08:31 @ 机器人（atMention@20893），
+    // poke/probability 插队——实测群 100002007：用户 16:08:31 @ 机器人（atMention@20893），
     // 但补发取的是更早的 poke@20871，@ 那条一直排在队列里没补，直到 16:10:01 才被处理，
     // 延迟 90 秒。群友感受就是「@ 它不是必回」。
     // 现在改为：**在仍相关的项里挑优先级最高的**（atMention/question 高于 poke/probability），
@@ -532,7 +576,14 @@ export function createDshEventPump(deps) {
   function handleAssistantMessage(frame) {
     // 只统计 assistant/message（最终汇总），不统计 assistant/chunk，避免同一份 usage 重复。
     const usage = frame.event.data?.usage;
-    if (usage) recordTokenUsage?.(frame.sessionId, usage);
+    if (usage) {
+      recordTokenUsage?.(frame.sessionId, usage);
+      turnMetrics?.recordAssistantMessage(frame.sessionId, usage);
+      // T4：input+cacheRead ≈ 本次请求的上下文大小；留给回合结束判断是否主动轮换。
+      const total = Number(usage?.inputTokens ?? usage?.prompt_tokens ?? 0)
+        + Number(usage?.cacheReadTokens ?? usage?.cache_read_input_tokens ?? 0);
+      if (total > 0 && sessionContextTokens instanceof Map) sessionContextTokens.set(frame.sessionId, total);
+    }
   }
 
   const sessionHandlers = new Map([
@@ -563,7 +614,14 @@ export function createDshEventPump(deps) {
     if (!currentTurnBySession.has(frame.sessionId)) return;
     collectBiliJudge(frame);
     const ended = collectors.get(frame.sessionId)?.push(event);
-    if (ended) await finishTurn(frame, key, ended);
+    if (ended) {
+      try {
+        await finishTurn(frame, key, ended);
+      } finally {
+        // T5：无论收尾从哪个分支返回（含静默/报错提前 return），都要关闭回合记账。
+        turnMetrics?.finishTurn(frame.sessionId);
+      }
+    }
   }
 
   async function handleLearnerRequest(frame, envelope) {
@@ -645,6 +703,7 @@ export function createDshEventPump(deps) {
   function resetStreamTracking(reason) {
     const busyKeys = [...pendingWakeKeys];
     collectors.clear(); // 清除旧 turn collector，避免重连后残留导致重复累加
+    turnMetrics?.resetActive?.(); // T5：断流后未完成的回合不再计入
     social.silentTurns.clear(); // 清除未消费的摘要静默名额，避免重连后吞掉正常回复
     sendToolSucceededSessions.clear();
     pendingSendToolCalls.clear();

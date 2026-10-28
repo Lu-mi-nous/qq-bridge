@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createJsonStore } from '../../../src/state/store.js';
+import { createJsonStore } from '../../../src/plugin-api/storage.js';
 
 export function nowIso() {
   return new Date().toISOString();
