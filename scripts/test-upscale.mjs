@@ -318,7 +318,7 @@ console.log('\n── 4. 接线检查 ──');
   check('桥接有超分回传端点', /url\.pathname === '\/api\/socialV2\/send-upscaled'/.test(bridge));
   check('回传只接受 base64（拒绝 URL/本地路径）', /data 必须是 base64 编码的图片/.test(bridge));
   check('回传校验确实是图片（魔数）', /sniffImageMime\(buf\)/.test(bridge));
-  check('回传受模式/令牌校验', /send-upscaled[\s\S]{0,1800}agentTokenOk\(key, token\)/.test(bridge));
+  check('回传受模式/令牌校验', /agentTokenOk\?\.\(key, token\)/.test(bridge));
   check('工具默认发布（publish 默认 true）', /publish !== false/.test(mcp));
   check('工具可 publish=false 只看不发', /publish=false 只放大给你自己看/.test(mcp));
   check('发送失败不影响把图交给模型（仍返回 image part）',

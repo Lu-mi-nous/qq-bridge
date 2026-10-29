@@ -79,7 +79,7 @@ console.log('\n── 6. 管理权限不受群身份影响（安全边界）─�
 {
   // 群主/群管理员**不**能执行写操作：判据只认 ownerQQ
   check('群身份不能授权管理工具', !isOwnerTurn({ ownerQQ: '42', state: { lastRequesterId: '7', lastRequesterRole: 'owner' } }));
-  check('删除端点用 isOwnerTurn 判定', /sticker-delete[\s\S]{0,1200}isOwnerTurn\(key\)/.test(consoleServer));
+  check('删除端点用 isOwnerTurn 判定', /async function deleteSticker[\s\S]{0,900}isOwnerTurn\(key\)/.test(consoleServer));
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} 通过 / ${fail} 失败`);

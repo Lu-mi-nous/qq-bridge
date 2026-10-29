@@ -37,13 +37,13 @@ console.log('── 1. 桥接端点 ──');
   check('发送失败回传 sendError（不静默吞掉）', /sendError: sendError \|\| undefined/.test(consoleServer));
 
   // 发图不能绕过既有管控
-  check('遵守 reserved2 模式限制', /publish[\s\S]{0,600}deps\.live\.currentMode !== 'reserved2'/.test(consoleServer));
-  check('遵守总暂停开关', /publish[\s\S]{0,600}socialV2\.paused/.test(consoleServer));
-  check('遵守静默模式', /publish[\s\S]{0,600}shouldBlockSilentReply\(key\)/.test(consoleServer));
+  check('遵守 reserved2 模式限制', /publish[\s\S]{0,900}live\.currentMode !== 'reserved2'/.test(consoleServer));
+  check('遵守总暂停开关', /publish[\s\S]{0,900}socialV2\.paused/.test(consoleServer));
+  check('遵守静默模式', /publish[\s\S]{0,900}shouldBlockSilentReply\(key\)/.test(consoleServer));
 
   // 记进会话时间线，否则模型下一轮不知道自己刚发过图
   check('发送后记入会话时间线', /发了张自己的形象图/.test(consoleServer));
-  check('记完保存状态', /发了张自己的形象图[\s\S]{0,900}saveSocialV2State\(\)/.test(consoleServer));
+  check('记完保存状态', /发了张自己的形象图[\s\S]{0,1500}saveSocialV2State\?\.\(\)/.test(consoleServer));
 
   // 发失败不能让整张图拿不到
   check('发送失败仍返回图片给模型', /catch \(error\) \{[\s\S]{0,300}sendError = String/.test(consoleServer));

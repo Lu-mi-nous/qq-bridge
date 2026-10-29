@@ -503,8 +503,8 @@ console.log('\n── 11. 02 会话列表名称与 02b 消息填充 ──');
   check('会话行显示群名/昵称', /class="sess-name"/.test(html)
     && /x\.name \? \`<span class="sess-name">/.test(html));
   check('会话行仍保留 key 便于排查', /<code>\$\{esc\(x\.key\)\}<\/code>/.test(html));
-  check('后端 /api/sessions 返回 name', /url\.pathname === '\/api\/sessions'[\s\S]{0,900}?name: contextDisplayName\(key\)/.test(consoleServerSrc));
-  check('后端 /api/sessions 会刷新名称缓存', /url\.pathname === '\/api\/sessions'[\s\S]{0,300}?refreshContextNames\(false\)/.test(consoleServerSrc));
+  check('后端 /api/sessions 返回 name', /name: contextDisplayName\?\.\(key\)/.test(consoleServerSrc));
+  check('后端 /api/sessions 会刷新名称缓存', /refreshContextNames\?\.\(false\)/.test(consoleServerSrc));
   check('02b 整页卡片高度撑满视口', /\.detail-page-body > #msgViewerCard \{[\s\S]{0,200}?height: calc\(100vh - 112px\)/.test(html));
   check('02b 消息列表吃满剩余高度', /\.detail-page-body > #msgViewerCard \.msglist \{[\s\S]{0,160}?flex: 1 1 auto/.test(html)
     && /\.detail-page-body > #msgViewerCard \.msglist \{[\s\S]{0,160}?max-height: none/.test(html));

@@ -43,9 +43,9 @@ console.log('\n── 2. Header/Body 令牌与全局闸门 ──');
   check('两个 Body 令牌发送入口都对账 Header',
     (consoleServer.match(/Header 与 Body 的 agent token 不一致/g) || []).length === 2);
   check('两个入口都按统一身份复查暂停',
-    (consoleServer.match(/\(token \|\| deps\.live\.currentMode === 'reserved2'\) && socialV2\.paused/g) || []).length === 2);
+    (consoleServer.match(/\(token \|\| live\.currentMode === 'reserved2'\) && socialV2\.paused/g) || []).length === 2);
   check('两个入口都按统一身份复查二代总开关',
-    (consoleServer.match(/\(token \|\| deps\.live\.currentMode === 'reserved2'\) && cfg\.socialV2\?\.enabled === false/g) || []).length === 2);
+    (consoleServer.match(/\(token \|\| live\.currentMode === 'reserved2'\) && cfg\.socialV2\?\.enabled === false/g) || []).length === 2);
   const oldSendHeaders = mcp.match(/agentApi\('\/api\/send\/(?:group|reply|private)', \{[\s\S]{0,180}?headers: token \? \{ 'x-agent-token': token \} : \{\}/g) || [];
   check('三个旧 MCP 发送工具都携带 Header 令牌', oldSendHeaders.length === 3, String(oldSendHeaders.length));
 }

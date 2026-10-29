@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createImageStore } from '../plugins/images/lib/image-store.js';
-import { fetchFromSources } from '../plugins/images/lib/image-sources.js';
+import { fetchFromSources, adaptiveScoreGate } from '../plugins/images/lib/image-sources.js';
 
 let pass = 0, fail = 0;
 const check = (n, c, e = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${n}${e ? '  ' + e : ''}`); };
@@ -97,6 +97,15 @@ console.log('\n── 拉取侧 sources 语义 ──');
   check('[] → 一个源都不查（非"不限源"）', none.length === 0, none.join(',') || '(无)');
   const bogus = await probe(['__unavailable__']);
   check('未知源名 → 不查任何源', bogus.length === 0, bogus.join(',') || '(无)');
+}
+
+console.log('\n── 自适应分数门 ──');
+{
+  check('全 0 分数不启用（pixiv 搜索无分数信号）', adaptiveScoreGate([0, 0, 0, 0]) === null);
+  check('样本不足 4 条不启用', adaptiveScoreGate([0, 10, 20]) === null);
+  check('正常分布取半中位', adaptiveScoreGate([10, 20, 30, 40]) === 15);
+  check('绝对底限 1 挡住 0 分', adaptiveScoreGate([0, 0, 1, 1]) === 1);
+  check('显式底限 0 时只按半中位', adaptiveScoreGate([10, 20, 30, 40], 0) === 15);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -12,6 +12,10 @@
 //   turns       = 完成的普通回合（静默摘要回合不计）
 //   wakeWithoutReplyTokens = 有唤醒原因、但本回合没发任何消息的回合的 (input+cacheRead+output)
 //
+// 2026-10-29 细化口径：除总量外，还按
+//   唤醒原因（byReason）、工具（byTool）、小时（byHour）、角色（byRole）、模式（byMode）
+// 分组记账；每组都带 turns/input/cacheRead/output/发言数/无发言 tokens。
+//
 // 派生 KPI 见 deriveMetrics()。数值用于趋势对比，不参与计费。
 import { createJsonStore } from './state/store.js';
 
@@ -29,6 +33,16 @@ const round = (v, digits = 2) => {
   return Math.round(n * p) / p;
 };
 
+const emptyDim = () => ({
+  turns: 0,
+  input: 0,
+  cacheRead: 0,
+  output: 0,
+  sent: 0,
+  noReply: 0,
+  noReplyTokens: 0
+});
+
 const emptyBucket = () => ({
   turns: 0,
   modelCalls: 0,
@@ -44,8 +58,29 @@ const emptyBucket = () => ({
   turnsWithOnlyWait: 0,
   turnsWithOnlyMarkRead: 0,
   promptChars: { total: 0, role: 0, sticker: 0, menu: 0, tokenReport: 0, voice: 0, memory: 0, status: 0 },
-  wakeReasons: {}
+  // 兼容旧字段：与 byReason[*].turns 同义
+  wakeReasons: {},
+  // 细化分组
+  byReason: {},
+  byTool: {},
+  byHour: {},
+  byRole: {},
+  byMode: {}
 });
+
+function addDim(map, name, turn, totals) {
+  const key = String(name || '').trim() || '(unknown)';
+  const dim = map[key] || (map[key] = emptyDim());
+  dim.turns += 1;
+  dim.input += totals.input;
+  dim.cacheRead += totals.cacheRead;
+  dim.output += totals.output;
+  dim.sent += turn.sent;
+  if (turn.sent === 0) {
+    dim.noReply += 1;
+    dim.noReplyTokens += totals.total;
+  }
+}
 
 export function deriveMetrics(bucket = {}) {
   const turns = Number(bucket.turns) || 0;
@@ -61,6 +96,9 @@ export function deriveMetrics(bucket = {}) {
     sentMessages: sent,
     tokensPerTurn: per(total),
     tokensPerSentMessage: sent > 0 ? round(total / sent) : 0,
+    // 成本视角：缓存读通常远便宜于未缓存输入，单看 total 会被缓存读淹没。
+    effectiveTokensPerTurn: per(input + output),
+    effectiveTokensPerSentMessage: sent > 0 ? round((input + output) / sent) : 0,
     modelCallsPerTurn: per(bucket.modelCalls),
     toolCallsPerTurn: per(bucket.toolCalls),
     uncachedInputPerTurn: per(input),
@@ -83,8 +121,21 @@ export function deriveMetrics(bucket = {}) {
       memory: avgChars('memory'),
       status: avgChars('status')
     },
-    wakeReasons: { ...(bucket.wakeReasons || {}) }
+    wakeReasons: { ...(bucket.wakeReasons || {}) },
+    // 细化分组（turns/input/cacheRead/output/sent/noReply/noReplyTokens）
+    byReason: { ...(bucket.byReason || {}) },
+    byTool: { ...(bucket.byTool || {}) },
+    byHour: { ...(bucket.byHour || {}) },
+    byRole: { ...(bucket.byRole || {}) },
+    byMode: { ...(bucket.byMode || {}) }
   };
+}
+
+function mergeDimMaps(target, source) {
+  for (const [name, dim] of Object.entries(source || {})) {
+    const d = target[name] || (target[name] = name === 'byTool' ? { calls: 0, resultChars: 0, errors: 0 } : emptyDim());
+    for (const [k, v] of Object.entries(dim)) d[k] = (Number(d[k]) || 0) + (Number(v) || 0);
+  }
 }
 
 export function aggregateBuckets(keys = {}) {
@@ -98,6 +149,11 @@ export function aggregateBuckets(keys = {}) {
     for (const [reason, n] of Object.entries(bucket?.wakeReasons || {})) {
       total.wakeReasons[reason] = (total.wakeReasons[reason] || 0) + (Number(n) || 0);
     }
+    mergeDimMaps(total.byReason, bucket?.byReason);
+    mergeDimMaps(total.byTool, bucket?.byTool);
+    mergeDimMaps(total.byHour, bucket?.byHour);
+    mergeDimMaps(total.byRole, bucket?.byRole);
+    mergeDimMaps(total.byMode, bucket?.byMode);
   }
   return total;
 }
@@ -107,7 +163,6 @@ export function createTurnMetrics({ file, now = Date.now, log = () => {}, keepDa
   const store = createJsonStore({ file, version: 1, defaults: () => ({ days: {} }), log });
   const active = new Map(); // sessionId -> 进行中的回合
   const wakeReasonByKey = new Map(); // key -> 最近一次唤醒原因
-  let statsCache = null; // { at, value } 供控制台轮询时避免反复遍历
 
   function readDays() {
     const st = store.read();
@@ -117,14 +172,6 @@ export function createTurnMetrics({ file, now = Date.now, log = () => {}, keepDa
     while (names.length > keepDays) { delete days[names.shift()]; changed = true; }
     if (changed) store.update((draft) => ({ ...draft, days }));
     return days;
-  }
-
-  function bucketOf(days, day, key, create = false) {
-    const dayBucket = days[day] ?? (create ? { keys: {} } : null);
-    if (!dayBucket) return null;
-    if (!dayBucket.keys) dayBucket.keys = {};
-    if (!dayBucket.keys[key] && create) dayBucket.keys[key] = emptyBucket();
-    return dayBucket.keys[key] ?? null;
   }
 
   function mutate(fn) {
@@ -139,7 +186,6 @@ export function createTurnMetrics({ file, now = Date.now, log = () => {}, keepDa
       draft.days = days;
       return draft;
     });
-    statsCache = null;
   }
 
   function setWakeReason(key, reason) {
@@ -148,15 +194,19 @@ export function createTurnMetrics({ file, now = Date.now, log = () => {}, keepDa
     if (r) wakeReasonByKey.set(key, r);
   }
 
-  function beginTurn(sessionId, key, { silent = false, promptChars = null } = {}) {
+  function beginTurn(sessionId, key, { silent = false, promptChars = null, role = '', mode = '' } = {}) {
     if (!sessionId || !key) return;
     active.set(sessionId, {
       key,
       reason: wakeReasonByKey.get(key) ?? '',
+      role: String(role || '').trim(),
+      mode: String(mode || '').trim(),
+      startedAt: now(),
       silent: silent === true,
       modelCalls: 0,
       toolCalls: 0,
       toolNames: new Set(),
+      toolStats: new Map(), // name -> { calls, resultChars, errors }
       toolResultChars: 0,
       input: 0,
       cacheRead: 0,
@@ -176,17 +226,29 @@ export function createTurnMetrics({ file, now = Date.now, log = () => {}, keepDa
     turn.output += Number(usage?.outputTokens ?? usage?.completion_tokens ?? 0) || 0;
   }
 
+  function toolStat(turn, name) {
+    const key = String(name || '').trim() || '(unknown)';
+    let stat = turn.toolStats.get(key);
+    if (!stat) { stat = { calls: 0, resultChars: 0, errors: 0 }; turn.toolStats.set(key, stat); }
+    return stat;
+  }
+
   function recordToolCall(sessionId, name) {
     const turn = active.get(sessionId);
     if (!turn) return;
     turn.toolCalls += 1;
     if (name) turn.toolNames.add(String(name));
+    toolStat(turn, name).calls += 1;
   }
 
-  function recordToolResult(sessionId, chars) {
+  function recordToolResult(sessionId, name, chars, isError = false) {
     const turn = active.get(sessionId);
     if (!turn) return;
-    turn.toolResultChars += Math.max(0, Number(chars) || 0);
+    const n = Math.max(0, Number(chars) || 0);
+    turn.toolResultChars += n;
+    const stat = toolStat(turn, name);
+    stat.resultChars += n;
+    if (isError) stat.errors += 1;
   }
 
   /** 实际发送成功后调用（bridge.recordSentMessage）。key 级计数 + 计入当前回合。 */
@@ -206,6 +268,8 @@ export function createTurnMetrics({ file, now = Date.now, log = () => {}, keepDa
     active.delete(sessionId);
     if (turn.silent) return;
     const totalTokens = turn.input + turn.cacheRead + turn.output;
+    const totals = { input: turn.input, cacheRead: turn.cacheRead, output: turn.output, total: totalTokens };
+    const hour = String(Math.max(0, Math.min(23, new Date(turn.startedAt).getHours())));
     mutate((keys) => {
       const bucket = keys[turn.key] ?? (keys[turn.key] = emptyBucket());
       bucket.turns += 1;
@@ -231,6 +295,22 @@ export function createTurnMetrics({ file, now = Date.now, log = () => {}, keepDa
           bucket.promptChars[k] += Number(turn.promptChars[k]) || 0;
         }
       }
+      // 细化分组（老状态文件没有这些字段，先补空对象，避免升级后首个回合崩）
+      bucket.byReason ||= {};
+      bucket.byTool ||= {};
+      bucket.byHour ||= {};
+      bucket.byRole ||= {};
+      bucket.byMode ||= {};
+      addDim(bucket.byReason, turn.reason, turn, totals);
+      addDim(bucket.byHour, hour, turn, totals);
+      addDim(bucket.byRole, turn.role, turn, totals);
+      addDim(bucket.byMode, turn.mode, turn, totals);
+      for (const [name, stat] of turn.toolStats) {
+        const t = bucket.byTool[name] || (bucket.byTool[name] = { calls: 0, resultChars: 0, errors: 0 });
+        t.calls += stat.calls;
+        t.resultChars += stat.resultChars;
+        t.errors += stat.errors;
+      }
     });
   }
 
@@ -252,7 +332,6 @@ export function createTurnMetrics({ file, now = Date.now, log = () => {}, keepDa
 
   /** 变更后落盘已即时完成；保留 sweep 供任务服务/退出时兜底。 */
   function sweep() {
-    statsCache = null;
     return store.flush();
   }
 

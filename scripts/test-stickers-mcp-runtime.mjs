@@ -91,6 +91,11 @@ try {
     assert.equal(requests.at(-1).url, '/api/socialV2/sticker-remark');
     assert.equal(body.stickerId, 'e1'); assert.equal(body.remark, '新备注');
   });
+  await check('所有写请求都携带 agent token 头', () => {
+    const writes = requests.filter((r) => r.options?.method === 'POST');
+    assert.ok(writes.length >= 5, `POST 请求数 ${writes.length}`);
+    for (const r of writes) assert.equal(r.options.headers['x-agent-token'], 'fixture', r.url);
+  });
   failure = true;
   await check('七项桥接失败均返回明确错误', async () => {
     for (const tool of Object.values(tools)) {

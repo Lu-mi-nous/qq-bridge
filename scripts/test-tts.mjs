@@ -34,6 +34,7 @@ const ttsPluginSrc = fs.readFileSync(path.join(root, 'plugins', 'tts', 'index.js
 const qqSendSrc = fs.readFileSync(path.join(root, 'src', 'pipeline', 'qq-send.js'), 'utf8');
 const wakeSrc = fs.readFileSync(path.join(root, 'src', 'pipeline', 'wake.js'), 'utf8');
 const consoleServerSrc = readConsoleSource();
+const stickersCommandsSrc = fs.readFileSync(path.join(root, 'src', 'console', 'commands', 'stickers.js'), 'utf8');
 const html = readConsoleUiSource({ unescape: true });
 const pySrc = fs.readFileSync(path.join(root, 'scripts', 'sovits-server.py'), 'utf8');
 
@@ -119,9 +120,11 @@ console.log('\n── 4. 掷骰与回退 ──');
     + (consoleServerSrc.match(/probability \?\? TTS_DEFAULT_PROBABILITY/g) || []).length;
   check('默认值统一走常量（≥3 处引用）', constRefs >= 3, `${constRefs} 处`);
   // 模型主动发语音**不受概率限制**：群友明确要听，就该发。
-  check('主动发不检查概率（只受每小时上限）',
-    /send-voice[\s\S]{0,2500}?maxPerHour/.test(consoleServerSrc)
-    && !/send-voice[\s\S]{0,1200}?Math\.random\(\)/.test(consoleServerSrc));
+  {
+    const i = stickersCommandsSrc.indexOf('async function sendVoice');
+    const block = stickersCommandsSrc.slice(i, i + 5000);
+    check('主动发不检查概率（只受每小时上限）', i > 0 && /maxPerHour/.test(block) && !/Math\.random\(\)/.test(block));
+  }
 
   check('过长不发（默认 140 字）', /maxChars\) \|\| 140/.test(consoleServerSrc));
   // 用字面量 includes 而不是正则：源码那行本身含大量转义，
@@ -147,10 +150,10 @@ console.log('\n── 5. 发送链路 ──');
   check('调用后记录已发消息', /recordSentMessage\(key, body\.data, `［语音］/.test(bridgeSrc));
   check('概率语音在发送列表标 isVoice', /sent\.push\(\{ text: ttsPlan\.text, isVoice: true \}\)/.test(qqSendSrc));
   check('发送记录保留 [语音] 标记', /isVoice \? '\[语音\] ' : ''/.test(socialSrc) && /isVoice,/.test(socialSrc));
-  check('主动语音写回 recentMessages', /recordSentMessagesV2\(key, \[\{ text, isVoice: true \}\]\)/.test(consoleServerSrc));
+  check('主动语音写回 recentMessages', /recordSentMessagesV2\?\.\(key, \[\{ text: String\(text\), isVoice: true \}\]\)/.test(stickersCommandsSrc));
   {
-    const i = consoleServerSrc.indexOf("url.pathname === '/api/socialV2/send-voice'");
-    const block = consoleServerSrc.slice(i, i + 5000);
+    const i = stickersCommandsSrc.indexOf('async function sendVoice');
+    const block = stickersCommandsSrc.slice(i, i + 5000);
     check('主动语音更新 lastAiReplyAt', i > 0 && /lastAiReplyAt/.test(block));
   }
   check('失败时报出 retcode', /发语音失败: \$\{body\.wording \|\| body\.retcode/.test(bridgeSrc));
@@ -332,7 +335,7 @@ console.log('\n── 6d. 参数可编辑 ──');
     /UTF8Encoding\(\$false\)/.test(consoleServerSrc));
   check('只接受 file/dir 两种模式（不拼接用户输入）',
     /body\.kind === 'dir' \? 'dir' : 'file'/.test(consoleServerSrc));
-  check('同时只允许一个选择窗口', /deps\.live\.pickPathBusy/.test(consoleServerSrc));
+  check('同时只允许一个选择窗口', /live\.pickPathBusy/.test(consoleServerSrc));
   check('选中后标记 edited（不被 60 秒轮询冲掉）', /input\.dataset\.edited = '1'/.test(html));
 
   // 2026-10-22 已知问题：控制台的权重只参与探测、不参与加载——

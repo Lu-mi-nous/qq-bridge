@@ -2,6 +2,17 @@
 
 > 按时间倒序记录「做了什么 + 为什么」。修 bug 优先写清真因，因为下次可能再遇到。
 
+## 未发布
+
+- **R4.7 依赖注入契约**：`createConsoleServer` 从 266 个平铺键收为 8 个领域对象；19 个路由域迁入 `read-model` / `commands`，路由最大解构降到 3 项；`DshEventPump` 从 70 项平铺依赖收为 8 个领域 / 70 键。控制台仍保留 `flattenConsoleServices()` 兼容视图，迁移完成后可删除。
+- **控制台 T5 回合效率表**：14 Token 卡新增所选日期的回合级指标（tokens/回合、有效成本、tokens/消息、模型/工具调用、缓存命中、无发言唤醒、空转回合、提示词字符），跨日对比仍用 `npm run metrics:turn -- --compare`。
+- **T5 表按日切换修复**：`live.turnMetrics` 原先固定调用 `stats()` 不接日期，选历史日期仍显示今天；现在透传 `day`，T5 表与「按日审阅」同步。
+- **pixiv 取图修复**：插件内代理隧道仍按旧相对路径动态导入，且质量门把整批无分数信号的 pixiv 搜索全部判成低质；已改走 `src/plugin-api/network.js`，无分数信号时跳过分数门，日榜/关键词/Referer/下载全部通过。
+- **Token 统计细化口径**：按唤醒原因 / 工具 / 小时 / 角色 / 模式分组记账；`npm run metrics:turn -- --detail` 查看明细；修复 DSH tool/result 文本取错层级导致 `toolResultCharsPerTurn` 恒为 0 的问题。
+- **reserved2 兜底转发防泄漏**：本回合尝试过发送类工具后不再拿文本兜底，并过滤「回到群里 / 没发出去 / 接口不认 / 令牌 / 工具调用 / 桥接 / MCP」等内部措辞；同时修复表情 MCP 未透传 agent token 导致的 403。
+- **reserved2 文本-only 兜底**：直接唤醒回合如果结束时没有任何发送工具成功记录，桥接会转发文本（过滤内心独白），并保证不重复发送已经通过工具发出的消息。
+- **测试**：186 个脚本；全量 176/186 通过、5,934 条断言，10 个环境类失败，无真实失败。
+
 ## 0.7.1（2026-10-28）
 
 - **项目更名：鲸语 WhaleTalk**（原 WhaleBridge）：包名 `whale-talk`，GitHub 仓库更名为 `群友H/whale-talk`（旧链接自动跳转）；`~/.qq-bridge` 插件目录、`state/`、MCP server 名等功能标识保持兼容。

@@ -1,8 +1,9 @@
 // 测试辅助：读取控制台源码。
 //
 // R4 把 154 条路由从 console-server.js 拆到 src/console/routes/*.js，
-// 很多回归测试仍按「字符串搜索源码」的方式断言端点存在。这里把主文件与
-// 分域路由模块拼在一起，测试不需要逐个知道某个端点搬到了哪个文件。
+// R4.7 又把 token 读口径/命令拆到 src/console/{read-model,commands}/。
+// 很多回归测试仍按「字符串搜索源码」的方式断言端点/口径存在；这里把
+// 主文件、分域路由与用例层模块拼在一起，测试不需要逐个知道某段代码搬到了哪个文件。
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,8 +14,9 @@ export function readConsoleServer() {
   return fs.readFileSync(path.join(ROOT, 'src', 'console-server.js'), 'utf8');
 }
 
-export function readConsoleRoutes() {
-  const dir = path.join(ROOT, 'src', 'console', 'routes');
+function readDirJs(rel) {
+  const dir = path.join(ROOT, rel);
+  if (!fs.existsSync(dir)) return '';
   return fs.readdirSync(dir)
     .filter((f) => f.endsWith('.js'))
     .sort()
@@ -22,7 +24,11 @@ export function readConsoleRoutes() {
     .join('\n');
 }
 
-/** console-server.js + 全部路由模块。 */
+export function readConsoleRoutes() {
+  return readDirJs(path.join('src', 'console', 'routes'));
+}
+
+/** console-server.js + 全部路由模块 + 用例层（read-model / commands）。 */
 export function readConsoleSource() {
-  return `${readConsoleServer()}\n${readConsoleRoutes()}`;
+  return `${readConsoleServer()}\n${readConsoleRoutes()}\n${readDirJs(path.join('src', 'console', 'read-model'))}\n${readDirJs(path.join('src', 'console', 'commands'))}`;
 }

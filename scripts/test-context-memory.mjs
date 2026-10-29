@@ -310,8 +310,9 @@ console.log('\n── 6. 桥接接线 ──');
   check('状态接口补种历史长期记忆', /backfillLongTermMemory\(STATE_DIR, key\)/.test(consoleServer));
   check('扫描按最久未总结优先', /a\.lastEpisodeAt - b\.lastEpisodeAt/.test(bridge) && /countContextPendingV2/.test(bridge));
   {
-    const cs = consoleServer.indexOf("url.pathname === '/api/socialV2/context-clear'");
-    const block = consoleServer.slice(cs, cs + 1600);
+    // R4.7：清空逻辑移到 commands/context.js；readConsoleSource 已包含该目录。
+    const cs = consoleServer.indexOf('const clearFiles = (k) =>');
+    const block = cs >= 0 ? consoleServer.slice(cs, cs + 900) : '';
     check('清空只删派生记忆、保留 messages.jsonl',
       block.includes("['episodes.jsonl', 'compactions.jsonl', 'memory.json']")
       && !block.includes("rmSync(path.join(dir, 'messages.jsonl'))"));

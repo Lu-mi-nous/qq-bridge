@@ -172,6 +172,13 @@ try {
     check('任务清单可读', r.status === 200 && r.body.tasks?.[0]?.name === 't');
   }
   {
+    // R4.7：Token / 活动流路由改吃 facets；平铺 deps 仍由 ensureConsoleServices 兼容分组。
+    const r = await request('GET', '/api/socialV2/token-usage');
+    check('Token 读模型经 facets 接线', r.status === 200 && r.body.ok === true && r.body.ready === false);
+    const a = await request('GET', '/api/socialV2/activity');
+    check('活动流读模型经 facets 接线', a.status === 200 && a.body.ok === true && a.body.paused === false);
+  }
+  {
     const r = await request('GET', '/api/socialV2/tool-flags');
     check('工具开关清单可读且分组', r.status === 200 && Array.isArray(r.body.groups));
   }

@@ -6,7 +6,7 @@ export async function mount(container, ctx = {}) {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]));
-  container.innerHTML = "      <div id=\"tokenStatus\" class=\"meta\">加载中…</div>\n      <div id=\"tokenToday\" style=\"margin-top:10px\"></div>\n      <div id=\"tokenTotal\" class=\"meta\" style=\"margin-top:6px\"></div>\n      <!-- 按日审阅（2026-10-21 用户要求）：选「总计」看全时段汇总，\n           选某一天则下方「按模型」只显示那一天的模型调用量。 -->\n      <div class=\"row\" style=\"margin-top:10px;align-items:center\">\n        <label style=\"margin:0;flex:none\">按日审阅</label>\n        <select id=\"tokenDayPick\" style=\"width:auto;min-width:150px\">\n          <option value=\"all\">总计（全时段）</option>\n        </select>\n        <span class=\"meta\" id=\"tokenDayPickHint\"></span>\n      </div>\n      <div id=\"tokenDays\" style=\"margin-top:10px\"></div>\n      <div id=\"tokenModels\" style=\"margin-top:10px\"></div>\n      <!-- 按会话（2026-10-25 用户要求）：当前 = 映射里的当前 DSH 会话；\n           累计 = 该 QQ 会话名下所有历史 sessionId + 情节摘要器，轮换不清零。 -->\n      <div id=\"tokenSessions\" style=\"margin-top:10px\"></div>\n      <!-- 会话级 Token 熔断（二期 F3）：默认关闭；开启后达到阈值的会话停止自动唤醒/B站自主刷。 -->\n      <details id=\"tokenFusePanel\" class=\"ctx-shared\">\n        <summary>会话级 Token 熔断 <span class=\"meta\" id=\"tokenFuseStats\">加载中…</span></summary>\n        <div class=\"row\" style=\"margin-top:8px;gap:10px;flex-wrap:wrap;align-items:center\">\n          <label style=\"margin:0;flex:none\"><input type=\"checkbox\" id=\"tokenFuseEnabled\"> 启用</label>\n          <span class=\"meta\" style=\"flex:none\">全局默认（只影响未自定义的会话）：</span>\n          <label class=\"fuse-global\" style=\"margin:0;flex:none\">提醒 <input type=\"number\" id=\"tokenFuseWarn\" min=\"0\" step=\"any\"><select id=\"tokenFuseWarnUnit\" aria-label=\"全局提醒阈值单位\"></select></label>\n          <label class=\"fuse-global\" style=\"margin:0;flex:none\">熔断 <input type=\"number\" id=\"tokenFuseFuse\" min=\"0\" step=\"any\"><select id=\"tokenFuseFuseUnit\" aria-label=\"全局熔断阈值单位\"></select></label>\n          <label class=\"fuse-global\" style=\"margin:0;flex:none\">未缓存 <input type=\"number\" id=\"tokenFuseUncached\" min=\"0\" step=\"any\"><select id=\"tokenFuseUncachedUnit\" aria-label=\"全局未缓存阈值单位\"></select></label>\n          <button id=\"tokenFuseSave\" class=\"small\">保存全局</button>\n          <span class=\"meta\" id=\"tokenFuseMsg\"></span>\n        </div>\n        <div class=\"meta\" style=\"margin-top:6px\">\n          按自然日（上海时区）累计「总输入（含缓存）」；熔断后只停该会话的自动唤醒和 B 站自主刷，\n          管理员私聊与控制台手动操作不受影响。下方表格可逐会话覆盖全局阈值（K/M/B 单位）。\n        </div>\n        <div id=\"tokenFuseList\" style=\"margin-top:8px\">展开后加载…</div>\n      </details>\n      <div class=\"row\" style=\"margin-top:10px\">\n        <button id=\"tokenRefresh\" class=\"small\">重新统计</button>\n        <button id=\"tokenReport\" class=\"small\">生成报表图</button>\n        <span class=\"meta\" id=\"tokenMsg\"></span>\n      </div>\n      <div id=\"tokenReportPreview\" style=\"margin-top:10px\"></div>\n      <iframe class=\"console-panel\" data-panel-src=\"/api/console/panel/token-report\"\n        sandbox=\"allow-scripts\" loading=\"lazy\" title=\"Token 报表预览\"\n        style=\"width:100%;height:520px;border:0;border-radius:10px;margin-top:10px\"></iframe>\n      <div class=\"meta\" id=\"tokenHint\">\n        数据来自 DSH 会话转录（本地文件解析，不调用任何 API）。<b>口径是 DSH 会话，不是网关积分/账单</b>；\n        网关 credit 请到模型网关面板查看。总输入 = 未缓存输入 + 缓存读（provider 的 prompt_tokens），\n        输出是 completion_tokens。\n        <b>每日更新</b>：跨天自动重算，平时每 6 小时刷新一次；也可点「重新统计」手动刷新。\n        统计已按 (turn, step, 用量) 去重——同一份 usage 在流式增量与最终汇总里各出现一次，\n        直接累加会翻倍。\n      </div>\n";
+  container.innerHTML = "      <div id=\"tokenStatus\" class=\"meta\">加载中…</div>\n      <div id=\"tokenToday\" style=\"margin-top:10px\"></div>\n      <div id=\"tokenTotal\" class=\"meta\" style=\"margin-top:6px\"></div>\n      <div id=\"tokenTurnMetrics\" style=\"margin-top:10px\"></div>\n      <!-- 按日审阅（2026-10-21 用户要求）：选「总计」看全时段汇总，\n           选某一天则下方「按模型」只显示那一天的模型调用量。 -->\n      <div class=\"row\" style=\"margin-top:10px;align-items:center\">\n        <label style=\"margin:0;flex:none\">按日审阅</label>\n        <select id=\"tokenDayPick\" style=\"width:auto;min-width:150px\">\n          <option value=\"all\">总计（全时段）</option>\n        </select>\n        <span class=\"meta\" id=\"tokenDayPickHint\"></span>\n      </div>\n      <div id=\"tokenDays\" style=\"margin-top:10px\"></div>\n      <div id=\"tokenModels\" style=\"margin-top:10px\"></div>\n      <!-- 按会话（2026-10-25 用户要求）：当前 = 映射里的当前 DSH 会话；\n           累计 = 该 QQ 会话名下所有历史 sessionId + 情节摘要器，轮换不清零。 -->\n      <div id=\"tokenSessions\" style=\"margin-top:10px\"></div>\n      <!-- 会话级 Token 熔断（二期 F3）：默认关闭；开启后达到阈值的会话停止自动唤醒/B站自主刷。 -->\n      <details id=\"tokenFusePanel\" class=\"ctx-shared\">\n        <summary>会话级 Token 熔断 <span class=\"meta\" id=\"tokenFuseStats\">加载中…</span></summary>\n        <div class=\"row\" style=\"margin-top:8px;gap:10px;flex-wrap:wrap;align-items:center\">\n          <label style=\"margin:0;flex:none\"><input type=\"checkbox\" id=\"tokenFuseEnabled\"> 启用</label>\n          <span class=\"meta\" style=\"flex:none\">全局默认（只影响未自定义的会话）：</span>\n          <label class=\"fuse-global\" style=\"margin:0;flex:none\">提醒 <input type=\"number\" id=\"tokenFuseWarn\" min=\"0\" step=\"any\"><select id=\"tokenFuseWarnUnit\" aria-label=\"全局提醒阈值单位\"></select></label>\n          <label class=\"fuse-global\" style=\"margin:0;flex:none\">熔断 <input type=\"number\" id=\"tokenFuseFuse\" min=\"0\" step=\"any\"><select id=\"tokenFuseFuseUnit\" aria-label=\"全局熔断阈值单位\"></select></label>\n          <label class=\"fuse-global\" style=\"margin:0;flex:none\">未缓存 <input type=\"number\" id=\"tokenFuseUncached\" min=\"0\" step=\"any\"><select id=\"tokenFuseUncachedUnit\" aria-label=\"全局未缓存阈值单位\"></select></label>\n          <button id=\"tokenFuseSave\" class=\"small\">保存全局</button>\n          <span class=\"meta\" id=\"tokenFuseMsg\"></span>\n        </div>\n        <div class=\"meta\" style=\"margin-top:6px\">\n          按自然日（上海时区）累计「总输入（含缓存）」；熔断后只停该会话的自动唤醒和 B 站自主刷，\n          管理员私聊与控制台手动操作不受影响。下方表格可逐会话覆盖全局阈值（K/M/B 单位）。\n        </div>\n        <div id=\"tokenFuseList\" style=\"margin-top:8px\">展开后加载…</div>\n      </details>\n      <div class=\"row\" style=\"margin-top:10px\">\n        <button id=\"tokenRefresh\" class=\"small\">重新统计</button>\n        <button id=\"tokenReport\" class=\"small\">生成报表图</button>\n        <span class=\"meta\" id=\"tokenMsg\"></span>\n      </div>\n      <div id=\"tokenReportPreview\" style=\"margin-top:10px\"></div>\n      <iframe class=\"console-panel\" data-panel-src=\"/api/console/panel/token-report\"\n        sandbox=\"allow-scripts\" loading=\"lazy\" title=\"Token 报表预览\"\n        style=\"width:100%;height:520px;border:0;border-radius:10px;margin-top:10px\"></iframe>\n      <div class=\"meta\" id=\"tokenHint\">\n        数据来自 DSH 会话转录（本地文件解析，不调用任何 API）。<b>口径是 DSH 会话，不是网关积分/账单</b>；\n        网关 credit 请到模型网关面板查看。总输入 = 未缓存输入 + 缓存读（provider 的 prompt_tokens），\n        输出是 completion_tokens。\n        <b>每日更新</b>：跨天自动重算，平时每 6 小时刷新一次；也可点「重新统计」手动刷新。\n        统计已按 (turn, step, 用量) 去重——同一份 usage 在流式增量与最终汇总里各出现一次，\n        直接累加会翻倍。\n      </div>\n";
 
 function tkAgo(ms) {
   const t = Number(ms) || 0;
@@ -51,7 +51,7 @@ async function refreshTokenUsage() {
     }
     if (!r.ready) {
       statusEl.innerHTML = '<span class="pill">尚未统计</span> 桥接启动约 30 秒后会自动算一次，也可点下面的「重新统计」';
-      for (const id of ['tokenToday', 'tokenTotal', 'tokenDays', 'tokenModels', 'tokenSessions', 'tokenDayPickHint']) {
+      for (const id of ['tokenToday', 'tokenTotal', 'tokenTurnMetrics', 'tokenDays', 'tokenModels', 'tokenSessions', 'tokenDayPickHint']) {
         const el = document.getElementById(id); if (el) el.innerHTML = '';
       }
       return;
@@ -91,6 +91,38 @@ async function refreshTokenUsage() {
       + ` / 缓存读 <b>${esc(tkNum(tot.cacheRead))}</b> / 命中率 <b>${esc(String(totHitRate))}%</b>）`
       + `　输出 <b>${esc(tkNum(tot.output))}</b>`
       + (tot.reasoning ? `　其中推理 <b>${esc(tkNum(tot.reasoning))}</b>` : '');
+
+    // T5 回合效率（2026-10-29）：与「会话 token 总量」分开看——
+    // 总量受上下文窗口影响很大，tokens/回合 与有效成本才反映 T1–T4 的收益。
+    const tmEl = document.getElementById('tokenTurnMetrics');
+    if (tmEl) {
+      const tm = r.turnMetrics;
+      const x = tm?.totals;
+      if (!tm?.ok || !x || !Number(x.turns)) {
+        tmEl.innerHTML = '<div class="tk-sub">回合效率（T5）</div><div class="meta">暂无回合指标；静默摘要回合与断流回合不计入。</div>';
+      } else {
+        const pct = (v) => `${Math.round((Number(v) || 0) * 1000) / 10}%`;
+        const row = (label, value, note) =>
+          `<tr><td>${esc(label)}</td><td class="num">${esc(value)}</td><td class="meta">${esc(note)}</td></tr>`;
+        tmEl.innerHTML = `
+          <div class="tk-sub">回合效率（${esc(tm.day)}，T5）</div>
+          <table class="tk-table">
+            <thead><tr><th>指标</th><th class="num">数值</th><th>口径</th></tr></thead>
+            <tbody>
+              ${row('回合 / 发送消息', `${tkFull(x.turns)} / ${tkFull(x.sentMessages)}`, '完成回合 / 实际发到 QQ 的消息')}
+              ${row('tokens / 回合', tkNum(x.tokensPerTurn), `总输入（含缓存）+输出；有效 ${tkNum(x.effectiveTokensPerTurn)}`)}
+              ${row('tokens / 消息', tkNum(x.tokensPerSentMessage), `有效 ${tkNum(x.effectiveTokensPerSentMessage)}`)}
+              ${row('模型调用 / 回合', Number(x.modelCallsPerTurn || 0).toFixed(2), '含工具步骤')}
+              ${row('工具调用 / 回合', Number(x.toolCallsPerTurn || 0).toFixed(2), `工具结果 ${tkNum(x.toolResultCharsPerTurn)} 字符/回合`)}
+              ${row('缓存命中率', pct(x.cacheHitRatio), `未缓存输入 ${tkNum(x.uncachedInputPerTurn)} / 回合`)}
+              ${row('无发言唤醒', `${tkFull(x.wakeWithoutReply)} / ${tkFull(x.wakeTurns)}`, `无发言唤醒 tokens ${tkNum(x.wakeWithoutReplyTokens)}`)}
+              ${row('空转回合', `${tkFull(x.turnsWithOnlyWait)} wait / ${tkFull(x.turnsWithOnlyMarkRead)} mark_read`, '只调 wait / 只调 mark_read 且没发言')}
+              ${row('提示词字符 / 回合', tkNum(x.promptCharsPerTurn?.total), 'T3 分层后的唤醒提示总量')}
+            </tbody>
+          </table>
+          <div class="meta" style="margin-top:6px">对比不同日期用 <code>npm run metrics:turn -- --compare 日期A,日期B</code>；这里展示所选日期的 T5 汇总。</div>`;
+      }
+    }
 
     // 按日（最近 14 天，条形对比）
     const days = Array.isArray(r.days) ? r.days.slice(0, 14) : [];

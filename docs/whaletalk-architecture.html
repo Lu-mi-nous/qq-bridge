@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>鲸语 WhaleTalk · 项目架构图</title>
+  <meta name="description" content="鲸语 WhaleTalk 的 QQ ↔ DSH 桥接、控制台、MCP 与插件运行时架构图">
+  <link rel="stylesheet" href="whaletalk-architecture.css">
+</head>
+<body>
+<div class="page">
+
+  <header class="hero">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">鲸</div>
+      <div>
+        <p class="kicker">WHALETALK / SYSTEM MAP</p>
+        <h1>鲸语 WhaleTalk <span>项目架构图</span></h1>
+        <p class="subtitle">QQ ↔ DSH 桥接 · 控制台 · MCP · 插件运行时</p>
+      </div>
+    </div>
+    <div class="hero-meta">
+      <span class="pill version">v0.7.1</span>
+      <span class="pill">2026-10-29</span>
+      <span class="pill">本地代码基线 · 灰度中</span>
+    </div>
+  </header>
+
+  <section class="metrics" aria-label="项目规模">
+    <div class="metric"><strong>169</strong><span>核心源文件</span></div>
+    <div class="metric"><strong>38,687</strong><span>核心行数</span></div>
+    <div class="metric"><strong>8</strong><span>控制台领域</span></div>
+    <div class="metric"><strong>19</strong><span>路由域</span></div>
+    <div class="metric"><strong>163</strong><span>控制台端点</span></div>
+    <div class="metric"><strong>8 / 70</strong><span>事件泵领域 / 键</span></div>
+    <div class="metric"><strong>58</strong><span>可见 MCP 工具</span></div>
+    <div class="metric"><strong>75</strong><span>插件文件</span></div>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <span class="section-no">01</span>
+      <div>
+        <h2>消息主链路</h2>
+        <p>QQ 消息进入 Bridge，由 DSH 完成回合，再经发送队列回到 QQ。</p>
+      </div>
+      <span class="tag accent">LIVE PATH</span>
+    </div>
+
+    <div class="flow">
+      <div class="flow-step">
+        <span class="step-no">01 / INPUT</span>
+        <strong>QQ 群聊 / 私聊</strong>
+        <small>文字 · 图片 · 引用 · 转发 · 拍一拍</small>
+      </div>
+      <div class="flow-step">
+        <span class="step-no">02 / GATEWAY</span>
+        <strong>SnowLuma</strong>
+        <small>OneBot v11 · HTTP 3000 · WS 3001</small>
+      </div>
+      <div class="flow-step highlight">
+        <span class="step-no">03 / INGRESS</span>
+        <strong>Bridge 入站</strong>
+        <small>准入 → 解析 → 管理命令 / 挂起 / 静默分流</small>
+      </div>
+      <div class="flow-step">
+        <span class="step-no">04 / SCHEDULE</span>
+        <strong>会话与唤醒</strong>
+        <small>session-service · social-service · wake</small>
+      </div>
+      <div class="flow-step">
+        <span class="step-no">05 / AGENT</span>
+        <strong>DSH / 模型</strong>
+        <small>prompt · tool calls · usage · turn</small>
+      </div>
+      <div class="flow-step">
+        <span class="step-no">06 / EVENTS</span>
+        <strong>事件泵</strong>
+        <small>dsh-events · turn-metrics · 自动收尾</small>
+      </div>
+      <div class="flow-step highlight">
+        <span class="step-no">07 / OUTPUT</span>
+        <strong>QQ 回归</strong>
+        <small>send-queue → qq-send → OneBot</small>
+      </div>
+    </div>
+
+    <p class="flow-note">
+      主链路之外的旁路：控制台（3100）与 MCP 工具调用最终也落到同一套 Bridge 服务和状态层；
+      所有发送按会话进入 <code>send-queue</code>，不恢复全局发送链。
+    </p>
+  </section>
+
+  <section class="architecture" aria-label="系统分层">
+    <aside class="rail">
+      <div class="rail-head"><h2>外部边界</h2><span>EXTERNAL</span></div>
+
+      <div class="node" data-tone="blue">
+        <div class="node-icon">QQ</div>
+        <div><strong>QQ 客户端</strong><small>群聊 / 私聊 / 拍一拍</small></div>
+      </div>
+      <div class="node" data-tone="teal">
+        <div class="node-icon">SL</div>
+        <div><strong>SnowLuma v2.2.0</strong><small>OneBot v11 · HTTP 3000 · WS 3001</small></div>
+      </div>
+      <div class="node" data-tone="purple">
+        <div class="node-icon">DSH</div>
+        <div><strong>DSH Web</strong><small>3080 · events.mux / events.host</small></div>
+      </div>
+      <div class="node" data-tone="orange">
+        <div class="node-icon">AI</div>
+        <div><strong>模型网关</strong><small>DeepSeek / GLM / vision</small></div>
+      </div>
+      <div class="node" data-tone="blue">
+        <div class="node-icon">UI</div>
+        <div><strong>控制台浏览器</strong><small>3100 · 基础卡 + 插件卡</small></div>
+      </div>
+      <div class="node" data-tone="green">
+        <div class="node-icon">MCP</div>
+        <div><strong>MCP / Agent 调用</strong><small>snowluma · host · web-search</small></div>
+      </div>
+    </aside>
+
+    <main class="core">
+      <div class="core-head">
+        <div class="core-title">
+          <span class="pulse" aria-hidden="true"></span>
+          <div>
+            <h2>Bridge 主进程</h2>
+            <small style="color:var(--muted);font-size:11px">编排 · 装配 · 生命周期 · 运行态</small>
+          </div>
+        </div>
+        <span class="chip">src/bridge.js · 6,557 行</span>
+      </div>
+
+      <section class="layer">
+        <div class="layer-head"><h3>入站与回合</h3><span>INGRESS</span></div>
+        <div class="chips">
+          <span class="module">pipeline/incoming</span>
+          <span class="module">admission</span>
+          <span class="module">segments</span>
+          <span class="module">message-format</span>
+          <span class="module">dispatch-incoming</span>
+          <span class="module">wake</span>
+          <span class="module">turn-wrap</span>
+          <span class="module">dsh-events</span>
+        </div>
+        <p class="layer-note">准入 → 媒体 / 引用 / 语音解析 → 管理命令与挂起分流 → 普通 / 社交仿真 / 静默三路派发。</p>
+      </section>
+
+      <section class="layer layer-services">
+        <div class="layer-head"><h3>服务与调度</h3><span>SERVICES</span></div>
+        <div class="chips">
+          <span class="module">session-service</span>
+          <span class="module">social-service</span>
+          <span class="module">task-service</span>
+          <span class="module">plugin-runtime</span>
+          <span class="module">context-memory</span>
+          <span class="module">context-recovery</span>
+          <span class="module">turn-metrics</span>
+          <span class="module">token-service</span>
+          <span class="module">token-fuse</span>
+          <span class="module">image-facade</span>
+          <span class="module">sticker-service</span>
+          <span class="module">media-service</span>
+          <span class="module">social-engine</span>
+          <span class="module">join-request-service</span>
+        </div>
+        <p class="layer-note">按会话发送队列、回合 ID、唤醒合并、上下文轮换、Token 熔断和插件生命周期都在这一层。</p>
+      </section>
+
+      <section class="layer layer-contracts">
+        <div class="layer-head"><h3>边界与契约</h3><span>CONTRACTS</span></div>
+        <div class="chips">
+          <span class="module">state/store.js</span>
+          <span class="module">createJsonStore</span>
+          <span class="module">plugin-api</span>
+          <span class="module">plugins/host</span>
+          <span class="module">tool-flags</span>
+          <span class="module">permissions</span>
+          <span class="module">tool-surface</span>
+          <span class="module">dsh-event-domains</span>
+          <span class="module">console/composition</span>
+          <span class="module">console/facets</span>
+        </div>
+        <p class="layer-note">JSON 原子写、8 个控制台领域、8 个事件泵领域 / 70 键；插件只走公共入口，权限是声明式审计而非沙箱。</p>
+      </section>
+
+      <div class="core-note">
+        <span class="chip">0 循环依赖</span>
+        <span class="chip">src → plugins 0 直接导入</span>
+        <span class="chip">plugins → 非公共 src 0</span>
+        <span class="chip">send-queue 每会话保序</span>
+      </div>
+    </main>
+
+    <aside class="rail">
+      <div class="rail-head"><h2>出口与适配</h2><span>EDGE</span></div>
+
+      <div class="node" data-tone="teal">
+        <div class="node-icon">WS</div>
+        <div><strong>OneBot 适配</strong><small>send-queue → qq-send → HTTP/WS</small></div>
+      </div>
+      <div class="node" data-tone="purple">
+        <div class="node-icon">DSH</div>
+        <div><strong>DSH 客户端</strong><small>HTTP + events.mux / host 下行</small></div>
+      </div>
+      <div class="node" data-tone="orange">
+        <div class="node-icon">API</div>
+        <div><strong>控制台 HTTP API</strong><small>auth · CSRF · 163 routes</small></div>
+      </div>
+      <div class="node" data-tone="green">
+        <div class="node-icon">MCP</div>
+        <div><strong>MCP servers</strong><small>snowluma 34 · host 3 · web-search 3</small></div>
+      </div>
+      <div class="node" data-tone="green">
+        <div class="node-icon">PLG</div>
+        <div><strong>插件工具</strong><small>plugins/*/mcp-tools.js · Runtime 注册</small></div>
+      </div>
+      <div class="node" data-tone="blue">
+        <div class="node-icon">EXT</div>
+        <div><strong>外部服务</strong><small>B站 · Pixiv · TTS · Upscayl · Chrome</small></div>
+      </div>
+    </aside>
+  </section>
+
+  <section class="dual-grid">
+    <article class="panel">
+      <div class="section-head">
+        <span class="section-no">02</span>
+        <div>
+          <h2>控制台用例层</h2>
+          <p>控制台请求不经过 QQ 主链路，直接进入服务与状态层。</p>
+        </div>
+        <span class="tag">PORT 3100</span>
+      </div>
+
+      <div class="mini-flow" aria-label="控制台调用链">
+        <span class="mini-chip">Browser</span><span class="arrow">→</span>
+        <span class="mini-chip">console-server</span><span class="arrow">→</span>
+        <span class="mini-chip">routes 19</span><span class="arrow">→</span>
+        <span class="mini-chip">facets</span><span class="arrow">→</span>
+        <span class="mini-chip">read-model 17</span><span class="arrow">/</span>
+        <span class="mini-chip">commands 19</span><span class="arrow">→</span>
+        <span class="mini-chip">8 领域服务</span>
+      </div>
+
+      <div class="callout">
+        <strong>入口契约：</strong><code>createConsoleServer</code> 只接收 8 个领域对象，
+        266 个键各有唯一归属；路由最大解构 <strong>3 项</strong>，仅鉴权 helper。
+      </div>
+      <div class="residual">
+        <strong>兼容残留：</strong><code>flattenConsoleServices()</code> 仍会把领域摊回 266 键，
+        供 console-server 自身的鉴权 / 静态资源路径使用。新路由不再依赖它，后续可删除。
+      </div>
+    </article>
+
+    <article class="panel">
+      <div class="section-head">
+        <span class="section-no">03</span>
+        <div>
+          <h2>MCP 与工具面</h2>
+          <p>DSH / Agent 侧的工具调用，通过独立 MCP 子进程或插件 Runtime 接入。</p>
+        </div>
+        <span class="tag">TOOL PLANE</span>
+      </div>
+
+      <div class="mcp-grid" aria-label="MCP 工具统计">
+        <div class="mcp-stat"><strong>34</strong><span>snowluma-safe</span></div>
+        <div class="mcp-stat"><strong>3</strong><span>host-server</span></div>
+        <div class="mcp-stat"><strong>3</strong><span>web-search</span></div>
+        <div class="mcp-stat"><strong>58</strong><span>可见工具 / 55 开关</span></div>
+      </div>
+
+      <div class="callout green">
+        <strong>默认 full：</strong>58 工具 / 47,275 字符 / ≈14,774 tokens；
+        <code>core</code> 为 12 工具 / 11,667 字符 / ≈3,646 tokens（<strong>-75.3%</strong>），默认不切 core。
+      </div>
+      <p class="layer-note">
+        MCP 工具列表在 DSH 启动时确定；插件启停通常需要重启 DSH。桥接端点仍对禁用工具做 403 兜底，
+        工具开关同时约束注册与发送。
+      </p>
+    </article>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <span class="section-no">04</span>
+      <div>
+        <h2>状态与持久化</h2>
+        <p>同一套 JSON store 机制承载会话、记忆、媒体与指标。</p>
+      </div>
+      <span class="tag">STATE</span>
+    </div>
+
+    <div class="data-grid">
+      <div class="state-card">
+        <h3>会话与社交</h3>
+        <code>state/sessions.json</code>
+        <code>state/social-v2.json</code>
+        <code>state/session-history.json</code>
+        <code>state/session-gap.json</code>
+      </div>
+      <div class="state-card">
+        <h3>记忆与检索</h3>
+        <code>state/context/&lt;key&gt;/messages.jsonl</code>
+        <code>state/context/&lt;key&gt;/episodes.jsonl</code>
+        <code>state/shared-memory.json</code>
+        <code>state/bili-memory.json</code>
+      </div>
+      <div class="state-card">
+        <h3>媒体与缓存</h3>
+        <code>state/image-lib/</code>
+        <code>state/stickers.json</code>
+        <code>state/token-report/</code>
+        <code>state/upscale-cache/</code>
+      </div>
+      <div class="state-card">
+        <h3>指标与运维</h3>
+        <code>state/turn-metrics.json</code>
+        <code>state/token-usage.json</code>
+        <code>state/token-fuse-state.json</code>
+        <code>state/plugins/&lt;id&gt;/</code>
+      </div>
+    </div>
+
+    <p class="data-note">
+      所有 JSON 统一经 <code>state/store.js</code> 的 <code>createJsonStore()</code>：
+      版本号、原子替换、损坏备份、默认值；数组状态使用 <code>{__version, items:[]}</code>。
+      跨进程状态使用 <code>reloadOnMtime</code>，避免桥接与 MCP 互相覆盖。
+    </p>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <span class="section-no">05</span>
+      <div>
+        <h2>插件运行时</h2>
+        <p>第一方插件通过 manifest + 公共 plugin-api 接入，不直接依赖 Bridge 内部。</p>
+      </div>
+      <span class="tag">PLUGINS</span>
+    </div>
+
+    <div class="plugin-strip" aria-label="第一方插件">
+      <span class="plugin-tag">images</span>
+      <span class="plugin-tag">stickers</span>
+      <span class="plugin-tag">tts</span>
+      <span class="plugin-tag">upscale</span>
+      <span class="plugin-tag">bili</span>
+      <span class="plugin-tag">web-search</span>
+      <span class="plugin-tag">x-posts</span>
+      <span class="plugin-tag">media-tools</span>
+      <span class="plugin-tag">slang</span>
+      <span class="plugin-tag">shared-memory</span>
+      <span class="plugin-tag">qq-mode-console</span>
+      <span class="plugin-tag">content-review</span>
+    </div>
+
+    <div class="lifecycle" aria-label="插件生命周期">
+      <code>manifest.json</code><span class="arrow">→</span>
+      <code>load()</code><span class="arrow">→</span>
+      <code>start()</code><span class="arrow">→</span>
+      <code>stop()</code>
+      <span class="arrow">·</span>
+      <code>ctx.capabilities</code>
+      <span class="arrow">·</span>
+      <code>ctx.state.store</code>
+      <span class="arrow">·</span>
+      <code>ctx.console.registerConfigItems</code>
+      <span class="arrow">·</span>
+      <code>ctx.mcp.registerTool</code>
+    </div>
+
+    <p class="plugin-note">
+      插件只能写 <code>state/plugins/&lt;id&gt;/</code>，发送必须走 <code>ctx.send</code>；
+      权限边界是声明式审计，不是代码沙箱。Core → plugin/lib 直接导入为 0。
+    </p>
+  </section>
+
+  <section class="panel">
+    <div class="section-head">
+      <span class="section-no">06</span>
+      <div>
+        <h2>当前边界</h2>
+        <p>已经收口的契约与仍在观察的热点。</p>
+      </div>
+      <span class="tag">BOUNDARIES</span>
+    </div>
+
+    <div class="invariants">
+      <div class="invariant"><div><strong>0</strong>循环依赖</div></div>
+      <div class="invariant"><div><strong>0</strong>src → plugins 直接导入</div></div>
+      <div class="invariant"><div><strong>0</strong>plugins → 非公共 src</div></div>
+      <div class="invariant"><div><strong>8 / 70</strong>DshEventPump 领域 / 键</div></div>
+      <div class="invariant"><div><strong>3</strong>路由最大解构</div></div>
+      <div class="invariant attention"><div><strong>79 / 36</strong>bridge / facets 扇出 · 仍待收口</div></div>
+    </div>
+
+    <div class="callout warn" style="margin-top:12px">
+      <strong>依赖袋现状：</strong>入口已从 266 个平铺键收为 8 个领域对象，19 个路由域不再解构平铺
+      <code>deps</code>；但 <code>flattenConsoleServices()</code> 兼容视图仍在，因此应称为
+      <strong>“边界收窄”</strong>，不是“袋子已删除”。
+    </div>
+  </section>
+
+  <footer class="footer">
+    <span>采集：2026-10-29 · <code>npm run measure</code> · <code>docs/COMPLEXITY.md</code></span>
+    <span>当前为本地代码基线；24h 灰度未完成前不宣称整体上线验收。</span>
+  </footer>
+
+</div>
+</body>
+</html>

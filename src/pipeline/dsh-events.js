@@ -1,4 +1,5 @@
 import { pickPendingWake } from './wake.js';
+import { normalizeDshEventDeps, assertDshEventDomains } from './dsh-event-domains.js';
 // DSH 事件泵：按事件类型分派，bridge 只注入状态与副作用。
 // currentTurnBySession 是回合归属的唯一判据；v2TurnStartAt 仅兼容既有等待/忙碌计时。
 // 普通输出、工具去重、静默摘要、B 站初判及重连清理都在同一条有序事件流中执行。
@@ -9,7 +10,34 @@ import { makeTurnId } from './turn-id.js';
 
 const TURN_EVENTS = new Set(['turn/start', 'turn/end', 'assistant/message', 'assistant/chunk', 'tool/call', 'tool/result']);
 
-export function createDshEventPump(deps) {
+// 发送类工具（含表情/图片/语音/菜单/拍一拍）：只要本回合尝试过，就不再拿模型文本兜底，
+// 避免把「接口不认令牌/没发出去」这类内部状态报告发进群。
+const SEND_LIKE_TOOL_RE = /^mcp__snowluma__qq_(send_[a-z_]+|reply)$/;
+function isSendLikeToolName(name) { return SEND_LIKE_TOOL_RE.test(String(name ?? '')); }
+
+// reserved2 兜底：模型偶尔只把回复写在文本里、不调用发送工具。
+// 只对“直接点名”的唤醒转发，避免把主动围观时的内心独白发进群。
+const RESERVED2_DIRECT_WAKE_BASES = new Set([
+  'private', 'atMention', 'pokeSelf', 'question', 'speaker', 'nameMention',
+  'keyword', 'bootstrap', 'admin', 'manual'
+]);
+const RESERVED2_INTERNAL_TEXT_RE = /先收尾|先到这儿|标了已读|标记已读|安静收尾|没点到我|没叫我|没插话|不插话|歇一会|缓一缓|继续潜水|安静潜水|这一轮先|这轮先|本轮先|回到群里|发到群里|发进群|文字那条|表情这张|刚才那句|这条消息|没发出去|发不出去|发不出来|发送失败|发送成功|接口不认|接口返回|接口调用|令牌|发送通道|通道没有恢复|fetch failed|消息已看过|就不补了|补发|工具调用|调用失败|桥接|MCP|调度|唤醒|未读/;
+
+export function shouldForwardReserved2Text(key, reason, text) {
+  const t = String(text ?? '').trim();
+  if (!t) return false;
+  // 括号包住的整段通常是内心独白（“（先潜水）”“（等群主说话）”）。
+  if (/^[（(]/.test(t) && /[）)]$/.test(t)) return false;
+  if (RESERVED2_INTERNAL_TEXT_RE.test(t)) return false;
+  if (String(key ?? '').startsWith('private:')) return true;
+  const base = String(reason ?? '').split(':')[0].split('@')[0];
+  return RESERVED2_DIRECT_WAKE_BASES.has(base);
+}
+
+export function createDshEventPump(input) {
+  // R4.7-5：8 个领域接口；旧测试仍可传平铺对象（normalize 兼容）。
+  const domains = normalizeDshEventDeps(input);
+  assertDshEventDomains(domains, { allowMissing: true });
   const {
     api,
     reverse,
@@ -17,6 +45,7 @@ export function createDshEventPump(deps) {
     currentTurnBySession,
     v2TurnStartAt,
     sendToolSucceededSessions,
+    sendToolAttemptedSessions,
     pendingSendToolCalls,
     toolCallNames,
     biliJudgeWaiters,
@@ -26,7 +55,10 @@ export function createDshEventPump(deps) {
     learnerWaiters,
     getSlangLearnerSessionId,
     getMode,
-    cfg,
+    getRoleName = null,
+    activeWaits
+  } = domains.runtime;
+  const {
     social,
     getSocialV2State,
     defaultWakeConfigV2,
@@ -35,40 +67,16 @@ export function createDshEventPump(deps) {
     wakeConfigUpdatedKeys,
     markReadCalledKeys,
     wakeConfigMissCount,
-    activeWaits,
     clearAllPendingWakeLeases,
     armPendingWakeLease,
     disarmPendingWakeLease,
     ensureWakeableV2,
-    // T1：发言回合的自动收尾（自动标已读水位 + 保证可唤醒）。桥接注入；缺席时退回提醒。
     autoWrapAfterReply = null,
     deliverPrompt,
     buildWakeReminderPromptV2,
     wakePriorityV2,
     pendingWakeSnapshotFromJournalV2,
     scheduleWakeV2,
-    SILENT_TURN_TIMEOUT_MS,
-    contextRecovery,
-    recordTokenUsage,
-    // T5：按回合采集 Token 效率指标；缺失时不影响主流程。
-    turnMetrics = null,
-    // T4：本回合最后一次请求的上下文估算（sessionId -> input+cacheRead）与主动轮换回调。
-    sessionContextTokens = null,
-    rotateContextIfNeeded = null,
-    recordSessionProcessed,
-    contextCfg,
-    STATE_DIR,
-    appendCompaction,
-    contextMetrics,
-    redactSensitiveText,
-    sanitizeToolArgs,
-    appendToolLog,
-    isSendToolName,
-    KNOWN_AGENT_TOKENS,
-    shouldAuditKey,
-    SENSITIVE_RE,
-    isSilentMarker,
-    SILENT_MARKER,
     isSocialEnabled,
     socialState,
     shouldBlockSilentReply,
@@ -76,13 +84,24 @@ export function createDshEventPump(deps) {
     sendBurstToQQ,
     sendToQQ,
     registerPending,
-    handleUpstreamError,
-    appendActivity,
-    notifyOwnerOfError,
-    log,
-    sleep,
-    now = Date.now
-  } = deps;
+    appendActivity
+  } = domains.social;
+  const {
+    contextRecovery,
+    recordSessionProcessed,
+    contextCfg,
+    STATE_DIR,
+    appendCompaction,
+    contextMetrics,
+    redactSensitiveText,
+    sessionContextTokens = null,
+    rotateContextIfNeeded = null
+  } = domains.context;
+  const { recordTokenUsage, turnMetrics = null } = domains.metrics;
+  const { sanitizeToolArgs, appendToolLog, isSendToolName } = domains.tools;
+  const { KNOWN_AGENT_TOKENS, shouldAuditKey, SENSITIVE_RE, isSilentMarker, SILENT_MARKER } = domains.access;
+  const { cfg, SILENT_TURN_TIMEOUT_MS } = domains.config;
+  const { handleUpstreamError, notifyOwnerOfError, log, sleep, now = Date.now } = domains.lifecycle;
 
   function handleCompaction(frame, key) {
     try {
@@ -125,7 +144,9 @@ export function createDshEventPump(deps) {
     const silentQueued = (social.silentTurns.get(frame.sessionId) ?? []).length > 0;
     turnMetrics?.beginTurn(frame.sessionId, key, {
       silent: silentQueued,
-      promptChars: contextMetrics.get(key)?.lastPromptSections ?? null
+      promptChars: contextMetrics.get(key)?.lastPromptSections ?? null,
+      role: typeof getRoleName === 'function' ? getRoleName(key) : '',
+      mode: getMode()
     });
     // B 站 waiter 只认“登记后真正开始的那一个回合”：
     // 登记时正在跑的旧回合不参与，避免把群聊回复当成初判结果。
@@ -147,6 +168,7 @@ export function createDshEventPump(deps) {
     appendToolLog({ type: 'call', time: new Date(now()).toISOString(), key, sessionId: frame.sessionId, tool: toolName, args });
     turnMetrics?.recordToolCall(frame.sessionId, toolName);
     if (callId != null) {
+      if (isSendLikeToolName(toolName)) sendToolAttemptedSessions.add(frame.sessionId);
       if (isSendToolName(toolName)) {
         let pending = pendingSendToolCalls.get(frame.sessionId);
         if (!pending) {
@@ -169,7 +191,14 @@ export function createDshEventPump(deps) {
     const toolName = callId != null ? (toolCallNames.get(frame.sessionId)?.get(String(callId)) ?? '') : '';
     const resultBlock = frame.event.data?.message?.content?.[0];
     const resultError = frame.event.data?.message?.isError === true || resultBlock?.isError === true;
-    const errorText = resultError ? String(resultBlock?.text ?? resultBlock?.error ?? frame.event.data?.message?.error ?? '') : '';
+    // 真实 DSH 事件里文本在 content[0].content[].text（type=tool-result），有时也会平铺成 content[0].text。
+    // 两种形态都要取，否则 toolResultCharsPerTurn 恒为 0（线上实测）。
+    const resultText = typeof resultBlock?.text === 'string'
+      ? resultBlock.text
+      : (Array.isArray(resultBlock?.content)
+        ? resultBlock.content.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('\n')
+        : '');
+    const errorText = resultError ? String(resultText || resultBlock?.error || frame.event.data?.message?.error || '') : '';
     appendToolLog({
       type: 'result',
       time: new Date(now()).toISOString(),
@@ -179,8 +208,13 @@ export function createDshEventPump(deps) {
       ok: !resultError,
       error: errorText ? sanitizeToolArgs(errorText) : null
     });
-    // T5：工具结果字符量（文本部分），用于 toolResultCharsPerTurn。
-    turnMetrics?.recordToolResult(frame.sessionId, typeof resultBlock?.text === 'string' ? resultBlock.text.length : 0);
+    // T5：工具结果字符量（文本部分），按工具分组；errors 单独计数。
+    turnMetrics?.recordToolResult(
+      frame.sessionId,
+      toolName,
+      resultText.length,
+      resultError
+    );
     if (callId != null) {
       toolCallNames.get(frame.sessionId)?.delete(String(callId));
       const pending = pendingSendToolCalls.get(frame.sessionId);
@@ -245,7 +279,9 @@ export function createDshEventPump(deps) {
     }
     collectors.delete(frame.sessionId);
     const sendToolSucceeded = sendToolSucceededSessions.has(frame.sessionId);
+    const sendToolAttempted = sendToolAttemptedSessions.has(frame.sessionId);
     sendToolSucceededSessions.delete(frame.sessionId);
+    sendToolAttemptedSessions.delete(frame.sessionId);
     pendingSendToolCalls.delete(frame.sessionId);
     toolCallNames.delete(frame.sessionId);
     // 标记本次 turn 是否为“活跃超时退场”发言（用于准确回到观望，避免把旧回复误判为退场）
@@ -274,6 +310,17 @@ export function createDshEventPump(deps) {
       log(`摘要投喂 turn 结束，静默 (${key})`);
       return;
     }
+    // reserved2 兜底：直接点名/关键词唤醒时，模型只写文本不调发送工具，就把文本发出去。
+    // 先算出来，T1 的自动收尾也把它当作“本回合已发言”，避免再投一次“未设置唤醒条件”提醒。
+    const endedPlain = ended.reason.kind === 'completed' ? mdToPlain(ended.text) : '';
+    const fallbackText = (!sendToolSucceeded
+      && !sendToolAttempted
+      && getMode() === 'reserved2'
+      && !(typeof shouldBlockSilentReply === 'function' && shouldBlockSilentReply(key))
+      && endedPlain.trim()
+      && shouldForwardReserved2Text(key, getSocialV2State(key)?.lastWakeReason, endedPlain))
+      ? endedPlain
+      : '';
     // T4：主动轮换。本回合最后一次请求的上下文估算接近模型上限时，
     // 先持久化（由桥接的 rotateContextIfNeeded 完成 episode），再换会话，
     // 不等到 prompt_too_long 才被动恢复。静默摘要回合已在上方返回，不触发。
@@ -298,13 +345,13 @@ export function createDshEventPump(deps) {
         wakeConfigUpdatedKeys.delete(key);
         markReadCalledKeys.delete(key);
         wakeConfigMissCount.delete(key);
-      } else if (sendToolSucceeded && typeof autoWrapAfterReply === 'function') {
+      } else if ((sendToolSucceeded || fallbackText) && typeof autoWrapAfterReply === 'function') {
         // T1：本回合已经发过言 = 正常收尾。桥接自动标记已读水位并保证下一次可唤醒，
         // 不再投递「未设置唤醒条件」提醒（那是纯额外的一次模型调用/一个回合）。
         // 未答的 @ 由 autoWrapAfterReply 内部保留，不会顺手标读。
         try {
           autoWrapAfterReply(key);
-          log(`[reserved2] ${key} 已发言，自动收尾（T1：已读水位 + 唤醒配置）`);
+          log(`[reserved2] ${key} 已发言${fallbackText && !sendToolSucceeded ? '（兜底转发）' : ''}，自动收尾（T1：已读水位 + 唤醒配置）`);
         } catch (error) {
           log(`[reserved2] ${key} 自动收尾失败，回退到提醒: ${error?.message ?? error}`);
           ensureWakeableV2(getSocialV2State(key), { key });
@@ -481,8 +528,19 @@ export function createDshEventPump(deps) {
           log(`社交模式：发言完成，刷新活跃时间 (${key})`);
         }
       } else if (getMode() === 'reserved2') {
-        log(`[reserved2] AI 内部输出（不自动转发）(${key}): ${plain.slice(0, 80)}`);
-        appendActivity(`${key} [reserved2] AI 内部输出：${plain.slice(0, 80)}${plain.length > 80 ? '…' : ''}`);
+        if (fallbackText) {
+          log(`[reserved2] 模型只写了文本、未调用发送工具，兜底转发 (${key}, ${getSocialV2State(key)?.lastWakeReason || 'unknown'})`);
+          appendActivity(`${key} [reserved2] 兜底转发：${fallbackText.slice(0, 80)}${fallbackText.length > 80 ? '…' : ''}`);
+          try {
+            await sendToQQ(key, fallbackText);
+          } catch (error) {
+            log(`[reserved2] 兜底转发失败 (${key}): ${error?.message ?? error}`);
+            appendActivity(`${key} [reserved2] 兜底转发失败：${error?.message ?? error}`);
+          }
+        } else {
+          log(`[reserved2] AI 内部输出（不自动转发）(${key}): ${plain.slice(0, 80)}`);
+          appendActivity(`${key} [reserved2] AI 内部输出：${plain.slice(0, 80)}${plain.length > 80 ? '…' : ''}`);
+        }
       } else {
         if (shouldBlockSilentReply(key)) {
           log(`静默模式，拦截在途回复 (${key})`);
@@ -706,6 +764,7 @@ export function createDshEventPump(deps) {
     turnMetrics?.resetActive?.(); // T5：断流后未完成的回合不再计入
     social.silentTurns.clear(); // 清除未消费的摘要静默名额，避免重连后吞掉正常回复
     sendToolSucceededSessions.clear();
+    sendToolAttemptedSessions.clear();
     pendingSendToolCalls.clear();
     v2TurnStartAt.clear();
     currentTurnBySession.clear();

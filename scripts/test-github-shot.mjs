@@ -74,6 +74,7 @@ console.log('── 1. 链接解析 ──');
 console.log('\n── 2. 桥接接线 ──');
 {
   const bridge = readConsoleSource();
+  const stickersCommandsSrc = fs.readFileSync(path.join(root, 'src', 'console', 'commands', 'stickers.js'), 'utf8');
   const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
   const preset = fs.readFileSync(path.join(root, 'dsh', 'agent-presets', 'qq-chat-v2', 'agent.cordis.yml'), 'utf8');
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
@@ -88,9 +89,9 @@ console.log('\n── 2. 桥接接线 ──');
 
   // 安全闸
   check('agent token 必需', /GitHub 截图必须携带 agent token/.test(bridge));
-  check('过模式限制', /github-shot[\s\S]{0,2500}modeAllowed\(key, kind, id/.test(bridge));
-  check('过总暂停开关', /github-shot[\s\S]{0,1600}socialV2\.paused/.test(bridge));
-  check('过静默模式', /github-shot[\s\S]{0,2200}shouldBlockSilentReply/.test(bridge));
+  check('过模式限制', /async function githubShot[\s\S]{0,2200}modeAllowed\(key, kind, id/.test(stickersCommandsSrc));
+  check('过总暂停开关', /async function githubShot[\s\S]{0,1200}socialV2\.paused/.test(stickersCommandsSrc));
+  check('过静默模式', /async function githubShot[\s\S]{0,2200}shouldBlockSilentReply/.test(stickersCommandsSrc));
 
   // 网络：必须能配代理
   check('支持代理（实测直连不通）', /githubShot[\s\S]{0,300}proxy/.test(bridge));
@@ -132,7 +133,13 @@ console.log('\n── 3. 真实截图 ──');
         proxy, width: 1400, sliceHeight: 2400, maxHeight: 12000, waitMs: 2500, timeoutMs: 120000
       });
       check('截图成功', shot.buffer.length > 0, `${Math.round(shot.buffer.length / 1024)}KB`);
-      check('分段多张（整页太高，一张会看不清）', shot.slices.length >= 2, `${shot.slices.length} 张`);
+      // 真实 GitHub 页面高度随登录态/布局变化；页面本身不到一段时无法验证分段，
+      // 跳过而不是判失败（分段逻辑另有静态/单元断言）。
+      if (shot.height > 2400) {
+        check('分段多张（整页太高，一张会看不清）', shot.slices.length >= 2, `${shot.slices.length} 张`);
+      } else {
+        skipped('分段多张', `页面高度 ${shot.height}px，环境页面过短`);
+      }
       check('每张高度 ≤ 分段上限', shot.slices.every((s) => s.height <= 2400),
         shot.slices.map((s) => s.height).join(','));
       check('每张宽度一致', new Set(shot.slices.map((s) => s.width)).size === 1, String(shot.width));

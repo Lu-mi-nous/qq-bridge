@@ -207,7 +207,7 @@ console.log('\n── 7. 桥接接线 ──');
   check('有统计端点', /\/api\/socialV2\/token-usage/.test(consoleServer));
   check('有手动重算端点', /token-usage-refresh/.test(consoleServer));
   check('GET 只读缓存不现算（否则请求卡 15 秒）',
-    /const data = deps\.live\.tokenUsage \|\| loadTokenUsage\(\)/.test(consoleServer));
+    /const rawUsage = \(\) => live\.tokenUsage \|\| \(typeof loadTokenUsage === 'function' \? loadTokenUsage\(\) : null\)/.test(consoleServer));
   
   
   
@@ -220,6 +220,9 @@ console.log('\n── 7. 桥接接线 ──');
   check('控制台有卡片', /id="tokenSessions"/.test(html));
   check('16 卡有按会话表格容器', /id="tokenSessions"/.test(html));
   check('16 卡显示当前/累计两个口径', /当前会话总输入/.test(html) && /累计总输入/.test(html));
+  check('16 卡有 T5 回合效率表格', /id="tokenTurnMetrics"/.test(html)
+    && /turnMetrics/.test(html) && /tokensPerSentMessage/.test(html)
+    && /wakeWithoutReplyTokens/.test(html) && /turnsWithOnlyMarkRead/.test(html));
   check('16 卡有 Token 熔断面板', /id="tokenFusePanel"/.test(html) && /function loadTokenFusePanel\(/.test(html));
   check('熔断面板可解除', /token-fuse-reset/.test(html) && /data-token-fuse-reset/.test(html));
   check('熔断面板显示会话名并支持每会话阈值',

@@ -28,6 +28,7 @@ const src = fs.readFileSync(path.join(root, 'scripts/delete-sticker.mjs'), 'utf8
 const mcpSrc = fs.readFileSync(path.join(root, 'plugins/stickers/mcp-tools.js'), 'utf8');
 
 const consoleServerSrc = readConsoleSource();
+const stickersCommandsSrc = fs.readFileSync(path.join(root, 'src', 'console', 'commands', 'stickers.js'), 'utf8');
 const roleSrc = fs.existsSync(path.join(root, 'roles/大肥鱼.md')) ? fs.readFileSync(path.join(root, 'roles/大肥鱼.md'), 'utf8') : '';
 
 console.log('── 1. 默认安全：dry-run + 显式 --apply ──');
@@ -83,7 +84,7 @@ console.log('\n── 5. 模型可用，但桥接侧有硬校验 ──');
   
   
   
-  check('端点受静默开关约束', /sticker-delete[\s\S]{0,900}socialV2\.paused/.test(consoleServerSrc));
+  check('端点受静默开关约束', /async function deleteSticker[\s\S]{0,600}socialV2\.paused/.test(stickersCommandsSrc));
 }
 
 console.log('\n── 6. 参数校验（避免重演误删）──');

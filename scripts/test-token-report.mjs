@@ -215,6 +215,8 @@ console.log('\n── 5. 渲染 ──');
 console.log('\n── 6. 接线 ──');
 {
   const bridge = readConsoleSource();
+  // R4.7-3：渲染/发送/缓存清理已移到命令层，接线断言跟着看命令模块。
+  const tokenCommands = fs.readFileSync(path.join(root, 'src', 'console', 'commands', 'token.js'), 'utf8');
 
   const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
   const preset = fs.readFileSync(path.join(root, 'dsh', 'agent-presets', 'qq-chat-v2', 'agent.cordis.yml'), 'utf8');
@@ -231,9 +233,9 @@ console.log('\n── 6. 接线 ──');
   check('发群端点要求 agent token', /发送 Token 报表必须携带 agent token/.test(bridge));
   check('发群端点检查工具开关', /v2ToolEnabled\('tokenReport'\)/.test(bridge));
   check('预览端点返回 PNG', /'content-type': 'image\/png'/.test(bridge));
-  check('返回值带与图同源的摘要', /summary: summarizeTokenReport\(report\)/.test(bridge));
-  check('支持 fresh 重算', /refresh'\) === '1'/.test(bridge) && /await refreshTokenUsage\(\{\}\)/.test(bridge));
-  check('会清理旧报表缓存', /pruneTokenReportCache\(/.test(bridge));
+  check('返回值带与图同源的摘要', /summary: [^\n]*summarizeTokenReport\(report\)/.test(tokenCommands));
+  check('支持 fresh 重算', /refresh'\) === '1'/.test(bridge) && /await refresh\(\{\}\)/.test(tokenCommands));
+  check('会清理旧报表缓存', /pruneTokenReportCache\?\.\(/.test(tokenCommands));
 
   check('preset 有 Token 用量规则', /【Token 用量/.test(preset));
   check('preset 禁止编数字', /不要自己算，也不要凭印象编数字|不要编一段数字冒充统计/.test(preset));

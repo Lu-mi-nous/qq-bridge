@@ -85,6 +85,81 @@ for (const isError of [false, true]) {
   check('成功工具行动清零无行动计数', h.states.get(key).wakeConfig.noActionCount === 0);
 }
 
+
+console.log('\n── reserved2 文本-only 兜底（直接点名才转发）──');
+{
+  const h = createEventHarness({ mode: 'reserved2' });
+  h.deps.getSocialV2State(key).lastWakeReason = 'atMention';
+  await h.turn(1, '在呢，叫我干嘛');
+  check('@ 唤醒只写文本时兜底转发', h.get('send').length === 1 && h.get('send')[0][2] === '在呢，叫我干嘛');
+  check('兜底转发写入活动日志', h.get('activity').some((x) => String(x[1]).includes('兜底转发')));
+}
+{
+  const h = createEventHarness({ mode: 'reserved2' });
+  h.deps.getSocialV2State(key).lastWakeReason = 'atMention';
+  await h.turn(1, '（先潜水，看看再说）');
+  await h.turn(2, '这一轮先收尾，我歇一会儿');
+  check('内心独白不被兜底转发', h.get('send').length === 0);
+}
+{
+  const h = createEventHarness({ mode: 'reserved2' });
+  h.deps.getSocialV2State(key).lastWakeReason = 'anyMessage';
+  await h.turn(1, '这条只是自己想想');
+  check('非直接唤醒不兜底转发', h.get('send').length === 0);
+}
+{
+  const h = createEventHarness({ mode: 'reserved2' });
+  h.deps.getSocialV2State(key).lastWakeReason = 'atMention';
+  await h.handle(sessionEvent('turn/start', 1));
+  await h.handle(toolCall(1));
+  await h.handle(toolResult(1));
+  await h.handle(assistantMessage(1, '已经用工具发过了'));
+  await h.handle(turnEnd(1));
+  check('发送工具成功时不重复兜底', h.get('send').length === 0);
+}
+{
+  const h = createEventHarness({ mode: 'reserved2' });
+  h.deps.reverse.set('session-private', 'private:1000000000');
+  h.deps.getSocialV2State('private:1000000000').lastWakeReason = 'anyMessage';
+  await h.turn(1, '在的', undefined, 'session-private');
+  check('私聊任意消息都兜底转发', h.get('send').length === 1 && h.get('send')[0][1] === 'private:1000000000');
+}
+{
+  const h = createEventHarness({ mode: 'reserved2' });
+  h.deps.pendingWakeKeys.add(key);
+  h.deps.wakeConfigMissCount.set(key, 1);
+  h.deps.getSocialV2State(key).lastWakeReason = 'atMention';
+  await h.turn(1, '兜底也算发言');
+  check('兜底转发按 T1 已发言收尾，不再投提醒', h.get('autoWrap').length === 1
+    && h.get('deliver').length === 0 && !h.deps.pendingWakeKeys.has(key));
+}
+{
+  const h = createEventHarness({ mode: 'reserved2' });
+  h.deps.getSocialV2State(key).lastWakeReason = 'atMention';
+  await h.turn(1, '文字那条已经回到群里了，表情这张没发出去（接口不认令牌），就不补了。');
+  check('内部发送状态不兜底转发', h.get('send').length === 0);
+}
+{
+  const h = createEventHarness({ mode: 'reserved2' });
+  h.deps.getSocialV2State(key).lastWakeReason = 'atMention';
+  await h.handle(sessionEvent('turn/start', 1));
+  await h.handle(toolCall(1, 'call-1', 'mcp__snowluma__qq_send_sticker'));
+  await h.handle(toolResult(1, 'call-1', true));
+  await h.handle(assistantMessage(1, '文字那条已经回到群里了'));
+  await h.handle(turnEnd(1));
+  check('发送工具失败后不再拿文本兜底', h.get('send').length === 0);
+}
+{
+  const h = createEventHarness({ mode: 'reserved2' });
+  h.deps.getSocialV2State(key).lastWakeReason = 'atMention';
+  await h.handle(sessionEvent('turn/start', 1));
+  await h.handle(toolCall(1, 'call-1', 'mcp__snowluma__qq_send_sticker'));
+  await h.handle(toolResult(1, 'call-1', false));
+  await h.handle(assistantMessage(1, '表情发你了'));
+  await h.handle(turnEnd(1));
+  check('表情发送成功按已发言处理，不重复补文本', h.get('send').length === 0);
+}
+
 console.log('\n── 静默、安全和错误路径 ──');
 {
   const h = createEventHarness();
@@ -197,6 +272,9 @@ for (const marker of ['wakeConfigUpdatedKeys', 'markReadCalledKeys']) {
     && h.get('tmUsage').length === 1
     && h.get('tmTool').length === 1 && h.get('tmTool')[0][2] === 'mcp__snowluma__qq_send_message'
     && h.get('tmResult').length === 1
+    && h.get('tmResult')[0][2] === 'mcp__snowluma__qq_send_message'
+    && h.get('tmResult')[0][3] === '测试回复'.length
+    && h.get('tmResult')[0][4] === false
     && h.get('tmFinish').length === 1);
 }
 for (const rejection of ['returned', 'thrown']) {

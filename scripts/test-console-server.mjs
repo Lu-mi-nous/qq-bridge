@@ -17,6 +17,7 @@ const bridge = fs.readFileSync(path.join(root, 'src', 'bridge.js'), 'utf8');
 const server = fs.readFileSync(path.join(root, 'src', 'console-server.js'), 'utf8');
 // R4：概览类路由迁到分域模块，路由总数要两处一起算。
 const overviewRoutes = fs.readFileSync(path.join(root, 'src', 'console', 'routes', '00-overview.js'), 'utf8');
+const overviewReadModel = fs.readFileSync(path.join(root, 'src', 'console', 'read-model', 'overview.js'), 'utf8');
 const mcp = fs.readFileSync(path.join(root, 'src', 'mcp-snowluma-safe.js'), 'utf8');
 let pass = 0;
 let fail = 0;
@@ -27,12 +28,18 @@ const check = (name, condition, detail = '') => {
 };
 
 check('导出 createConsoleServer', typeof createConsoleServer === 'function');
-check('bridge 已接回 createConsoleServer', /createConsoleServer\(\{/.test(bridge));
+check('bridge 已接回 createConsoleServer（R4.7 领域 Facade）', /createConsoleServer\((?:createConsoleServices\()?\{/.test(bridge)
+  && /createConsoleServices\(\{/.test(bridge));
 check('bridge 不再保留内联 pathname 路由', !/url\.pathname ===/.test(bridge));
 // R4：路由按域拆到 src/console/routes/*.js。端点总数 = 内联（`/` 页面 + 401 提示）
 // + 概览模块 + 各分域模块声明的 routes 清单。
 const domainRouteFiles = fs.readdirSync(path.join(root, 'src', 'console', 'routes'))
   .filter((f) => f.endsWith('.js') && f !== '00-overview.js');
+const consoleCommandsSrc = fs.readdirSync(path.join(root, 'src', 'console', 'commands'))
+  .filter((f) => f.endsWith('.js'))
+  .sort()
+  .map((f) => fs.readFileSync(path.join(root, 'src', 'console', 'commands', f), 'utf8'))
+  .join('\n');
 const domainRoutesSrc = domainRouteFiles
   .map((f) => fs.readFileSync(path.join(root, 'src', 'console', 'routes', f), 'utf8'))
   .join('\n');
@@ -41,17 +48,17 @@ const domainRouteCount = domainRouteFiles.reduce((n, f) => {
   return n + (src.match(/^  \['(?:GET|POST|PUT|DELETE|PATCH)', '[^']+', '(?:exact|prefix)'\]/gm) || []).length;
 }, 0);
 const inlineRouteCount = (server.match(/url\.pathname ===/g) || []).length;
-const overviewRouteCount = (overviewRoutes.match(/router\.(?:get|post|put|del)\(/g) || []).length;
-check('路由总数与拆分前一致（161 个端点，含动态前缀；C1 manifest + C3 plugin-guide + C4 token panel + C6 插件管理 + 插件配置）',
-  inlineRouteCount + overviewRouteCount + domainRouteCount === 161,
+const overviewRouteCount = (overviewRoutes.match(/router\.(?:get|post|put|del)(?:Prefix)?\(/g) || []).length;
+check('路由总数与拆分前一致（163 个端点，含动态前缀；C1 manifest + C3 plugin-guide + C4 token panel + C6 插件管理 + 插件配置）',
+  inlineRouteCount + overviewRouteCount + domainRouteCount === 163,
   `${inlineRouteCount}+${overviewRouteCount}+${domainRouteCount}`);
-check('有插件清单接口', /'\/api\/plugins'/.test(overviewRoutes) && /deps\.pluginHost\?\.list/.test(overviewRoutes));
+check('有插件清单接口', /'\/api\/plugins'/.test(overviewRoutes) && /pluginList\(\)/.test(overviewReadModel));
 check('有任务清单/控制接口', /'\/api\/tasks'/.test(overviewRoutes)
-  && /deps\.taskService\?\.list/.test(overviewRoutes) && /pause\|resume\|trigger\|start\|stop/.test(overviewRoutes));
+  && /commands\?\.tasks/.test(overviewRoutes) && /pause\|resume\|trigger\|start\|stop/.test(overviewRoutes));
 check('动态模式经 live 读取', server.includes('deps.live.currentMode'));
 check('会话代际只经命令递增',
-  (`${server}\n${domainRoutesSrc}`.match(/deps\.ops\.bumpSessionEpoch\(\)/g) || []).length === 4
-  && !/sessionEpoch\+\+/.test(`${server}\n${domainRoutesSrc}`));
+  (`${server}\n${domainRoutesSrc}\n${consoleCommandsSrc}`.match(/deps\.ops\.bumpSessionEpoch\(\)|ops\.bumpSessionEpoch\?\.\(\)/g) || []).length === 4
+  && !/sessionEpoch\+\+/.test(`${server}\n${domainRoutesSrc}\n${consoleCommandsSrc}`));
 check('默认 1MB 请求体上限保留', /: 1_000_000;/.test(server));
 check('超分路由保留 8MB 上限', /Math\.min\(8_000_000/.test(server));
 check('上下文追赶端点存在', /context-catchup/.test(domainRoutesSrc));
@@ -209,7 +216,7 @@ console.log('\n── 会话级 Token 报表合成 ──');
   check('插件清单暴露 console 元数据', /console: \{/.test(hostSrc) && /cards:/.test(hostSrc));
   check('控制台有插件功能分类视图', /id="pluginCategoryView"/.test(html) && /mountPluginSurface/.test(html));
   check('插件清单进入控制台 manifest', /\/api\/console\/manifest/.test(overviewRoutes)
-    && /pluginGroups/.test(overviewRoutes) && /pluginId/.test(overviewRoutes));
+    && /pluginGroups/.test(overviewReadModel) && /pluginId/.test(overviewReadModel));
 }
 
 // R4：复合条件与动态路径路由必须显式登记，否则模块根本收不到请求。

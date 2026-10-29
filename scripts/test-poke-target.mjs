@@ -111,14 +111,14 @@ console.log('\n── 7. 自己的拍一拍记录写名字 ──');
 {
   
   check('改成「你拍了拍 名字」', /\[拍一拍\] 你拍了拍 \$\{targetName\}/.test(consoleServerSrc));
-  check('名字通过 resolveGroupMemberName 解析', /resolveGroupMemberName\(id, targetUserId\)/.test(consoleServerSrc));
-  check('查不到名字时退回号（不影响发送）', /targetName = \(await resolveGroupMemberName\(id, targetUserId\)\) \|\| targetUserId/.test(consoleServerSrc));
+  check('名字通过 resolveGroupMemberName 解析', /resolveGroupMemberName\?\.\(id, targetUserId\)/.test(consoleServerSrc));
+  check('查不到名字时退回号（不影响发送）', /targetName = \(await resolveGroupMemberName\?\.\(id, targetUserId\)\) \|\| targetUserId/.test(consoleServerSrc));
 }
 
 console.log('\n── 8. 端点接线 ──');
 {
   
-  check('send-poke 里调用解析', /resolvePokeTarget\(\{[\s\S]{0,160}recentMessages: peek\.recentMessages/.test(consoleServerSrc));
+  check('send-poke 里调用解析', /resolvePokeTarget\?\.\(\{[\s\S]{0,160}recentMessages: peek\.recentMessages/.test(consoleServerSrc));
   check('解析结果会覆盖 targetUserId', /targetUserId = resolved\.userId/.test(consoleServerSrc));
   check('同名多人返回 400 并给候选', /对应多人：/.test(consoleServerSrc));
   check('latest 无人可拍时给出明确原因', /最近没有戳你的人，无法用 latest/.test(consoleServerSrc));

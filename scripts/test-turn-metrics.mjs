@@ -18,10 +18,10 @@ const metrics = createTurnMetrics({ file, now: () => nowMs });
 console.log('── 1. 基础回合聚合 ──');
 {
   metrics.setWakeReason('group:1', 'question');
-  metrics.beginTurn('s1', 'group:1', { promptChars: { total: 3000, role: 800, sticker: 100 } });
+  metrics.beginTurn('s1', 'group:1', { promptChars: { total: 3000, role: 800, sticker: 100 }, role: '大肥鱼', mode: 'reserved2' });
   metrics.recordAssistantMessage('s1', { inputTokens: 1000, cacheReadTokens: 4000, outputTokens: 200 });
   metrics.recordToolCall('s1', 'mcp__snowluma__qq_get_unread_messages');
-  metrics.recordToolResult('s1', 5000);
+  metrics.recordToolResult('s1', 'mcp__snowluma__qq_get_unread_messages', 5000, false);
   metrics.recordSent('group:1');
   metrics.finishTurn('s1');
   const s = metrics.stats({ day: '2026-10-28' });
@@ -33,6 +33,13 @@ console.log('── 1. 基础回合聚合 ──');
     && s.totals.toolResultCharsPerTurn === 5000);
   check('唤醒原因与提示分项均值', s.totals.wakeTurns === 1 && s.totals.wakeReasons.question === 1
     && s.totals.promptCharsPerTurn.role === 800);
+  check('按唤醒原因分组', s.totals.byReason.question?.turns === 1
+    && s.totals.byReason.question?.input === 1000 && s.totals.byReason.question?.sent === 1);
+  check('按工具分组（调用/字符/错误）', s.totals.byTool['mcp__snowluma__qq_get_unread_messages']?.calls === 1
+    && s.totals.byTool['mcp__snowluma__qq_get_unread_messages']?.resultChars === 5000
+    && s.totals.byTool['mcp__snowluma__qq_get_unread_messages']?.errors === 0);
+  check('按小时分组（开始时刻 10 点）', s.totals.byHour['10']?.turns === 1);
+  check('按角色与模式分组', s.totals.byRole['大肥鱼']?.turns === 1 && s.totals.byMode.reserved2?.turns === 1);
 }
 
 console.log('\n── 2. 无发言唤醒 / 只有 wait / 只有 mark_read ──');
@@ -52,6 +59,11 @@ console.log('\n── 2. 无发言唤醒 / 只有 wait / 只有 mark_read ──
   check('只有 wait 的回合', s.totals.turnsWithOnlyWait === 1);
   check('只有 mark_read 的回合', s.totals.turnsWithOnlyMarkRead === 1);
   check('无发言回合不计 sent', s.totals.sentMessages === 1);
+  check('按唤醒原因记录无发言 tokens', s.totals.byReason.anyMessage?.noReply === 1
+    && s.totals.byReason.anyMessage?.noReplyTokens === 550
+    && s.totals.byReason.replyCheck?.noReplyTokens === 100);
+  check('按工具记录调用次数', s.totals.byTool['mcp__snowluma__qq_wait_for_messages']?.calls === 1
+    && s.totals.byTool['mcp__snowluma__qq_mark_read']?.calls === 1);
 }
 
 console.log('\n── 3. 静默回合与断流清理 ──');
@@ -82,11 +94,38 @@ console.log('\n── 4. 持久化与日切/保留期 ──');
   check('只保留最近 14 天（最早一天被淘汰）', s2.availableDays.length === 14 && !s2.availableDays.includes('2026-10-28'));
 }
 
+console.log('\n── 4b. 老状态文件升级 ──');
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qqb-turn-metrics-old-'));
+  const oldFile = path.join(dir, 'turn-metrics.json');
+  // 旧版 bucket：没有 byReason/byTool/byHour/byRole/byMode
+  fs.writeFileSync(oldFile, JSON.stringify({
+    version: 1,
+    days: { '2026-10-28': { keys: { 'group:9': {
+      turns: 1, modelCalls: 1, toolCalls: 0, toolResultChars: 0,
+      input: 10, cacheRead: 0, output: 0, sentMessages: 0,
+      wakeTurns: 0, wakeWithoutReply: 0, wakeWithoutReplyTokens: 0,
+      turnsWithOnlyWait: 0, turnsWithOnlyMarkRead: 0,
+      promptChars: { total: 0, role: 0, sticker: 0, menu: 0, tokenReport: 0, voice: 0, memory: 0, status: 0 },
+      wakeReasons: {}
+    } } } }
+  }));
+  const old = createTurnMetrics({ file: oldFile, now: () => Date.parse('2026-10-28T10:00:00+08:00') });
+  old.beginTurn('so', 'group:9', { role: '测试角色', mode: 'reserved2' });
+  old.recordAssistantMessage('so', { inputTokens: 5, cacheReadTokens: 0, outputTokens: 0 });
+  old.finishTurn('so');
+  const s = old.stats({ day: '2026-10-28' });
+  check('老状态文件升级后首回合不崩且补齐维度', s.totals.turns === 2
+    && s.totals.byRole['测试角色']?.turns === 1 && s.totals.byMode.reserved2?.turns === 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 console.log('\n── 5. 派生 KPI 纯函数 ──');
 {
   const d = deriveMetrics({ turns: 4, sentMessages: 2, input: 400, cacheRead: 1600, output: 400, modelCalls: 8, toolCalls: 12, toolResultChars: 800 });
   check('派生公式', d.tokensPerTurn === 600 && d.tokensPerSentMessage === 1200 && d.modelCallsPerTurn === 2
     && d.toolCallsPerTurn === 3 && d.cacheHitRatio === 0.8 && d.toolResultCharsPerTurn === 200);
+  check('有效 tokens（未缓存+输出）口径', d.effectiveTokensPerTurn === 200 && d.effectiveTokensPerSentMessage === 400);
   check('无回合时全 0 不除零', deriveMetrics({}).tokensPerTurn === 0 && deriveMetrics({}).cacheHitRatio === 0);
 }
 

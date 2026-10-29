@@ -83,19 +83,19 @@ export function createStickersMcpServices(agentApi) {
       return agentApi(`/api/socialV2/sticker-image?${q}`, { headers: { 'x-agent-token': token }, timeoutMs: 180000 });
     },
     send: ({ key, token, stickerId, replyToMessageId, atUserId }) =>
-      post('/api/socialV2/send-sticker', { key, stickerId: String(stickerId), replyToMessageId, atUserId: atUserId ?? null }, 300000),
+      post('/api/socialV2/send-sticker', { key, token, stickerId: String(stickerId), replyToMessageId, atUserId: atUserId ?? null }, 300000),
     collect: ({ key, token, messageId, remark }) =>
-      post('/api/socialV2/collect-sticker', { key, messageId: String(messageId), remark: remark || '' }, 60000),
+      post('/api/socialV2/collect-sticker', { key, token, messageId: String(messageId), remark: remark || '' }, 60000),
     note({ key, token, stickerId, note, tags, usage }) {
-      const payload = { key, stickerId: String(stickerId) };
+      const payload = { key, token, stickerId: String(stickerId) };
       if (note !== undefined && note !== null) payload.note = String(note);
       if (tags !== undefined && tags !== null) payload.tags = Array.isArray(tags) ? tags.map(String) : [];
       if (usage !== undefined && usage !== null) payload.usage = String(usage);
       return post('/api/socialV2/sticker-note', payload);
     },
-    remove: ({ key, token, stickerId }) => post('/api/socialV2/sticker-delete', { key, stickerId: String(stickerId) }),
+    remove: ({ key, token, stickerId }) => post('/api/socialV2/sticker-delete', { key, token, stickerId: String(stickerId) }),
     remark: ({ key, token, stickerId, remark }) =>
-      post('/api/socialV2/sticker-remark', { key, stickerId: String(stickerId), remark: String(remark || '') })
+      post('/api/socialV2/sticker-remark', { key, token, stickerId: String(stickerId), remark: String(remark || '') })
   };
 }
 

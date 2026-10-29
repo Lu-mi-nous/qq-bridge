@@ -92,7 +92,7 @@ console.log('\n── 3. 字幕优先 · ASR 兜底 ──');
   // 三处观看路径都要接上 ASR
   check('自己刷（初判）接了 ASR', /asr: live.asrEngine,\s*\n\s*asrEnabled: !!live.asrEngine/.test(bridgeSrc));
   const asrCalls = (bridgeSrc.match(/asr: live\.asrEngine/g) || []).length
-    + (consoleServerSrc.match(/asr: deps\.live\.asrEngine/g) || []).length;
+    + (consoleServerSrc.match(/asr: live\.asrEngine/g) || []).length;
   check('至少 3 处观看路径都接 ASR', asrCalls >= 3, `${asrCalls} 处`);
 }
 
@@ -129,7 +129,7 @@ console.log('\n── 5. 控制台 ──');
   check('显示本地语音识别状态', /本地语音识别：/.test(html));
   check('如实说明"模型只收文字和图片"', /模型只收文字和图片/.test(html));
   check('状态端点返回 audio 字段', /audio: \(\(\) => \{/.test(consoleServerSrc));
-  check('返回字幕可用性（取决于登录态）', /subtitleAvailable: !!deps\.live\.biliAuth\.hasSessdata/.test(consoleServerSrc));
+  check('返回字幕可用性（取决于登录态）', /subtitleAvailable: !!live\.biliAuth\.hasSessdata/.test(consoleServerSrc));
   check('返回 ASR 状态与模型', /asrState: asr\?\.state/.test(consoleServerSrc) && /asrModel: asr\?\.model/.test(consoleServerSrc));
   check('返回一句话结论', /summary: asr\?\.state === 'ready'/.test(consoleServerSrc));
   check('不泄露模型路径以外的敏感信息', !/asrModelPath/.test(JSON.stringify({ p: 'asrModelPath' }).replace('asrModelPath', '')) || true);

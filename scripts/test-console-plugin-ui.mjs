@@ -22,7 +22,8 @@ const token16 = fs.readFileSync(path.join(root, 'public', 'console', 'cards', '1
 const pluginSurface = fs.readFileSync(path.join(root, 'public', 'console', 'app', 'plugin-surface.js'), 'utf8');
 const pluginManager = fs.readFileSync(path.join(root, 'public', 'console', 'app', 'plugin-manager.js'), 'utf8');
 const pluginManageView = fs.readFileSync(path.join(root, 'public', 'console', 'app', 'plugin-manage-view.js'), 'utf8');
-const overview = fs.readFileSync(path.join(root, 'src', 'console', 'routes', '00-overview.js'), 'utf8');
+const overview = fs.readFileSync(path.join(root, 'src', 'console', 'read-model', 'overview.js'), 'utf8');
+const overviewRoutes = fs.readFileSync(path.join(root, 'src', 'console', 'routes', '00-overview.js'), 'utf8');
 const media = fs.readFileSync(path.join(root, 'plugins', 'media-tools', 'index.js'), 'utf8');
 const mediaCard = JSON.parse(fs.readFileSync(path.join(root, 'plugins', 'media-tools', 'console.card.json'), 'utf8'));
 const componentsCss = fs.readFileSync(path.join(root, 'public', 'console', 'styles', 'components.css'), 'utf8');
@@ -31,8 +32,8 @@ check('iframe 使用 allow-scripts', /sandbox=\\"allow-scripts\\"/.test(token16)
 check('iframe 不带 allow-same-origin', !/allow-same-origin/.test(html) && !/allow-same-origin/.test(shell));
 check('panel 高度经 postMessage 白名单', /console-panel-height/.test(shell)
   && /frame\.contentWindow !== event\.source/.test(shell));
-check('Token 报表 panel 路由', /\/api\/console\/panel\/token-report/.test(overview)
-  && /content-security-policy/.test(overview));
+check('Token 报表 panel 路由', /\/api\/console\/panel\/token-report/.test(overviewRoutes)
+  && /content-security-policy/.test(overviewRoutes));
 check('Token 卡嵌入 panel iframe', /data-panel-src=\\"\/api\/console\/panel\/token-report\\"/.test(token16));
 check('媒体工具 panel 路由', /\/api\/plugins\/media-tools\/panel/.test(media));
 check('媒体工具卡片声明 panel', mediaCard.panel === '/api/plugins/media-tools/panel');

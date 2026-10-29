@@ -698,18 +698,18 @@ console.log('\n── 8. 接线 ──');
   check('暂停端点存在', /api\/socialV2\/bili-pause/.test(consoleServer));
   // 必须落盘：只改内存的话重启后又自己开始刷，用户会以为按钮没生效
   check('暂停状态写入 config.json（重启后仍保持）',
-    /bili-pause[\s\S]{0,900}atomicWriteJson\(configFile, file\)/.test(consoleServer));
+    /function setPaused[\s\S]{0,1200}atomicWriteJson\(configFile, file\)/.test(consoleServer));
   check('暂停只改 selfBrowsing.enabled（不另开真相源）',
     /selfBrowsing\.enabled = !paused/.test(consoleServer));
-  check('暂停时清掉已排的定时器', /bili-pause[\s\S]{0,2000}clearTimeout\(deps\.live\.biliTimer\)/.test(consoleServer));
-  check('恢复时重新排期', /bili-pause[\s\S]{0,2400}scheduleBiliBrowse\(\)/.test(consoleServer));
+  check('暂停时清掉已排的定时器', /function setPaused[\s\S]{0,2400}clearTimeout\(live\.biliTimer\)/.test(consoleServer));
+  check('恢复时重新排期', /function setPaused[\s\S]{0,2800}scheduleBiliBrowse\?\.\(\)/.test(consoleServer));
   check('暂停不拦群友发链接（只看 b.enabled）',
     /if \(b\.enabled === false \|\| !live\.biliMem\) return \{ ok: false, reason: 'B 站功能未启用' \}/.test(biliRuntime));
   check('手动触发在暂停时标 manualWhilePaused', /manualWhilePaused/.test(biliRuntime));
   check('控制台提示"暂停中本次为手动触发"', /暂停中，本次为手动触发/.test(consoleHtml));
   check('桥接状态端点返回 browsing 实时状态', /browsing,/.test(consoleServer));
-  check('桥接状态端点返回 lastVideo', /lastVideo: deps\.live\.lastBiliWatch/.test(consoleServer));
-  check('桥接状态端点返回 recent', /recent: deps\.live\.biliMem \? deps\.live\.biliMem\.recent\(6\)/.test(consoleServer));
+  check('桥接状态端点返回 lastVideo', /lastVideo: live\.lastBiliWatch/.test(consoleServer));
+  check('桥接状态端点返回 recent', /recent: live\.biliMem \? live\.biliMem\.recent\(6\)/.test(consoleServer));
   check('有手动触发端点（控制台按钮）', /api\/socialV2\/bili-browse-now/.test(consoleServer));
   check('手动触发也受额度约束（复用 runBiliBrowse）', /runBiliBrowse\(\{ manual: true \}\)/.test(consoleServer));
   // 2026-10-19 用户报障「点了只显示已触发，状态里没显示刷了什么」的两个根因：
@@ -718,7 +718,7 @@ console.log('\n── 8. 接线 ──');
   check('手动触发跳过间隔限制', /lastAt: manual \? 0 : live\.lastBiliBrowseAt/.test(biliRuntime)
     && /minIntervalMs: manual \? 0 : sb\.minIntervalMs/.test(biliRuntime));
   check('手动触发等结果再返回（不先回 ok 再跑）',
-    /const r = await runBiliBrowse\(\{ manual: true \}\);\s*\n\s*sendJson\(r\)/.test(consoleServer));
+    /return await runBiliBrowse\(\{ manual: true \}\)/.test(consoleServer));
   check('runBiliBrowse 返回具体结果（视频/秒数/帧数）',
     /return \{\s*\n\s*ok: true,\s*\n\s*video:/.test(biliRuntime));
   check('被跳过时也返回可读原因',

@@ -271,5 +271,19 @@ check('唤醒构建器注入 roleTextFor 与 capabilityVisible', /roleTextFor,/.
 check('完整角色卡由 shouldInjectFullRole 判定', /shouldInjectFullRole\(/.test(bridge));
 check('角色列表排除 .digest.md', /!f\.endsWith\('\.digest\.md'\)/.test(bridge));
 
+// R4.7-5：DshEventPump 注入契约（8 个领域对象，不再平铺 70 项）。
+{
+  const pumpStart = bridge.indexOf('createDshEventPump({');
+  const pumpEnd = bridge.indexOf('});', pumpStart);
+  const pumpCall = pumpStart >= 0 && pumpEnd > pumpStart ? bridge.slice(pumpStart, pumpEnd) : '';
+  const domains = ['runtime', 'social', 'context', 'metrics', 'tools', 'access', 'config', 'lifecycle'];
+  check('DshEventPump 使用 8 个领域对象', domains.every((d) => pumpCall.includes(`\n    ${d}: {`)));
+  check('DshEventPump 不再平铺 api/social 等键', !/\n    api,/.test(pumpCall)
+    && !/\n    social,/.test(pumpCall) && !/\n    KNOWN_AGENT_TOKENS,/.test(pumpCall));
+}
+
+// T5 按日审阅：控制台传入的 day 必须透传到 turnMetrics.stats。
+check('Token 回合指标按日透传 day', /turnMetrics: \(opts\) => turnMetrics\.stats\(opts\)/.test(bridge));
+
 console.log(`✅ ${pass} 通过 / ${fail} 失败`);
 process.exitCode=fail?1:0;

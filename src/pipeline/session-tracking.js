@@ -2,7 +2,7 @@
 export function clearSessionTracking(deps, sessionId) {
   if (!sessionId) return;
   for (const name of ['collectors', 'v2TurnStartAt', 'currentTurnBySession',
-    'sendToolSucceededSessions', 'pendingSendToolCalls', 'toolCallNames', 'biliJudgeCollectors']) {
+    'sendToolSucceededSessions', 'sendToolAttemptedSessions', 'pendingSendToolCalls', 'toolCallNames', 'biliJudgeCollectors']) {
     deps[name]?.delete(sessionId);
   }
   for (const id of deps.autoAtTurnDone?.keys() || []) {

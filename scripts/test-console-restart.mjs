@@ -37,13 +37,16 @@ const html = readConsoleUiSource();
 const coreCards = fs.readFileSync(path.join(root, 'src', 'console', 'core-cards.js'), 'utf8');
 const renderer = fs.readFileSync(path.join(root, 'public', 'console', 'core', 'renderer.js'), 'utf8');
 
-// 取出 /api/restart 的实现块（到下一个 404 分支为止）
-const start = bridge.indexOf("pathname === '/api/restart'");
-const block = bridge.slice(start, start + 2600);
+// R4.7：/api/restart 的实现在 commands/ops.js；路由只转发。
+// 端点存在仍看路由源码，自重启细节看命令模块。
+const routeStart = bridge.indexOf("pathname === '/api/restart'");
+const opsCommands = fs.readFileSync(path.join(root, 'src', 'console', 'commands', 'ops.js'), 'utf8');
+const start = opsCommands.indexOf('function scheduleRestart');
+const block = opsCommands.slice(start, start + 2600);
 
 console.log('── 1. 服务端：必须自重启，不能只 exit ──');
 {
-  check('有 /api/restart 端点', start > 0);
+  check('有 /api/restart 端点', routeStart > 0 && start > 0);
   check('用了 detached spawn', /detached:\s*true/.test(block));
   check('spawn 的是 bridge.js 自身', /spawn\(process\.execPath,\s*\[path\.join\(ROOT,\s*'src',\s*'bridge\.js'\)\]/.test(block));
   check('子进程 unref（父进程退出后继续跑）', /\.unref\(\)/.test(block));

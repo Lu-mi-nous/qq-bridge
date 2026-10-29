@@ -31,6 +31,7 @@ const { MENU_SECTIONS, MENU_HEADER, MENU_FOOTER, buildFeatureMenuHtml, menuStats
 const renderSrc = fs.readFileSync(path.join(root, 'plugins', 'media-tools', 'lib', 'feature-menu-render.js'), 'utf8');
 const wakeSrc = fs.readFileSync(path.join(root, 'src/pipeline/wake.js'), 'utf8');
 const consoleServerSrc = readConsoleSource();
+const stickersCommandsSrc = fs.readFileSync(path.join(root, 'src', 'console', 'commands', 'stickers.js'), 'utf8');
 const mcpSrc = fs.readFileSync(path.join(root, 'src/mcp-snowluma-safe.js'), 'utf8');
 const roleSrc = fs.readFileSync(path.join(root, 'roles/大肥鱼.md'), 'utf8');
 
@@ -130,8 +131,8 @@ console.log('\n── 7. 桥接侧：直接发送而不是回传 base64 ──')
   check('端点名表示发送语义', /\/api\/socialV2\/send-feature-menu/.test(consoleServerSrc));
   check('端点调用了发图函数', /onebotSendImageFile\(key, r\.file/.test(consoleServerSrc));
   check('发送前校验 agent token', /send-feature-menu[\s\S]{0,900}agentTokenOk/.test(consoleServerSrc));
-  check('发送前校验模式准入', /send-feature-menu[\s\S]{0,1200}modeAllowed/.test(consoleServerSrc));
-  check('发送前检查静默开关', /send-feature-menu[\s\S]{0,1000}socialV2\.paused/.test(consoleServerSrc));
+  check('发送前校验模式准入', /async function sendFeatureMenu[\s\S]{0,1400}modeAllowed/.test(stickersCommandsSrc));
+  check('发送前检查静默开关', /async function sendFeatureMenu[\s\S]{0,1400}socialV2\.paused[\s\S]{0,800}shouldBlockSilentReply/.test(stickersCommandsSrc));
   check('支持 refresh 强制重渲染', /refresh.*===.*'1'/.test(consoleServerSrc));
   check('发送成功写活动日志', /已发送功能菜单图/.test(consoleServerSrc));
   check('不再回传 image.data（避免模型误以为要自己发）', !/send-feature-menu[\s\S]{0,600}image: \{ mimeType/.test(consoleServerSrc));
@@ -149,7 +150,7 @@ console.log('\n── 7. 桥接侧：直接发送而不是回传 base64 ──')
   check('空 agent token 被拒（不是可选）', /if \(!req\.headers\['x-agent-token'\]\)/.test(body));
   check('不再用「有 token 才校验」的可选写法', !/if \(agentToken && !agentTokenOk/.test(body));
   check('校验 agent token 有效性', /agentTokenOk\(key, req\.headers\['x-agent-token'\]\)/.test(body));
-  check('受静默开关约束', /shouldBlockSilentReply/.test(body));
+  check('受静默开关约束', /shouldBlockSilentReply/.test(stickersCommandsSrc));
 }
 
 console.log('\n── 8. MCP 工具契约 ──');
@@ -217,49 +218,93 @@ console.log('\n── 10. 实际启用能力、准确声明与缓存失效 ─�
   check('任何角色的唤醒都能获知功能声明工具', wakeSrc.includes('const menuLine =') && /const base = .*menuLine/.test(wakeSrc));
 }
 
-console.log('\n── 11. 实际发送路由的隔离验证（发送器为本地替身）──');
+console.log('\n── 11. 发送路由与命令（发送器为本地替身）──');
 {
   const start = consoleServerSrc.indexOf("if (req.method === 'GET' && url.pathname === '/api/socialV2/send-feature-menu')");
   const end = consoleServerSrc.indexOf("if (req.method === 'POST' && url.pathname === '/api/socialV2/sticker-note')", start);
   if (start < 0 || end <= start) throw new Error('找不到功能菜单路由边界');
   const route = consoleServerSrc.slice(start, end);
-  async function invoke(overrides = {}) {
-    let response, renders = 0, sends = 0, renderOptions;
+
+  // 路由只做鉴权与参数解析：命令被调用一次即证明放行。
+  async function invokeRoute(overrides = {}) {
+    let response;
+    let commandCalls = 0;
     const context = {
       req: { method: 'GET', headers: { 'x-agent-token': 'session-test' } },
       url: new URL('http://127.0.0.1/api/socialV2/send-feature-menu?key=group:123'),
-      cfg: { socialV2: { tools: { getFeatureMenu: true } } },
-      deps: { live: { currentMode: 'reserved2' } }, socialV2: { paused: false },
-      agentTokenOk: (_key, token) => token === 'session-test',
-      v2SessionAllowed: () => true, v2ToolEnabled: () => true, modeAllowed: () => true,
-      shouldBlockSilentReply: () => false, readRoleState: () => ({ role: '测试角色' }), roleFor: () => '测试角色',
-      renderFeatureMenu: async (options) => { renders++; renderOptions = options; return { ok: true, file: 'local-menu.png', bytes: 4096, cached: true }; },
-      onebotSendImageFile: async () => { sends++; },
-      log: () => {}, appendActivity: () => {},
       sendJson: (body, status = 200) => { response = { body, status }; },
-      ...overrides,
+      reply: (result) => {
+        if (!result.ok) response = { body: { ok: false, error: result.error }, status: result.status || 500 };
+        else response = { body: result, status: 200 };
+      },
+      readBody: async () => ({}),
+      readModels: { stickers: {} },
+      commands: {
+        sendFeatureMenu: async ({ key, refresh }) => {
+          commandCalls += 1;
+          return { ok: true, key, cached: true, bytes: 4096, refresh };
+        }
+      },
+      agentTokenOk: (_key, token) => token === 'session-test',
+      v2SessionAllowed: () => true,
+      v2ToolEnabled: () => true,
+      KEY_RE: /^(group|private):(\d+)$/,
+      ...overrides
     };
     await vm.runInNewContext(`(async () => { ${route} })()`, context);
-    return { response, renders, sends, renderOptions, cfg: context.cfg };
+    return { response, commandCalls };
   }
-  const good = await invoke();
-  check('允许的请求恰好发送一次图片', good.response.status === 200 && good.renders === 1 && good.sends === 1);
-  check('路由使用运行时配置与当前角色', good.renderOptions.config === good.cfg && good.renderOptions.roleName === '测试角色');
-  check('缓存命中信息返回给调用方', good.response.body.cached === true);
+  const good = await invokeRoute();
+  check('允许的请求调用一次发送命令', good.response.status === 200 && good.commandCalls === 1
+    && good.response.body.cached === true);
   for (const [label, override] of [
     ['缺失令牌', { req: { method: 'GET', headers: {} } }],
     ['错误令牌', { req: { method: 'GET', headers: { 'x-agent-token': 'wrong-session' } } }],
     ['未授权会话', { v2SessionAllowed: () => false }],
-    ['功能关闭', { v2ToolEnabled: () => false }],
-    ['暂停', { socialV2: { paused: true } }],
-    ['静默', { shouldBlockSilentReply: () => true }],
-    ['模式不允许发送', { modeAllowed: () => false }],
+    ['功能关闭', { v2ToolEnabled: () => false }]
   ]) {
-    const result = await invoke(override);
-    check(`${label}时拒绝且不渲染、不发送`, result.response.status === 403 && result.renders === 0 && result.sends === 0);
+    const result = await invokeRoute(override);
+    check(`${label}时拒绝且不调用发送命令`, result.response.status === 403 && result.commandCalls === 0);
   }
-  const failed = await invoke({ renderFeatureMenu: async () => ({ ok: false, error: 'test-unavailable' }) });
-  check('渲染失败显式报错且不发送', failed.response.status === 500 && failed.sends === 0 && failed.response.body.ok === false);
+
+  // 命令层：模式/暂停/静默/渲染失败闸门
+  const { createStickersCommands } = await import('../src/console/commands/stickers.js');
+  const cfg = { socialV2: { tools: { getFeatureMenu: true } } };
+  let renders = 0;
+  let sends = 0;
+  let renderOptions;
+  const make = (overrides = {}) => createStickersCommands({
+    config: { cfg },
+    operations: { live: { currentMode: 'reserved2' }, appendActivity: () => {} },
+    sessions: { socialV2: { paused: false } },
+    policy: { modeAllowed: () => true, shouldBlockSilentReply: () => false },
+    menu: {
+      renderFeatureMenu: async (options) => {
+        renders += 1;
+        renderOptions = options;
+        return { ok: true, file: 'local-menu.png', bytes: 4096, cached: true };
+      },
+      roleFor: () => '测试角色'
+    },
+    media: { onebotSendImageFile: async () => { sends += 1; } },
+    ...overrides
+  });
+
+  const sent = await make().sendFeatureMenu({ key: 'group:123' });
+  check('命令发送一次并返回缓存信息', sent.ok && sends === 1 && sent.cached === true);
+  check('命令使用运行时配置与当前角色', renderOptions.config === cfg && renderOptions.roleName === '测试角色');
+  for (const [label, overrides, status] of [
+    ['暂停', { sessions: { socialV2: { paused: true } } }, 403],
+    ['模式不允许发送', { policy: { modeAllowed: () => false, shouldBlockSilentReply: () => false } }, 403],
+    ['静默', { policy: { modeAllowed: () => true, shouldBlockSilentReply: () => true } }, 403]
+  ]) {
+    const before = sends;
+    const result = await make(overrides).sendFeatureMenu({ key: 'group:123' });
+    check(`${label}时命令拒绝且不发送`, result.status === status && sends === before);
+  }
+  const failed = await make({ menu: { renderFeatureMenu: async () => ({ ok: false, error: 'test-unavailable' }), roleFor: () => '测试角色' } })
+    .sendFeatureMenu({ key: 'group:123' });
+  check('渲染失败显式报错且不发送', failed.status === 500 && sends === 1 && failed.ok === false);
 }
 
 if (process.argv.includes('--render')) {

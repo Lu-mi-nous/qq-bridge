@@ -3,6 +3,8 @@ import { createSharedMemoryApi } from './shared-memory-api.js';
 import { normalizeTokenFuseConfig, normalizeTokenFuseOverride, effectiveTokenFuseThresholds } from './token-fuse.js';
 import { normalizeGapNoticeConfig } from './session-gap.js';
 import { createConsoleRouter } from './console/router.js';
+import { ensureConsoleServices, flattenConsoleServices, assertConsoleDomainKeys } from './console/composition.js';
+import { createConsoleFacets } from './console/facets.js';
 import * as overviewRoutes from './console/routes/00-overview.js';
 import * as coreRoutes from './console/routes/01-core.js';
 import * as slangRoutes from './console/routes/02-slang.js';
@@ -294,7 +296,14 @@ export function parseChangelogMarkdown(markdown, { maxSections = 80, maxEntries 
   return { sections, entries: total };
 }
 
-export function createConsoleServer(deps) {
+export function createConsoleServer(input) {
+  // R4.7-1：生产入口只接收 8 个领域对象；旧测试/旧调用仍可传平铺 deps（迁移期兼容）。
+  const services = ensureConsoleServices(input);
+  assertConsoleDomainKeys(services, { allowMissing: true });
+  // 兼容视图：路由迁移到领域对象前，内部仍按旧 deps 形状读取。
+  const deps = flattenConsoleServices(services);
+  deps.live = services.operations.live;
+  deps.ops = services.operations.ops;
   const { normalizeSharedMemoryConfig, sharedMemoryStats, listSharedPeople, forgetSharedPerson, clearSharedMemory } = createSharedMemoryApi({ getCapability: name => deps.pluginHost?.capabilities?.get(name) });
   const {
     ROOT,
@@ -316,6 +325,26 @@ export function createConsoleServer(deps) {
     text,
     toolNamesOf
   } = deps;
+
+    // R4.7-2/3：面向用例的读模型与命令。只从 8 个领域对象取实现，
+    // 路由不再把 266 项平铺 deps 当依赖袋（见 src/console/facets.js）。
+    // helpers 是 console-server 内的纯工具/归一化函数，读模型与命令按需取用。
+    const consoleHelpers = {
+      buildSessionUsageRows,
+      parseChangelogMarkdown,
+      sanitizeDevLogText,
+      isAgentRouteAllowed,
+      normalizeGapNoticeConfig,
+      normalizeSharedMemoryConfig,
+      sharedMemoryStats,
+      listSharedPeople,
+      forgetSharedPerson,
+      clearSharedMemory,
+      normalizeTokenFuseConfig,
+      normalizeTokenFuseOverride,
+      effectiveTokenFuseThresholds
+    };
+    const { readModels, commands } = createConsoleFacets(services, { buildSessionUsageRows, helpers: consoleHelpers });
 
     const port = cfg.consolePort ?? 3100;
     // 控制台鉴权：
@@ -590,21 +619,9 @@ export function createConsoleServer(deps) {
           agentTokenOk,
           v2SessionAllowed,
           v2ToolEnabled,
-          helpers: {
-            buildSessionUsageRows,
-            parseChangelogMarkdown,
-            sanitizeDevLogText,
-            isAgentRouteAllowed,
-            normalizeGapNoticeConfig,
-            normalizeSharedMemoryConfig,
-            sharedMemoryStats,
-            listSharedPeople,
-            forgetSharedPerson,
-            clearSharedMemory,
-            normalizeTokenFuseConfig,
-            normalizeTokenFuseOverride,
-            effectiveTokenFuseThresholds
-          }
+          readModels,
+          commands,
+          helpers: consoleHelpers
         })) return;
         if (req.method === 'GET' && url.pathname === '/') {
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });

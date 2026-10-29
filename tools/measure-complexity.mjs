@@ -192,7 +192,7 @@ const consoleRoutes = (consoleSource.match(/url\.pathname ===/g) || []).length
   + sum(fs.readdirSync(routeDir).filter((f) => f.endsWith('.js')), (f) => {
     const src = fs.readFileSync(path.join(routeDir, f), 'utf8');
     return (src.match(/^  \['(?:GET|POST|PUT|DELETE|PATCH)', '[^']+', '(?:exact|prefix)'\]/gm) || []).length
-      + (src.match(/router\.(?:get|post|put|del)\(/g) || []).length;
+      + (src.match(/router\.(?:get|post|put|del)(?:Prefix)?\(/g) || []).length;
   });
 
 // 结构与基线指标（COMPLEXITY.md G1–G4 的对应项）。
@@ -210,7 +210,7 @@ if (mainStart) {
 const bagOpen = bridgeText.indexOf('{', bridgeText.indexOf('createConsoleServer('));
 const consoleDependencyBag = bagOpen >= 0 ? countObjectKeys(balancedBlock(bridgeText, bagOpen).body) : 0;
 
-const consoleRouteMaxSlice = Math.max(0, ...fs.readdirSync(routeDir)
+const consoleRouteSlices = Object.fromEntries(fs.readdirSync(routeDir)
   .filter((f) => f.endsWith('.js'))
   .map((f) => {
     const src = fs.readFileSync(path.join(routeDir, f), 'utf8');
@@ -220,8 +220,22 @@ const consoleRouteMaxSlice = Math.max(0, ...fs.readdirSync(routeDir)
       if (!blk || !/^\s*=\s*(deps|ctx)\s*;/.test(src.slice(blk.end))) continue;
       max = Math.max(max, countObjectKeys(blk.body));
     }
-    return max;
+    return [f.replace(/\.js$/, ''), max];
   }));
+const consoleRouteMaxSlice = Math.max(0, ...Object.values(consoleRouteSlices));
+const consoleRouteWidest = Object.entries(consoleRouteSlices)
+  .sort((a, b) => b[1] - a[1])
+  .slice(0, 3)
+  .filter(([, n]) => n > 0);
+
+const pumpDomainsSource = readText('src/pipeline/dsh-event-domains.js');
+const pumpDomainsBlock = (pumpDomainsSource.match(/DSH_EVENT_DOMAINS = Object\.freeze\(\[([\s\S]*?)\]\)/) || [])[1] || '';
+const pumpDomains = (pumpDomainsBlock.match(/'/g) || []).length / 2;
+const pumpKeysStart = pumpDomainsSource.indexOf('DSH_EVENT_DOMAIN_KEYS');
+const pumpKeysEnd = pumpDomainsSource.indexOf('export function normalizeDshEventDeps');
+const pumpDomainKeys = pumpKeysStart >= 0 && pumpKeysEnd > pumpKeysStart
+  ? ((pumpDomainsSource.slice(pumpKeysStart, pumpKeysEnd).match(/'/g) || []).length / 2)
+  : 0;
 
 const flagsSource = readText('src/tool-flags.js');
 const toolFlagEntries = (flagsSource.match(/\{\s*flag:\s*'/g) || []).length;
@@ -274,6 +288,10 @@ const result = {
     bridgeJsonStores: (bridgeText.match(/createJsonStore\(/g) || []).length,
     consoleDependencyBag,
     consoleRouteMaxSlice,
+    consoleRouteSlices,
+    consoleRouteWidest,
+    pumpDomains,
+    pumpDomainKeys,
     agentAllowedPaths,
     toolFlagEntries,
     fixedToolFlags,
@@ -317,7 +335,10 @@ if (process.argv.includes('--json')) {
   console.log(`配置      ${result.config.keys} 键 / ${result.config.tools} 个配置工具键（TOOL_FLAGS ${result.structure.toolFlagEntries}，fixed ${result.structure.fixedToolFlags}）`);
   console.log(`接口      MCP ${result.mcpTools} 个 | 控制台路由 ${result.consoleRoutes} 条 | Agent 白名单 ${result.structure.agentAllowedPaths}`);
   console.log(`结构      main ${result.structure.bridgeMain.span} 行 | JSON store ${result.structure.bridgeJsonStores} | 周期定时器 ${result.structure.periodicTimerSites} 处`);
-  console.log(`注入      createConsoleServer ${result.structure.consoleDependencyBag} 项 | 路由最大解构 ${result.structure.consoleRouteMaxSlice} 项`);
+  const routeWidest = (result.structure.consoleRouteWidest || [])
+    .map(([name, n]) => `${name} ${n}`)
+    .join(' / ');
+  console.log(`注入      createConsoleServer ${result.structure.consoleDependencyBag} 个领域 | 路由最大解构 ${result.structure.consoleRouteMaxSlice} 项${routeWidest ? `（${routeWidest}）` : ''} | DshEventPump ${result.structure.pumpDomains} 个领域 / ${result.structure.pumpDomainKeys} 键`);
   console.log(`依赖      ${result.dependencies} 个 | 循环依赖 ${result.graph.cycles}`);
   console.log(`运行态    state ${result.runtimeSnapshot.stateEntries} 项 / ${result.runtimeSnapshot.stateMB} MB（运行时快照）`);
   console.log('\n最大的 10 个源文件：');

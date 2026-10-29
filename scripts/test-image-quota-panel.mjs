@@ -40,7 +40,7 @@ console.log('\n── 2. 桥接端点 ──');
 {
   check('端点存在', /\/api\/socialV2\/image-quota/.test(bridge));
   check('报图库容量', /library: lib/.test(bridge));
-  check('报拉取冷却 + 是否正在拉', /cooling/.test(bridge) && /fetching: !!deps\.live\.imageFetching/.test(bridge));
+  check('报拉取冷却 + 是否正在拉', /cooling/.test(bridge) && /fetching: !!live\.imageFetching/.test(bridge));
   check('报反查额度（含剩余）', /remainingToday: rs\.remainingToday/.test(bridge));
   check('报发送限频（冷却/每小时）', /maxSendPerHour: Math\.max\(0, Number\(ic\.maxSendPerHour\)/.test(bridge));
   check('报各图源开关（"源没开"常被误当成额度问题）', /\n\s+sources\n/.test(bridge));

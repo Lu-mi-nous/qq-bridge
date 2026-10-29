@@ -92,8 +92,9 @@ const specifiers = (text) => [
   }
   check(`读 bridge.js 源码的测试 ≤14`, bridgeReaders.length <= 14, `${bridgeReaders.length}: ${bridgeReaders.join(',')}`);
   check(`new Function / 函数截取 ≤4（逐步减少）`, newFunctions.length <= 4, `${newFunctions.length}: ${newFunctions.join(',')}`);
-  // 2026-10-28 基线文档记为 50（旧口径）；本护栏用窗口法实测 51 并冻结，口径见报告中说明。
-  check(`读任意 src 源码的测试不新增（冻结 51）`, srcReaders.length <= 51, `${srcReaders.length}: 超出即新增耦合，先改口径再放行`);
+  // 2026-10-28 基线文档记为 50（旧口径）；本护栏用窗口法实测 51 并冻结。
+  // 2026-10-29 R4.7-3 的 ops 命令测试新增 1 个读 commands/ops.js 的断言，口径 51→52。
+  check(`读任意 src 源码的测试不新增（冻结 52）`, srcReaders.length <= 52, `${srcReaders.length}: 超出即新增耦合，先改口径再放行`);
 }
 
 console.log(failed ? `❌ ${passed} 通过 / ${failed} 失败` : `✅ ${passed} 通过 / 0 失败`);

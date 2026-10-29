@@ -86,7 +86,7 @@ async function fetchJson(url, timeoutMs = 20000) {
     // 直连一律 ETIMEDOUT，而经本机代理 200）。safebooru 是**默认图源**，不兜底就等于
     // 「按标签查图全废」。HTTP 状态码错误是确定性失败，不重试（避免对限流接口火上浇油）。
     if (Number.isFinite(error?.status) || !defaultProxy) throw error;
-    const { proxyGet } = await import('./proxy-tunnel.js');
+    const { proxyGet } = await import('../../../src/plugin-api/network.js');
     const r = await proxyGet(url, {
       proxy: defaultProxy,
       headers: { 'user-agent': USER_AGENT, accept: 'application/json' },
@@ -1056,6 +1056,26 @@ export function getSource(name) {
  * opts 可覆盖单个源的 tags/limit/order/maxAgeDays，用于「按需查特定图」：
  * fetchFromSources(cfg.sources, { tags:['cat'], order:'score' })
  */
+/**
+ * 按一批结果的分数分布计算自适应分数门。
+ *
+ * - 少于 4 条：样本不足，不启用（返回 null）。
+ * - 整批都是 0 分：该源没有提供分数信号（pixiv 搜索就是这种），不启用——
+ *   否则「绝对底限 1」会把搜索结果全部判成低质（真实事故）。
+ * - 否则取半中位，且不低于绝对底限。
+ */
+export function adaptiveScoreGate(rawScores, absFloorInput = 1) {
+  const scores = (Array.isArray(rawScores) ? rawScores : [])
+    .map((n) => Number(n) || 0)
+    .filter((n) => Number.isFinite(n))
+    .sort((x, y) => x - y);
+  if (scores.length < 4) return null;
+  if (!(scores[scores.length - 1] > 0)) return null;
+  const mid = scores[Math.floor(scores.length / 2)];
+  const absFloor = Math.max(0, Number(absFloorInput ?? 1));
+  return Math.max(absFloor, Math.floor(mid / 2));
+}
+
 export async function fetchFromSources(cfgSources, opts = {}) {
   const out = [];
   const errors = [];
@@ -1098,7 +1118,7 @@ export async function fetchFromSources(cfgSources, opts = {}) {
         errors.push(`${name}: 该源需要代理（请在配置里设置 sources.${name}.proxy 或全局 images.proxy）`);
         continue;
       }
-      const { proxyGet } = await import('./proxy-tunnel.js');
+      const { proxyGet } = await import('../../../src/plugin-api/network.js');
       // 带重试：代理链路对**密集请求**有限流（实测：间隔 300ms 连测会超时失败，
       // 间隔 2.5s 则 8/8 全成功），所以退避要给足——0.5s 太短会连着撞限流。
       // 图源接口是幂等 GET，重试安全。HTTP 4xx/5xx 属确定性失败，不重试
@@ -1182,17 +1202,8 @@ export async function fetchFromSources(cfgSources, opts = {}) {
       // 这样"分数高的一批"和"分数本来就不高的一批"都能出图，而不是一刀切。
       let batchScoreGate = null;
       if (qualityOpts && qualityOpts.useTags !== false) {
-        const scores = list.map((e) => Number(e?.score) || 0)
-          .filter((n) => Number.isFinite(n))
-          .sort((x, y) => x - y);
-        if (scores.length >= 4) {
-          const mid = scores[Math.floor(scores.length / 2)];
-          // 阈值 = 中位数的一半（向下取整，但不低于绝对底限）。
-          // 半中位而不是全中位：全中位会砍掉一半候选，太狠；
-          // 半中位只剔除明显低于本批水位的那些。
-          const absFloor = Math.max(0, Number(qualityOpts.scoreAbsoluteFloor ?? 1));
-          batchScoreGate = Math.max(absFloor, Math.floor(mid / 2));
-        }
+        const scores = list.map((e) => Number(e?.score) || 0);
+        batchScoreGate = adaptiveScoreGate(scores, qualityOpts.scoreAbsoluteFloor);
       }
 
       for (const e of list) {
