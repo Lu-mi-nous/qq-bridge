@@ -55,7 +55,8 @@ check('路由总数与拆分前一致（163 个端点，含动态前缀；C1 man
 check('有插件清单接口', /'\/api\/plugins'/.test(overviewRoutes) && /pluginList\(\)/.test(overviewReadModel));
 check('有任务清单/控制接口', /'\/api\/tasks'/.test(overviewRoutes)
   && /commands\?\.tasks/.test(overviewRoutes) && /pause\|resume\|trigger\|start\|stop/.test(overviewRoutes));
-check('动态模式经 live 读取', server.includes('deps.live.currentMode'));
+check('动态模式经 live 读取', server.includes('live.currentMode'));
+check('生产控制台不再构造 flatten 兼容视图', !server.includes('flattenConsoleServices'));
 check('会话代际只经命令递增',
   (`${server}\n${domainRoutesSrc}\n${consoleCommandsSrc}`.match(/deps\.ops\.bumpSessionEpoch\(\)|ops\.bumpSessionEpoch\?\.\(\)/g) || []).length === 4
   && !/sessionEpoch\+\+/.test(`${server}\n${domainRoutesSrc}\n${consoleCommandsSrc}`));

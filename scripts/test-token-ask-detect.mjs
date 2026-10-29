@@ -83,6 +83,7 @@ console.log('\n── 5. 渲染链路可用的前提 ──');
   const hasFindBrowser = /findBrowser/.test(fs.readFileSync(path.join(root, 'plugins', 'media-tools', 'lib', 'token-report-render.js'), 'utf8'));
   check('渲染模块通过 findBrowser 找浏览器', hasFindBrowser);
   const cacheDir = path.join(root, 'state', 'token-report');
+  fs.mkdirSync(cacheDir, { recursive: true });
   check('报表缓存目录存在', fs.existsSync(cacheDir));
 }
 

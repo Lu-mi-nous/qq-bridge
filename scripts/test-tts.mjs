@@ -416,8 +416,10 @@ console.log('\n── 7. 真实合成 ──');
     const ok = await engine.warmup();
     check('引擎预热成功', ok === true, `加载 ${engine.status().loadSec}s`);
     if (ok) {
+      // 固定参考音频，避免 auto 模式随机换 ref 导致同一句缓存键不同（测试会偶发失败）。
+      const speakOpts = p.defaultRefId ? { refId: p.defaultRefId } : {};
       const t0 = Date.now();
-      const r = await engine.speak('你好呀，我是达妮娅。');
+      const r = await engine.speak('你好呀，我是达妮娅。', speakOpts);
       const ms = Date.now() - t0;
       check('合成成功', r.ok === true, r.ok ? '' : r.error);
       if (r.ok) {
@@ -425,7 +427,7 @@ console.log('\n── 7. 真实合成 ──');
           `${Math.round(fs.statSync(r.file).size / 1024)}KB`);
         check('音频有时长', Number(r.durSec) > 0, `${r.durSec}s`);
         check('单句在 30 秒内', ms < 30000, `${ms}ms`);
-        const r2 = await engine.speak('你好呀，我是达妮娅。');
+        const r2 = await engine.speak('你好呀，我是达妮娅。', speakOpts);
         check('同句命中缓存（不重复推理）', r2.ok && r2.cached === true);
       }
       check('文本过长被拒', (await engine.speak('啊'.repeat(400))).ok === false);

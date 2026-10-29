@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createTurnMetrics, deriveMetrics, dayKeyOf } from '../src/turn-metrics.js';
+import { createTurnMetrics, deriveMetrics, dayKeyOf, hourKeyOf } from '../src/turn-metrics.js';
 
 let pass = 0, fail = 0;
 const check = (name, fn) => {
@@ -132,6 +132,11 @@ console.log('\n── 5. 派生 KPI 纯函数 ──');
 check('dayKeyOf 使用上海时区', () => {
   assert.equal(dayKeyOf(Date.parse('2026-10-28T15:59:00Z')), '2026-10-28');
   assert.equal(dayKeyOf(Date.parse('2026-10-28T16:01:00Z')), '2026-10-29');
+});
+check('hourKeyOf 使用上海时区', () => {
+  assert.equal(hourKeyOf(Date.parse('2026-10-28T15:59:00Z')), '23');
+  assert.equal(hourKeyOf(Date.parse('2026-10-28T16:01:00Z')), '0');
+  assert.equal(hourKeyOf(Date.parse('2026-10-28T02:00:00+08:00')), '2');
 });
 
 fs.rmSync(tmp, { recursive: true, force: true });

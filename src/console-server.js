@@ -3,7 +3,7 @@ import { createSharedMemoryApi } from './shared-memory-api.js';
 import { normalizeTokenFuseConfig, normalizeTokenFuseOverride, effectiveTokenFuseThresholds } from './token-fuse.js';
 import { normalizeGapNoticeConfig } from './session-gap.js';
 import { createConsoleRouter } from './console/router.js';
-import { ensureConsoleServices, flattenConsoleServices, assertConsoleDomainKeys } from './console/composition.js';
+import { ensureConsoleServices, assertConsoleDomainKeys } from './console/composition.js';
 import { createConsoleFacets } from './console/facets.js';
 import * as overviewRoutes from './console/routes/00-overview.js';
 import * as coreRoutes from './console/routes/01-core.js';
@@ -300,31 +300,25 @@ export function createConsoleServer(input) {
   // R4.7-1：生产入口只接收 8 个领域对象；旧测试/旧调用仍可传平铺 deps（迁移期兼容）。
   const services = ensureConsoleServices(input);
   assertConsoleDomainKeys(services, { allowMissing: true });
-  // 兼容视图：路由迁移到领域对象前，内部仍按旧 deps 形状读取。
-  const deps = flattenConsoleServices(services);
-  deps.live = services.operations.live;
-  deps.ops = services.operations.ops;
-  const { normalizeSharedMemoryConfig, sharedMemoryStats, listSharedPeople, forgetSharedPerson, clearSharedMemory } = createSharedMemoryApi({ getCapability: name => deps.pluginHost?.capabilities?.get(name) });
+  // 生产宿主直接从 8 个领域取能力；不再构造 266 键的扁平兼容视图。
+  const live = services.operations.live;
+  const pluginHost = services.plugins.pluginHost;
+  const { normalizeSharedMemoryConfig, sharedMemoryStats, listSharedPeople, forgetSharedPerson, clearSharedMemory } = createSharedMemoryApi({ getCapability: name => pluginHost?.capabilities?.get(name) });
   const {
     ROOT,
     TOOL_FLAGS,
-    api,
-    canonicalV2Key,
     cfg,
     fs,
-    groupedToolFlags,
     http,
-    isSessionAllowedInCurrentMode,
-    loadOrCreateConsoleToken,
     log,
     path,
-    reverse,
-    social,
-    socialV2,
-    state,
-    text,
-    toolNamesOf
-  } = deps;
+    text
+  } = services.config;
+  const { api } = services.messaging;
+  const { canonicalV2Key, reverse, socialV2, state } = services.sessions;
+  const { social, isSessionAllowedInCurrentMode } = services.social;
+  const { groupedToolFlags, toolNamesOf } = services.plugins;
+  const { loadOrCreateConsoleToken } = services.operations;
 
     // R4.7-2/3：面向用例的读模型与命令。只从 8 个领域对象取实现，
     // 路由不再把 266 项平铺 deps 当依赖袋（见 src/console/facets.js）。
@@ -385,13 +379,13 @@ export function createConsoleServer(input) {
     // 鉴权 / CSRF / agent 白名单 / 暂停隔离仍在本文件统一处理；命中即返回。
     const consoleRouter = createConsoleRouter();
     // 概览类（about/plugins/tasks/tool-flags）用 register() 直接挂 handler。
-    const routeStaticCtx = { deps, cfg, root: ROOT, TOOL_FLAGS, groupedToolFlags, toolNamesOf };
+    const routeStaticCtx = { cfg, root: ROOT, TOOL_FLAGS, groupedToolFlags, toolNamesOf };
     overviewRoutes.register(consoleRouter, routeStaticCtx);
     // 其余按域模块：模块自带 routes 清单 + handle，内部保留原来的 if 链。
     for (const routeModule of DOMAIN_ROUTES) {
       const owner = { '02-slang': 'slang', '10-images': 'images', '11-stickers': 'stickers', '14-bili': 'bili' }[routeModule.id];
       consoleRouter.use({ ...routeModule, handle: (req, res, url, ctx) => {
-        if (owner && deps.pluginHost && !deps.pluginHost.capabilities?.get(`${owner}.instance`)) {
+        if (owner && pluginHost && !pluginHost.capabilities?.get(`${owner}.instance`)) {
           ctx.sendJson({ ok: false, error: '插件能力不可用' }, 503); return;
         }
         return routeModule.handle(req, res, url, ctx);
@@ -400,11 +394,11 @@ export function createConsoleServer(input) {
 
     // 插件控制台路由（R4-5）：插件用 ctx.console.registerRoute 声明，核心只转发。
     // 路径必须以 /api/plugins/<id>/ 开头（context.js 已校验），没有注册就没有入口。
-    for (const plugin of deps.pluginHost?.list?.() ?? []) {
-      const pctx = deps.pluginHost?.getContext?.(plugin.id);
+    for (const plugin of pluginHost?.list?.() ?? []) {
+      const pctx = pluginHost?.getContext?.(plugin.id);
       for (const route of pctx?.console?.routes ?? []) {
         const handler = (req, res, url, rctx) => {
-          const current = deps.pluginHost?.getContext?.(plugin.id);
+          const current = pluginHost?.getContext?.(plugin.id);
           const active = current?.console?.routes?.find(r => r.path === route.path && r.method === route.method);
           if (!active) return rctx.sendJson({ ok: false, error: '插件能力不可用' }, 404);
           return active.handler(req, res, url, {
@@ -600,7 +594,7 @@ export function createConsoleServer(input) {
           return;
         }
         // 模式隔离：带 agent token 的 v2 接口只允许在 reserved2 模式下使用
-        if (req.headers['x-agent-token'] && url.pathname.startsWith('/api/socialV2/') && deps.live.currentMode !== 'reserved2') {
+        if (req.headers['x-agent-token'] && url.pathname.startsWith('/api/socialV2/') && live.currentMode !== 'reserved2') {
           sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403);
           return;
         }

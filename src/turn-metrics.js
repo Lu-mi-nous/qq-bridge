@@ -26,6 +26,20 @@ export function dayKeyOf(ts = Date.now()) {
   return new Date(ts).toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
 }
 
+const SHANGHAI_HOUR_FORMATTER = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Shanghai',
+  hour: '2-digit',
+  hourCycle: 'h23'
+});
+
+export function hourKeyOf(ts = Date.now()) {
+  // 小时桶必须和 dayKeyOf 使用同一业务时区；不能依赖进程本地时区。
+  const hour = SHANGHAI_HOUR_FORMATTER
+    .formatToParts(new Date(ts))
+    .find((part) => part.type === 'hour')?.value;
+  return String(Number(hour ?? 0));
+}
+
 const round = (v, digits = 2) => {
   const n = Number(v);
   if (!Number.isFinite(n)) return 0;
@@ -269,7 +283,7 @@ export function createTurnMetrics({ file, now = Date.now, log = () => {}, keepDa
     if (turn.silent) return;
     const totalTokens = turn.input + turn.cacheRead + turn.output;
     const totals = { input: turn.input, cacheRead: turn.cacheRead, output: turn.output, total: totalTokens };
-    const hour = String(Math.max(0, Math.min(23, new Date(turn.startedAt).getHours())));
+    const hour = hourKeyOf(turn.startedAt);
     mutate((keys) => {
       const bucket = keys[turn.key] ?? (keys[turn.key] = emptyBucket());
       bucket.turns += 1;

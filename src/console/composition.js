@@ -124,8 +124,8 @@ export function createConsoleServices(domains = {}) {
 }
 
 /**
- * 兼容视图：把选定领域摊平成旧路由仍在使用的 `deps` 形状。
- * 仅用于 R4.7-2~4 迁移期间；新代码不得依赖它，迁移完成后删除。
+ * 兼容视图：仅保留给旧测试/外部迁移调用。
+ * 生产 `console-server` 已直接读取 8 个领域；新代码不得依赖它，后续可删除。
  */
 export function flattenConsoleServices(services, domainNames = CONSOLE_DOMAINS) {
   const out = {};
