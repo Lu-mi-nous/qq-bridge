@@ -99,6 +99,8 @@ console.log('\n── reserved2 文本-only 兜底（直接点名才转发）─
   h.deps.getSocialV2State(key).lastWakeReason = 'atMention';
   await h.turn(1, '（先潜水，看看再说）');
   await h.turn(2, '这一轮先收尾，我歇一会儿');
+  await h.turn(3, '这轮群里只剩发图了，我先不说话了。');
+  await h.turn(4, '群里还在发图，我先不接话了。');
   check('内心独白不被兜底转发', h.get('send').length === 0);
 }
 {

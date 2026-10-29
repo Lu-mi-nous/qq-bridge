@@ -21,7 +21,7 @@ const RESERVED2_DIRECT_WAKE_BASES = new Set([
   'private', 'atMention', 'pokeSelf', 'question', 'speaker', 'nameMention',
   'keyword', 'bootstrap', 'admin', 'manual'
 ]);
-const RESERVED2_INTERNAL_TEXT_RE = /先收尾|先到这儿|标了已读|标记已读|安静收尾|没点到我|没叫我|没插话|不插话|歇一会|缓一缓|继续潜水|安静潜水|这一轮先|这轮先|本轮先|回到群里|发到群里|发进群|文字那条|表情这张|刚才那句|这条消息|没发出去|发不出去|发不出来|发送失败|发送成功|接口不认|接口返回|接口调用|令牌|发送通道|通道没有恢复|fetch failed|消息已看过|就不补了|补发|工具调用|调用失败|桥接|MCP|调度|唤醒|未读/;
+const RESERVED2_INTERNAL_TEXT_RE = /先收尾|先到这儿|标了已读|标记已读|安静收尾|没点到我|没叫我|没插话|不插话|先不插话|歇一会|缓一缓|继续潜水|安静潜水|这一轮先|这轮先|本轮先|回到群里|发到群里|发进群|文字那条|表情这张|刚才那句|这条消息|没发出去|发不出去|发不出来|发送失败|发送成功|接口不认|接口返回|接口调用|令牌|发送通道|通道没有恢复|fetch failed|消息已看过|就不补了|补发|工具调用|调用失败|桥接|MCP|调度|唤醒|未读|我先不说话|先不说话|我先不接话|先不接话|我先安静|先安静看|群里还在发图|群里只剩|只剩发图|这轮群里|这轮只剩|让群里聊|有事再叫我|先看群|先看着/;
 
 export function shouldForwardReserved2Text(key, reason, text) {
   const t = String(text ?? '').trim();
